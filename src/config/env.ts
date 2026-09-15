@@ -50,6 +50,7 @@ const envSchema = z.object({
   ENABLE_DOMRIA: booleanFromEnv(true),
   ENABLE_LUN: booleanFromEnv(true),
   ENABLE_OLX: booleanFromEnv(false),
+  ENABLE_RIELTOR: booleanFromEnv(true),
   OWNER_ONLY: booleanFromEnv(true),
   PROPERTY_TYPES: z.string().default("apartment,house"),
   MAX_LISTING_AGE_MINUTES: optionalPositiveInt,
@@ -84,6 +85,7 @@ export type AppConfig = {
   enableDomria: boolean;
   enableLun: boolean;
   enableOlx: boolean;
+  enableRieltor: boolean;
   ownerOnly: boolean;
   propertyTypes: PropertyType[];
   maxListingAgeMinutes?: number;
@@ -136,6 +138,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     enableDomria: parsed.ENABLE_DOMRIA,
     enableLun: parsed.ENABLE_LUN,
     enableOlx: parsed.ENABLE_OLX,
+    enableRieltor: parsed.ENABLE_RIELTOR,
     ownerOnly: parsed.OWNER_ONLY,
     propertyTypes: parsePropertyTypes(parsed.PROPERTY_TYPES),
     domriaUsePublicHtmlFallback: parsed.DOMRIA_USE_PUBLIC_HTML_FALLBACK,

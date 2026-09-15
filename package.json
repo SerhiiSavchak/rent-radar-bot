@@ -2,7 +2,7 @@
   "name": "rent-radar-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "Phase 0 prototype: monitor OLX, DIM.RIA and LUN rental listings for Lviv.",
+  "description": "Phase 1 source layer: monitor OLX, DIM.RIA, LUN and RIELTOR.UA rental listings for Lviv.",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
@@ -18,11 +18,14 @@
     "live:olx": "tsx src/scripts/test-olx.ts",
     "live:domria": "tsx src/scripts/test-domria.ts",
     "live:lun": "tsx src/scripts/test-lun.ts",
+    "live:rieltor": "tsx src/scripts/test-rieltor.ts",
+    "live:rieltor-cycles": "tsx src/scripts/test-rieltor-cycles.ts",
     "live:all": "tsx src/scripts/test-all-sources.ts",
     "research:lun-origins": "tsx src/scripts/research-lun-origins.ts",
     "test:olx": "tsx src/scripts/test-olx.ts",
     "test:domria": "tsx src/scripts/test-domria.ts",
     "test:lun": "tsx src/scripts/test-lun.ts",
+    "test:rieltor": "tsx src/scripts/test-rieltor.ts",
     "test:sources": "tsx src/scripts/test-all-sources.ts",
     "start": "tsx src/index.ts"
   },

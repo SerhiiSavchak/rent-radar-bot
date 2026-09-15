@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const listingSourceSchema = z.enum(["olx", "domria", "lun"]);
+export const listingSourceSchema = z.enum(["olx", "domria", "lun", "rieltor"]);
 export type ListingSource = z.infer<typeof listingSourceSchema>;
 
 export const propertyTypeSchema = z.enum(["apartment", "house", "unknown"]);

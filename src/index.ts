@@ -5,12 +5,16 @@ import { closeDb } from "./storage/db.ts";
 import { DomriaSource } from "./sources/domria/domria.source.ts";
 import { LunSource } from "./sources/lun/lun.source.ts";
 import { OlxSource } from "./sources/olx/olx.source.ts";
+import { RieltorSource } from "./sources/rieltor/rieltor.source.ts";
 import { logger } from "./utils/logger.ts";
 
 loadDotenv();
 
 const config = getConfig();
-const monitor = new ListingMonitorService([new OlxSource(), new DomriaSource(), new LunSource()], config);
+const monitor = new ListingMonitorService(
+  [new OlxSource(), new DomriaSource(), new LunSource(), new RieltorSource()],
+  config,
+);
 
 const shutdown = () => {
   closeDb();

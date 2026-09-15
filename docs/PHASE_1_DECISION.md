@@ -17,7 +17,7 @@ This document records what is **in this repository**, what was **claimed elsewhe
 | `AGENTS.md` | Not present | **Missing** |
 | 103 tests | After this branch: 6 Vitest files, **22 tests** (`npm test`) | **Contradicted** |
 | `runtime:olx` / headed Chromium + Xvfb | No Playwright/Chromium dependency, no Xvfb scripts | **Missing / unverified** |
-| RIELTOR adapter + two-request owner-only cycle | No `src/sources/rieltor/`; LUN stores `urlRaw` which may point at rieltor.ua | **Missing adapter**; original URLs **verified in LUN parser** |
+| RIELTOR adapter + two-request owner-only cycle | `src/sources/rieltor/` added 2026-09-15; `f-owners=1` verified as a filter, not a two-request API | **Adapter present**; earlier “two-request cycle” **not** reproduced |
 | DIM.RIA characteristic 1437 | `domria.parser.ts` + `DOMRIA_OFFER_TYPE` | **Verified**, then **corrected** (see below) |
 | `agency_id` / `is_commercial` unreliable | Parser previously treated `agency_id > 0` as agent | **Verified as a bug**, **fixed** |
 | LUN original source URLs | `metadata.originalUrl` from `card.urlRaw` | **Verified** |
@@ -94,55 +94,46 @@ OLX polling without deeper pagination. Partial overlap remains **not** complete 
 
 ## RIELTOR
 
-No adapter. LUN may surface `rieltor.ua` original URLs. Pagination/truncation detection for a dedicated RIELTOR client is **unimplemented**. Do not treat a LUN first page as a complete RIELTOR scan.
+Adapter added 2026-09-15 (`src/sources/rieltor/`). Live routes `/lvov/flats-rent/` and `/lvov/houses-rent/` resolve to Lviv (not a fallback city). Houses H1 is long-term rental. Platform labels `Власник` / `Рієлтор` come from catalog cards; `f-owners=1` is a real filter **only** on `data-listing-items` (recommended “поруч” cards must be ignored). Owner houses around Lviv were a **valid empty** catalog in this sample. First-page apartment count 743 ⇒ truncated unless paginated; the adapter caps pages and records `TRUNCATED`. See `evidence/phase-1/rieltor.md`.
 
 ## Runtime alternatives (docs only, not provisioned)
 
-Compared from official docs, not from a live VM:
+Browser-for-OLX is **deprioritized**: ordinary HTTP worked from an isolated fetch server
+(Cursor WebFetch), which is **not** a production host. HTTP-only comparison is in
+`evidence/phase-1/http-runtime.md`.
 
-**A. Direct OLX HTTP** — **works via ordinary HTTP from at least one non-residential
-environment** (verified 2026-09-15 with real records, correct geo/category params, and a
-10-minute repeat). Fails with 403 from this workstation. Whether a specific zero-cost host
-is in the unblocked set is the remaining question — no browser requirement demonstrated so far.
+**A. Direct OLX HTTP** — works from at least one non-residential environment; 403 from this
+workstation. Hosted zero-cost IP: **NOT TESTED**.
 
-**B. Indirect OLX via LUN** — HTTP HTML already works here; coverage incomplete (3/19 token
-matches against a same-evening direct window; first-page cadence too slow versus ~50 OLX
-listings per 4.5 h); unofficial RSC; timestamps are ingest times.
+**B. Indirect OLX via LUN** — incomplete coverage (3/19 token matches); not a replacement.
 
-**C. One shared Node runtime, browser only for OLX**
+**C. Shared HTTP runtime (no browser)**
 
-| | Oracle Always Free | Google Cloud Free Tier |
-|--|--------------------|-------------------------|
-| Compute | Always Free: up to 2× `VM.Standard.E2.1.Micro` (AMD, **1 GB**) and/or Ampere A1 Flex **2 OCPU / 12 GB** (1,500 OCPU-hours + 9,000 GB-hours/month) | 1 non-preemptible **`e2-micro`** / month in `us-west1`, `us-central1`, or `us-east1`; 30 GB-months standard PD |
-| Chromium | **1 GB micros are a poor fit**. A1 12 GB is the plausible Always Free shape. Docs: **out of host capacity**; idle reclaim if 7-day 95th CPU, net, and (A1) mem all &lt; 20%. | `e2-micro` is **~1 GB RAM** — headed Chromium is unlikely to be reliable. Trial **$300 / 90 days is not Always Free**. Card required at signup. Over Free Tier on a **paid** account is billed. |
-| 144 cycles/day | CPU is not the documented quota issue; idle reclaim, home-region capacity, and IP are. Official Always Free outbound: **10 TB/month**. | Chromium + 144 navigations/day will likely exceed Free Tier **1 GB/month** egress and RAM. |
-| Spend control | Upgrade expands shapes; Always Free stays unlabeled-free; **usage above limits is charged**. Compartment quotas exist. | Free Trial auto-closes without upgrade; remaining credit is not a permanent host. |
-| Unattended | Cron/systemd possible; **not demonstrated**. | Same. |
+| Candidate | Verdict |
+|-----------|---------|
+| Deno Deploy | **Disqualified**: AUP lists scrapers as not acceptable use |
+| Cloudflare Workers Free | Cron every 10 min is allowed; **10 ms CPU** per cron is a poor fit for four HTML parsers; no `node:sqlite` files |
+| Oracle Always Free `E2.1.Micro` (x86, 1 GB) | **Recommended to TEST**: Always Free VM, hard no-bill tenancy, systemd, sqlite, 10 TB egress. A1 is not preferred merely because it was the browser-era suggestion |
+| GCP `e2-micro` | Backup HTTP VM; paid billing account after trial; overage billed; 1 GB/month egress |
 
-Official sources: [Oracle Always Free](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm), [Google Cloud Free Program](https://docs.cloud.google.com/free/docs/free-cloud-features). Details in `evidence/phase-1/hosting.md`.
-
-Trial credits ≠ permanent zero-cost. Free compute ≠ a proven free **complete** deployment (disk, IP, DNS, egress, OLX traffic).
+Trial credits ≠ permanent zero-cost. Free compute ≠ a proven free complete deployment.
+OLX may still 403 a cloud IP.
 
 ## Remaining Phase 1 blockers
 
-1. No hosted unattended zero-cost soak.  
-2. ~~No second environment for OLX HTTP~~ → **resolved for feasibility** (ordinary HTTP works
-   from a non-residential environment); still open: proving a specific zero-cost host is
-   unblocked and stable over days.  
-3. No in-repo Chromium/Xvfb evidence — and, per item 2, a browser may not be needed at all.  
-4. No RIELTOR adapter / pagination contract.  
-5. LUN RSC is unofficial.  
-6. DIM.RIA official API still needs a key; HTML fallback is not long-term.  
-7. Continuous monitor / seed / Telegram production path not closed (and Telegram must not be sent in this task).
+1. No hosted unattended zero-cost soak. Hosted OLX HTTP from a candidate VM: **NOT TESTED**.
+   The successful “second environment” was Cursor WebFetch, not a deployable runtime.
+2. DIM.RIA official API needs `DOMRIA_API_KEY` (unset here). HTML fallback **works** live;
+   free API quota is incompatible with 144 cycles/day even with a key.
+3. LUN RSC remains unofficial.
+4. RIELTOR full-catalog pagination (38 apartment pages) and multi-day polling: not done.
+   Adapter exists; first-page scans are truncated by design.
+5. Continuous monitor / Telegram production path not closed (Telegram must not be sent here).
 
 ## Recommended next action (one)
 
-**Provision nothing yet.** Ordinary OLX HTTP is now proven feasible outside this workstation,
-so the browser-for-OLX spike is **deprioritized**. The single next step is: obtain account
-access to one candidate zero-cost host (Oracle Always Free A1 preferred over GCP `e2-micro`,
-which is irrelevant now that Chromium RAM is not required — even a 1 GB micro may suffice for
-plain HTTP), and run **only** `npm run live:olx` (now with corrected Lviv/category ids) from
-that host at ~10-minute intervals for a bounded soak. If that host is 403-blocked, record it
-and try the other free tier; do **not** add stealth/proxies.
+**Do not provision from this task.** Obtain operator approval for one Oracle Always Free
+`VM.Standard.E2.1.Micro`, then run **only** `npm run live:olx` from that host (real Lviv
+records, not HTTP 200). If no account exists, hosted OLX stays NOT TESTED.
 
 Phase 1 source layer is **not** marked complete.

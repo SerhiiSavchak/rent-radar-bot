@@ -1,6 +1,6 @@
 # rent-radar-bot
 
-Phase 0 prototype for a future Telegram rental monitor. The goal of this phase is **not** a production bot. It is to prove, with live requests, whether OLX Ukraine, DIM.RIA and LUN can currently supply long-term apartment and house rentals around Lviv, and to normalize them into one listing model.
+Phase 0 prototype for a future Telegram rental monitor. The goal of this phase is **not** a production bot. It is to prove, with live requests, whether OLX Ukraine, DIM.RIA, LUN and RIELTOR.UA can currently supply long-term apartment and house rentals around Lviv, and to normalize them into one listing model.
 
 ## Current Phase 0 status
 
@@ -10,6 +10,7 @@ Validated on 2026-09-13 against live sites from a Node.js process:
 |--------|-----------------------------------|---------------|
 | DIM.RIA | Yes (public search HTML + `__INITIAL_STATE__`) | Official API exists but needs `DOMRIA_API_KEY`; HTML fallback used when the key is absent |
 | LUN | Yes (search HTML, JSON-LD + Next.js RSC cards) | No public listings API; structured embedded data |
+| RIELTOR.UA | Yes (public catalog HTML; JSON-LD optional) | `/lvov/flats-rent/`, `/lvov/houses-rent/`; `f-owners=1` is a real filter on primary cards only |
 | OLX | Environment-dependent: `403` CloudFront from this workstation, but plain `api/v1/offers` HTTP **worked from a second (non-residential) environment** on 2026-09-15 | Public JSON API with verified Lviv ids (region 5, city 176, categories 1760/330, `distance=15`); no WAF bypass anywhere |
 
 See [docs/SOURCE_RESEARCH.md](docs/SOURCE_RESEARCH.md) for the measured results.
@@ -22,6 +23,7 @@ Scheduler / live scripts
     +-- OLX Source Adapter
     +-- DIM.RIA Source Adapter
     +-- LUN Source Adapter
+    +-- RIELTOR.UA Source Adapter
              |
              v
         Filters (owner, location/Haversine, property type)
@@ -69,6 +71,7 @@ npm test
 npm run live:olx
 npm run live:domria
 npm run live:lun
+npm run live:rieltor
 npm run live:all
 ```
 
@@ -78,6 +81,7 @@ Aliases:
 npm run test:olx
 npm run test:domria
 npm run test:lun
+npm run test:rieltor
 npm run test:sources
 ```
 
