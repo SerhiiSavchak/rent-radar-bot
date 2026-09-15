@@ -1,8 +1,8 @@
 # Recovery status
 
-Updated: 2026-09-16T01:05+03:00  
+Updated: 2026-09-16T01:06+03:00  
 Branch: `cursor/phase-1-source-layer-closure-8797`  
-HEAD: `689e6d9` + uncommitted recovery fixes (pending commit)
+HEAD: `54281c1` (local ahead of origin by 1; not pushed)
 
 ## Verified workspace state
 
@@ -11,7 +11,7 @@ HEAD: `689e6d9` + uncommitted recovery fixes (pending commit)
 | Git root | `C:/Users/intel/Documents/GitHub/rent-radar-bot` |
 | Remote | `origin` → `https://github.com/SerhiiSavchak/rent-radar-bot.git` |
 | Tracking | was up to date at `689e6d9` before local fixes |
-| Working tree | dirty (recovery docs + owner/probe fixes) |
+| Working tree | clean after `54281c1` |
 | Node | v24.18.0 |
 | Tests | **38 passed** |
 
@@ -35,7 +35,7 @@ HEAD: `689e6d9` + uncommitted recovery fixes (pending commit)
 
 ## Current task
 
-Commit recovery fixes and docs on the feature branch. Phase 1 remains **open** (hosting gate).
+Phase 1 hosting gate remains **open**. Local commit `54281c1` ready to push when auth allows.
 
 ## Findings / blockers
 
@@ -46,11 +46,10 @@ Commit recovery fixes and docs on the feature branch. Phase 1 remains **open** (
 ## Next exact action
 
 ```bash
-git add docs/ evidence/phase-1/ src/filters/owner-filter.ts src/probe/cloudflare-source-probe.ts tests/
-git commit   # after operator request, or proceed if already requested via recovery task
+git push origin cursor/phase-1-source-layer-closure-8797
 ```
 
-Operator next product decision: approve Oracle Always Free HTTP probe **or** accept paid Workers (out of zero-cost scope).
+Then operator decides: approve Oracle Always Free HTTP probe **or** accept paid Workers (out of zero-cost scope).
 
 ## Active temporary resources
 
