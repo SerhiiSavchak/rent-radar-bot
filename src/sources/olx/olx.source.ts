@@ -11,10 +11,39 @@ import { headerBag, httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
 import { parseOlxOffersPayload } from "./olx.parser.ts";
 
-const OLX_APARTMENTS_URL =
-  "https://www.olx.ua/api/v1/offers/?offset=0&limit=10&category_id=1760&region_id=12&city_id=13&sort_by=created_at:desc";
-const OLX_HOUSES_URL =
-  "https://www.olx.ua/api/v1/offers/?offset=0&limit=10&category_id=1758&region_id=12&city_id=13&sort_by=created_at:desc";
+/**
+ * Geo/category ids verified live on 2026-09-15 against public OLX endpoints
+ * (from an environment where ordinary HTTP was not blocked):
+ * - `/api/v1/geo-encoder/regions/`: 5 = Львівська область (the previous hardcoded
+ *   region_id=12 was Черкаська область and city_id=13 was Краснодон, Луганська обл.).
+ * - `/api/v1/geo-encoder/regions/5/cities/`: 176 = Львів.
+ * - category 1760 = довгострокова оренда квартир (`.../kvartiry/dolgosrochnaya-arenda-kvartir/`).
+ * - category 330 = довгострокова оренда будинків (`.../doma/arenda-domov/`; the previous
+ *   hardcoded 1758 was «Продаж квартир»). Confirmed via `/api/v1/offers/<id>` category.id.
+ * - `distance=15` expands the search ~15 km around the city; verified to return suburb
+ *   listings (Солонка, Сокільники, Брюховичі, Зимна Вода, ...) with their own city ids.
+ */
+export const OLX_REGION_ID_LVIV_OBLAST = 5;
+export const OLX_CITY_ID_LVIV = 176;
+export const OLX_DISTANCE_KM = 15;
+export const OLX_CATEGORY_APARTMENTS_LONG_TERM_RENT = 1760;
+export const OLX_CATEGORY_HOUSES_LONG_TERM_RENT = 330;
+
+export function buildOlxOffersUrl(categoryId: number, limit = 10): string {
+  const params = new URLSearchParams({
+    offset: "0",
+    limit: String(limit),
+    category_id: String(categoryId),
+    region_id: String(OLX_REGION_ID_LVIV_OBLAST),
+    city_id: String(OLX_CITY_ID_LVIV),
+    distance: String(OLX_DISTANCE_KM),
+    sort_by: "created_at:desc",
+  });
+  return `https://www.olx.ua/api/v1/offers/?${params.toString()}`;
+}
+
+const OLX_APARTMENTS_URL = buildOlxOffersUrl(OLX_CATEGORY_APARTMENTS_LONG_TERM_RENT);
+const OLX_HOUSES_URL = buildOlxOffersUrl(OLX_CATEGORY_HOUSES_LONG_TERM_RENT);
 const OLX_HTML_URL =
   "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
 

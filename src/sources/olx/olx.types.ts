@@ -36,6 +36,17 @@ export const olxLocationSchema = z
   })
   .passthrough();
 
+export const olxMapSchema = z
+  .object({
+    lat: z.number().optional(),
+    lon: z.number().optional(),
+    // OLX publishes approximate coordinates: radius (km) > 0 or zoom hints that the pin is fuzzy.
+    radius: z.number().optional(),
+    zoom: z.number().optional(),
+    show_detailed: z.boolean().optional(),
+  })
+  .passthrough();
+
 export const olxParamSchema = z
   .object({
     key: z.string().optional(),
@@ -56,6 +67,7 @@ export const olxOfferSchema = z
     business: z.boolean().optional(),
     params: z.array(olxParamSchema).optional(),
     location: olxLocationSchema.optional(),
+    map: olxMapSchema.optional(),
     user: olxUserSchema.optional(),
     photos: z.array(z.object({ link: z.string().optional() }).passthrough()).optional(),
     category: z

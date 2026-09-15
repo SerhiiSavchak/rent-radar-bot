@@ -36,6 +36,19 @@ function sellerSignals(offer: OlxOffer) {
   });
 }
 
+/**
+ * Extract the short ID token from an OLX listing URL (e.g. "11gWHG" from `...-ID11gWHG.html`).
+ *
+ * Use string comparison of tokens for exact identity matching (e.g. against LUN originalUrl).
+ * Do NOT base62-decode the token into the numeric offer id: verified live on 2026-09-15 that
+ * token<->id is not a consistent base62 mapping (offer 934944232 carries token 11gWHG while
+ * offer 934948076 carries token 11gVHG).
+ */
+export function extractOlxUrlToken(url: string): string | undefined {
+  const match = /ID([A-Za-z0-9]+)\.html/i.exec(url);
+  return match?.[1];
+}
+
 export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Listing | undefined {
   const parsed = olxOfferSchema.safeParse(offerRaw);
   if (!parsed.success) {
@@ -52,7 +65,14 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
   const district = offer.location?.district?.name;
   const rawLocation = [city, district].filter(Boolean).join(", ") || "unknown";
   const price = readPrice(offer);
-  const published = offer.last_refresh_time ?? offer.created_time;
+  // Real api/v1/offers payloads put coordinates in `map` (with an approximation radius),
+  // not in `location`. Keep `location.lat/lon` as a fallback for older shapes.
+  const lat = offer.map?.lat ?? offer.location?.lat;
+  const lon = offer.map?.lon ?? offer.location?.lon;
+  // publishedAt means creation time; last_refresh_time is a bump/renewal and is kept separately
+  // so refreshed old listings are not mistaken for new ones.
+  const published = offer.created_time ?? offer.last_refresh_time;
+  const urlToken = extractOlxUrlToken(url);
   const listing: Listing = {
     source: "olx",
     sourceId,
@@ -62,8 +82,8 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
       raw: rawLocation,
       ...(city ? { city } : {}),
       ...(district ? { district } : {}),
-      ...(offer.location?.lat !== undefined ? { latitude: offer.location.lat } : {}),
-      ...(offer.location?.lon !== undefined ? { longitude: offer.location.lon } : {}),
+      ...(lat !== undefined ? { latitude: lat } : {}),
+      ...(lon !== undefined ? { longitude: lon } : {}),
     },
     propertyType: detectPropertyType({ categoryText: `${offer.title} ${JSON.stringify(offer.category ?? {})}` }),
     sellerType: owner.sellerType,
@@ -72,6 +92,9 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
       transportCandidate: "public JSON API api/v1/offers",
+      ...(urlToken ? { urlToken } : {}),
+      ...(offer.map?.radius !== undefined ? { coordinatesRadiusKm: offer.map.radius } : {}),
+      ...(offer.last_refresh_time ? { lastRefreshTime: offer.last_refresh_time } : {}),
     },
   };
   if (offer.description) {

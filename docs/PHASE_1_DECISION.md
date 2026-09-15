@@ -44,6 +44,19 @@ Ownership is classified **only** from documented `characteristics_values["1437"]
 
 `business: false` is preserved as **private-account evidence**. It is **not** treated as property ownership.
 
+### OLX (query + parser, second pass later on 2026-09-15)
+
+- Search ids corrected and regression-tested (`tests/olx-parser.test.ts`): region **5**,
+  city **176**, categories **1760/330**, `distance=15`. The old ids silently searched
+  Краснодон and «Продаж квартир».
+- Coordinates are now read from `map.{lat,lon}` (where the real API puts them) with the
+  approximation `radius` preserved in metadata; the old code read `location.lat/lon`, which
+  does not exist in real payloads, so live records would have lost coordinates entirely.
+- `publishedAt` now uses `created_time`; `last_refresh_time` is kept separately so bumped old
+  listings are not mistaken for new ones.
+- `extractOlxUrlToken` added for exact identity matching by URL token **string** (numeric
+  base62 decoding of the token was disproven on a live counterexample).
+
 ### LUN
 
 `inspectLunHtml` distinguishes:
@@ -54,14 +67,30 @@ Ownership is classified **only** from documented `characteristics_values["1437"]
 
 Zero listings with a broken page is no longer reported as a quiet empty market.
 
-## OLX access
+## OLX access (updated later on 2026-09-15)
 
-- **This environment (Windows Node HTTP, 2026-09-15):** `npm run live:olx` → apartments JSON **403** CloudFront, houses JSON **200 empty `data:[]`**, HTML **403**. `resultKind=http_error`. See `evidence/phase-1/olx-http.md`.  
-- **Second environment (cloud / residential / Xvfb):** **NOT TESTED** — no other runtime is available in this workspace.  
-- 10-minute repeat / fresh-process validation of a successful HTTP route: **not applicable** while HTTP remains blocked or empty.  
-- Browser baseline for LUN∩OLX matching: **NOT TESTED** (no browser stack in repo).
+- **This workstation (Windows Node HTTP):** apartments JSON **403** CloudFront, HTML **403**;
+  retested with corrected query params — still **403**. The block is per-environment.
+- **Second environment (isolated fetch server, ordinary HTTP, no bypass): TESTED and WORKING.**
+  `api/v1/offers` returned **200 with real Lviv listings** (`total_elements=1000` apartments,
+  80 houses within 15 km), fresh records created the same evening. Identical queries ~10 min
+  apart returned live shifted windows (distinct `search_id`s, no shared cache). See
+  `evidence/phase-1/olx-http.md`.
+- **Root cause of the old “houses 200 empty”:** the hardcoded query ids were wrong —
+  `region_id=12&city_id=13` is **Краснодон (Луганська обл.)** and `category_id=1758` is
+  **«Продаж квартир»**. Corrected and regression-tested: region 5 (Львівська), city 176
+  (Львів), categories **1760** (оренда квартир) / **330** (оренда будинків), `distance=15`
+  for the ~15 km radius (suburbs have their own city ids).
+- Multi-day stability and a fresh-process soak from a runtime we control: **still not done**.
+- Browser baseline for LUN∩OLX matching: **NOT TESTED** (no browser stack in repo); a direct
+  OLX HTTP baseline was used instead.
 
-LUN first-page sample 2026-09-15 (`npm run research:lun-origins`): 24 cards, **22 original hosts `olx.ua`**, 2 `dom.ria.com`, 0 `rieltor.ua`. That is **partial overlap**, not complete OLX coverage. Switching the product to “OLX via LUN only” would be a **scope change**, not an approved replacement. See `evidence/phase-1/lun-origins.md`.
+LUN∩OLX (2026-09-15, same observation window, matched by URL token string): LUN flats first
+page had 19 olx.ua originals; **3 of 19** appeared in a 52-record direct OLX created_at
+window (~17:05–21:30). The unfiltered OLX feed moves ~50 listings per 4.5 h while LUN's
+owner-filtered first page spans days — a first-page LUN scan cannot replace direct 10-minute
+OLX polling without deeper pagination. Partial overlap remains **not** complete OLX coverage;
+“OLX via LUN only” stays a **scope change**. See `evidence/phase-1/lun-origins.md`.
 
 ## RIELTOR
 
@@ -71,9 +100,14 @@ No adapter. LUN may surface `rieltor.ua` original URLs. Pagination/truncation de
 
 Compared from official docs, not from a live VM:
 
-**A. Direct OLX HTTP** — cheapest if it works; currently fails or is empty in this environment.
+**A. Direct OLX HTTP** — **works via ordinary HTTP from at least one non-residential
+environment** (verified 2026-09-15 with real records, correct geo/category params, and a
+10-minute repeat). Fails with 403 from this workstation. Whether a specific zero-cost host
+is in the unblocked set is the remaining question — no browser requirement demonstrated so far.
 
-**B. Indirect OLX via LUN** — HTTP HTML already works here; coverage incomplete; unofficial RSC; timestamps are ingest times.
+**B. Indirect OLX via LUN** — HTTP HTML already works here; coverage incomplete (3/19 token
+matches against a same-evening direct window; first-page cadence too slow versus ~50 OLX
+listings per 4.5 h); unofficial RSC; timestamps are ingest times.
 
 **C. One shared Node runtime, browser only for OLX**
 
@@ -92,8 +126,10 @@ Trial credits ≠ permanent zero-cost. Free compute ≠ a proven free **complete
 ## Remaining Phase 1 blockers
 
 1. No hosted unattended zero-cost soak.  
-2. No second environment for OLX HTTP.  
-3. No in-repo Chromium/Xvfb evidence.  
+2. ~~No second environment for OLX HTTP~~ → **resolved for feasibility** (ordinary HTTP works
+   from a non-residential environment); still open: proving a specific zero-cost host is
+   unblocked and stable over days.  
+3. No in-repo Chromium/Xvfb evidence — and, per item 2, a browser may not be needed at all.  
 4. No RIELTOR adapter / pagination contract.  
 5. LUN RSC is unofficial.  
 6. DIM.RIA official API still needs a key; HTML fallback is not long-term.  
@@ -101,6 +137,12 @@ Trial credits ≠ permanent zero-cost. Free compute ≠ a proven free **complete
 
 ## Recommended next action (one)
 
-**Provision nothing yet.** If OLX independence remains required, the smallest evidence step is: obtain **account access** to one Always Free **Ampere A1 (12 GB)** VM (or any existing non-datacenter host the operator already has), then run **only** the existing `npm run live:olx` ordinary HTTP probe from that host. If HTTP still 403, record it; do **not** add stealth/proxies. Only then decide whether a browser-for-OLX spike is even in scope.
+**Provision nothing yet.** Ordinary OLX HTTP is now proven feasible outside this workstation,
+so the browser-for-OLX spike is **deprioritized**. The single next step is: obtain account
+access to one candidate zero-cost host (Oracle Always Free A1 preferred over GCP `e2-micro`,
+which is irrelevant now that Chromium RAM is not required — even a 1 GB micro may suffice for
+plain HTTP), and run **only** `npm run live:olx` (now with corrected Lviv/category ids) from
+that host at ~10-minute intervals for a bounded soak. If that host is 403-blocked, record it
+and try the other free tier; do **not** add stealth/proxies.
 
 Phase 1 source layer is **not** marked complete.
