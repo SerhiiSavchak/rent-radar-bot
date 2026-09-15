@@ -119,6 +119,13 @@ workstation. Hosted zero-cost IP: **NOT TESTED**.
 Trial credits ≠ permanent zero-cost. Free compute ≠ a proven free complete deployment.
 OLX may still 403 a cloud IP.
 
+## Cloudflare Workers Free (bounded probe, 2026-09-16)
+
+Isolated probe lives in `probe/cloudflare-workers/` + `src/probe/`. No D1/SQLite/Telegram.
+Bundle dry-run: **835.72 KiB**. `wrangler whoami` unauthenticated. Hosted OLX **NOT TESTED**.
+Parser CPU on Free (10 ms) **UNPROVEN**. Full four-source cycle **OPEN**.
+Details: `evidence/phase-1/cloudflare-workers.md`.
+
 ## Remaining Phase 1 blockers
 
 1. No hosted unattended zero-cost soak. Hosted OLX HTTP from a candidate VM: **NOT TESTED**.
@@ -132,8 +139,8 @@ OLX may still 403 a cloud IP.
 
 ## Recommended next action (one)
 
-**Do not provision from this task.** Obtain operator approval for one Oracle Always Free
-`VM.Standard.E2.1.Micro`, then run **only** `npm run live:olx` from that host (real Lviv
-records, not HTTP 200). If no account exists, hosted OLX stays NOT TESTED.
+**Do not provision Oracle from this task.** After `wrangler login` on the operator’s
+Workers Free account, deploy **only** `probe/cloudflare-workers` and GET `/live-olx`
+with `x-probe-token`. If no Cloudflare login exists, hosted OLX stays NOT TESTED.
 
 Phase 1 source layer is **not** marked complete.

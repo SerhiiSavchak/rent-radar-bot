@@ -27,7 +27,9 @@
     "test:lun": "tsx src/scripts/test-lun.ts",
     "test:rieltor": "tsx src/scripts/test-rieltor.ts",
     "test:sources": "tsx src/scripts/test-all-sources.ts",
-    "start": "tsx src/index.ts"
+    "probe:cf:fixtures": "tsx src/scripts/probe-cloudflare-local.ts fixtures",
+    "probe:cf:olx": "tsx src/scripts/probe-cloudflare-local.ts live-olx",
+    "probe:cf:bundle": "npx wrangler deploy --dry-run --outdir ../../dist-cf-probe --config probe/cloudflare-workers/wrangler.toml"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

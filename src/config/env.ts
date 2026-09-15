@@ -114,7 +114,7 @@ function parsePropertyTypes(raw: string): PropertyType[] {
   return [...new Set(values)];
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
   const parsed = envSchema.parse(env);
   const lunPoll = parsed.LUN_POLL_INTERVAL_SECONDS ?? parsed.POLL_INTERVAL_SECONDS;
   const officialDomria = Boolean(parsed.DOMRIA_API_KEY);

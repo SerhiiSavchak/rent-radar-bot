@@ -4,7 +4,15 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", "data/**", "tmp-probe/**"],
+    ignores: [
+      "dist/**",
+      "dist-cf-probe/**",
+      "probe/cloudflare-workers/dist-cf-probe/**",
+      "node_modules/**",
+      "data/**",
+      "tmp-probe/**",
+      "probe/cloudflare-workers/.wrangler/**",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

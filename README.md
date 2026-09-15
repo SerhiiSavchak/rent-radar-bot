@@ -73,6 +73,9 @@ npm run live:domria
 npm run live:lun
 npm run live:rieltor
 npm run live:all
+npm run probe:cf:fixtures
+npm run probe:cf:olx
+npm run probe:cf:bundle
 ```
 
 Aliases:
