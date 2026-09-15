@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runFixtureProbe } from "../src/probe/cloudflare-source-probe.ts";
+import { isOlxTransportBlocked, runFixtureProbe } from "../src/probe/cloudflare-source-probe.ts";
 import { largestAvailableFixture } from "../src/probe/fixtures.ts";
 
 describe("Cloudflare source probe fixtures", () => {
@@ -18,5 +18,19 @@ describe("Cloudflare source probe fixtures", () => {
     expect(largest?.bytes).toBeGreaterThan(1_000_000);
     expect(largest?.accepted).toBe(20);
     expect(largestAvailableFixture().name).toContain("1_2MiB");
+  });
+
+  it("marks OLX blocked from JSON 403 notes even when last status is HTML 200", () => {
+    const notes = [
+      "https://www.olx.ua/api/v1/offers/?category_id=1760 -> 403 content-type=text/html; server=CloudFront",
+      "HTML https://www.olx.ua/... -> 200 content-type=text/html; server=nginx",
+    ];
+    expect(isOlxTransportBlocked(notes, 200)).toBe(true);
+    expect(
+      isOlxTransportBlocked(
+        ["https://www.olx.ua/api/v1/offers/?category_id=1760 -> 200 content-type=application/json; server=CloudFront"],
+        200,
+      ),
+    ).toBe(false);
   });
 });

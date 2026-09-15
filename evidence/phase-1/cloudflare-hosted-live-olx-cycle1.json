@@ -1,0 +1,65 @@
+{
+  "capturedAt": "2026-09-15T21:25:22.768Z",
+  "head": "689e6d9",
+  "workerUrl": "https://rent-radar-phase1-probe.rrb-phase1-free.workers.dev",
+  "httpStatus": 200,
+  "cfRay": "a3bab41d5a2c324d-VIE",
+  "serverTiming": null,
+  "elapsedMs": 644,
+  "runtime": "cloudflare-workers",
+  "apartments": {
+    "resultKind": "ok",
+    "httpStatus": 200,
+    "contentType": "application/json",
+    "elapsedMs": 387,
+    "extracted": 10,
+    "accepted": 10,
+    "blocked": false,
+    "sellerTypes": {
+      "business": 9,
+      "unknown": 1
+    },
+    "cities": [
+      "Басівка",
+      "Львів"
+    ],
+    "propertyTypes": {
+      "apartment": 7,
+      "unknown": 3
+    },
+    "withCoordinates": 10
+  },
+  "houses": {
+    "resultKind": "ok",
+    "httpStatus": 200,
+    "contentType": "application/json",
+    "elapsedMs": 188,
+    "extracted": 10,
+    "accepted": 10,
+    "blocked": false,
+    "sellerTypes": {
+      "business": 10
+    },
+    "cities": [
+      "Львів",
+      "Сокільники",
+      "Підрясне",
+      "Брюховичі",
+      "Зимна Вода",
+      "Великий Дорошів"
+    ],
+    "propertyTypes": {
+      "house": 9,
+      "unknown": 1
+    },
+    "withCoordinates": 10
+  },
+  "notesRedacted": {
+    "apartments": [
+      "https://www.olx.ua/api/v1/offers/?offset=0&limit=10&category_id=1760&region_id=5&city_id=176&distance=15&sort_by=created_at%3Adesc -> 200 content-type=application/json; charset=utf-8; server=cloudflare; x-cache=Miss from"
+    ],
+    "houses": [
+      "https://www.olx.ua/api/v1/offers/?offset=0&limit=10&category_id=330&region_id=5&city_id=176&distance=15&sort_by=created_at%3Adesc -> 200 content-type=application/json; charset=utf-8; server=cloudflare; x-cache=Miss from "
+    ]
+  }
+}

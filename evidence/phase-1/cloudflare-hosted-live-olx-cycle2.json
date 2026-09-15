@@ -1,0 +1,48 @@
+{
+  "cycle": 2,
+  "capturedAt": "2026-09-15T21:49:40.865Z",
+  "httpStatus": 200,
+  "cfRay": "a3bad7b69f275b7e-VIE",
+  "apartments": {
+    "resultKind": "ok",
+    "httpStatus": 200,
+    "contentType": "application/json",
+    "elapsedMs": 294,
+    "extracted": 10,
+    "blocked": true,
+    "cities": [
+      "Сокільники",
+      "Львів"
+    ],
+    "propertyTypes": {
+      "apartment": 7,
+      "unknown": 3
+    },
+    "sellerTypes": {
+      "business": 9,
+      "unknown": 1
+    }
+  },
+  "houses": {
+    "resultKind": "ok",
+    "httpStatus": 200,
+    "contentType": "application/json",
+    "elapsedMs": 208,
+    "extracted": 10,
+    "blocked": true,
+    "cities": [
+      "Львів",
+      "Сокільники",
+      "Брюховичі",
+      "Зимна Вода",
+      "Великий Дорошів"
+    ],
+    "propertyTypes": {
+      "house": 10
+    },
+    "sellerTypes": {
+      "unknown": 1,
+      "business": 9
+    }
+  }
+}

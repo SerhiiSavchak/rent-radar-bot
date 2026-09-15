@@ -29,10 +29,27 @@ describe("owner classifier", () => {
     expect(result.filterConsidersPrivateOwner).toBe(true);
   });
 
-  it("classifies agency id as agent even if text claims owner", () => {
+  it("does not promote agency_id alone to agent or owner", () => {
     const result = classifyOwner({
       agencyId: 52150,
       text: "від власника",
+    });
+    expect(result.sellerType).toBe("unknown");
+    expect(result.sellerEvidence.some((item) => item.includes("agency id"))).toBe(true);
+  });
+
+  it("keeps platform owner when an agency id is also present", () => {
+    const result = classifyOwner({
+      platformOwner: true,
+      agencyId: 52150,
+    });
+    expect(result.sellerType).toBe("owner");
+  });
+
+  it("classifies explicit platform agent labels as agent", () => {
+    const result = classifyOwner({
+      platformAgent: true,
+      agencyId: 52150,
     });
     expect(result.sellerType).toBe("agent");
   });

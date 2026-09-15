@@ -1,0 +1,49 @@
+{
+  "cycle": 3,
+  "capturedAt": "2026-09-15T22:01:50.446Z",
+  "httpStatus": 200,
+  "cfRay": "a3bae986fdf29ce0-VIE",
+  "apartments": {
+    "resultKind": "ok",
+    "httpStatus": 200,
+    "contentType": "application/json",
+    "elapsedMs": 310,
+    "extracted": 10,
+    "blocked": false,
+    "cities": [
+      "Львів",
+      "Винники"
+    ],
+    "propertyTypes": {
+      "apartment": 7,
+      "unknown": 3
+    },
+    "sellerTypes": {
+      "business": 9,
+      "unknown": 1
+    }
+  },
+  "houses": {
+    "resultKind": "ok",
+    "httpStatus": 200,
+    "contentType": "application/json",
+    "elapsedMs": 177,
+    "extracted": 10,
+    "blocked": false,
+    "cities": [
+      "Підрясне",
+      "Солонка",
+      "Львів",
+      "Сокільники",
+      "Брюховичі",
+      "Зимна Вода",
+      "Великий Дорошів"
+    ],
+    "propertyTypes": {
+      "house": 10
+    },
+    "sellerTypes": {
+      "business": 10
+    }
+  }
+}

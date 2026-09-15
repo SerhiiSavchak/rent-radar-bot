@@ -68,25 +68,23 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     };
   }
 
-  if (
-    signals.platformAgent === true ||
-    (signals.agencyId !== undefined && signals.agencyId !== null && signals.agencyId !== 0 && signals.agencyId !== "")
-  ) {
-    return {
-      sellerType: "agent",
-      confidence: "high",
-      sellerEvidence: uniqueEvidence,
-      filterConsidersPrivateOwner: false,
-    };
-  }
-
-  const strongOwner = signals.platformOwner === true;
-  if (strongOwner) {
+  // Platform owner beats agency_id. agency_id alone is evidence only (DIM.RIA rule);
+  // LUN/RIELTOR must pass platformAgent when the platform explicitly labels an agent.
+  if (signals.platformOwner === true) {
     return {
       sellerType: "owner",
       confidence: "high",
       sellerEvidence: uniqueEvidence,
       filterConsidersPrivateOwner: true,
+    };
+  }
+
+  if (signals.platformAgent === true) {
+    return {
+      sellerType: "agent",
+      confidence: "high",
+      sellerEvidence: uniqueEvidence,
+      filterConsidersPrivateOwner: false,
     };
   }
 

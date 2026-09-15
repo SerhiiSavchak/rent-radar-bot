@@ -1,0 +1,57 @@
+{
+  "capturedAt": "2026-09-15T21:42:04.197Z",
+  "head": "689e6d9",
+  "httpStatus": 200,
+  "elapsedMs": 192,
+  "runtime": "cloudflare-workers",
+  "fixtures": [
+    {
+      "source": "olx",
+      "fixture": "representative-2-offers",
+      "bytes": 775,
+      "elapsedMs": 0,
+      "resultKind": "ok",
+      "accepted": 2
+    },
+    {
+      "source": "olx",
+      "fixture": "wide-40-offers",
+      "bytes": 11412,
+      "elapsedMs": 0,
+      "resultKind": "ok",
+      "accepted": 40
+    },
+    {
+      "source": "rieltor",
+      "fixture": "catalog-20-cards",
+      "bytes": 12002,
+      "elapsedMs": 0,
+      "resultKind": "ok",
+      "accepted": 20
+    },
+    {
+      "source": "rieltor",
+      "fixture": "rieltor-20-cards-plus-1_2MiB-img-padding",
+      "bytes": 1142802,
+      "elapsedMs": 0,
+      "resultKind": "ok",
+      "accepted": 20
+    },
+    {
+      "source": "lun",
+      "fixture": "rsc-one-card",
+      "bytes": 483,
+      "elapsedMs": 0,
+      "resultKind": "ok",
+      "accepted": 1
+    },
+    {
+      "source": "domria",
+      "fixture": "initial-state-one-listing",
+      "bytes": 538,
+      "elapsedMs": 0,
+      "resultKind": "ok",
+      "accepted": 1
+    }
+  ]
+}

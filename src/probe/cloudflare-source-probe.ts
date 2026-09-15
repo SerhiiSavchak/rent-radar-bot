@@ -80,7 +80,7 @@ async function inspectOlxCategory(
     }
   }
   const status = result.httpStatus;
-  const blocked = status === 403 || status === 429;
+  const blocked = isOlxTransportBlocked(result.rawNotes ?? [], status);
   const contentType = contentTypeFromNotes(result.rawNotes ?? []);
   const resultKind = result.resultKind ?? result.health.resultKind;
   return {
@@ -117,4 +117,15 @@ function sanitizeNotes(notes: string[]): string[] {
       .replace(/api_key=[^&\s]+/gi, "api_key=redacted")
       .replace(/Body starts:[\s\S]{0,180}/g, "Body starts: [redacted]"),
   );
+}
+
+/**
+ * Prefer JSON notes: HTML may still be 200 while api/v1/offers is 403 CloudFront.
+ * Do not treat "CloudFront" alone as blocked — CDN headers appear on 200 JSON too.
+ */
+export function isOlxTransportBlocked(notes: string[], httpStatus?: number): boolean {
+  if (httpStatus === 403 || httpStatus === 429) {
+    return true;
+  }
+  return /api\/v1\/offers\/[^\n]*-> (403|429)\b/.test(notes.join("\n"));
 }
