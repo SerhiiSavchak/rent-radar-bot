@@ -2,22 +2,13 @@ import type { FetchResultKind } from "../domain/source.ts";
 import { OlxSource } from "../sources/olx/olx.source.ts";
 import { runAllFixtureParses, type FixtureParseResult } from "./fixtures.ts";
 
-export type ProbeTransportNote = {
-  httpStatus?: number;
-  contentType?: string;
-  bytes?: number;
-  elapsedMs: number;
-  cpuMs: number | null;
-  cpuMsSource: "not_available_in_handler" | "workers_invocation_log";
-};
-
 export type LiveSourceProbeResult = {
   source: string;
   mode: "live-olx";
+  category: "apartments" | "houses";
   resultKind?: FetchResultKind;
   httpStatus?: number;
-  contentType?: string | undefined;
-  bytes?: number;
+  contentType?: string;
   elapsedMs: number;
   cpuMs: null;
   cpuMsNote: string;
@@ -36,7 +27,10 @@ export type ProbeReport = {
   runtime: "local-node" | "cloudflare-workers";
   cpuWarning: string;
   fixtures: FixtureParseResult[];
-  liveOlx?: LiveSourceProbeResult;
+  liveOlx?: {
+    apartments: LiveSourceProbeResult;
+    houses: LiveSourceProbeResult;
+  };
 };
 
 const CPU_WARNING =
@@ -51,10 +45,26 @@ export function runFixtureProbe(runtime: ProbeReport["runtime"] = "local-node"):
   };
 }
 
-export async function runLiveOlxProbe(): Promise<LiveSourceProbeResult> {
-  const started = Date.now();
+export async function runLiveOlxProbe(): Promise<{
+  apartments: LiveSourceProbeResult;
+  houses: LiveSourceProbeResult;
+}> {
   const source = new OlxSource();
-  const result = await source.inspectLatest({ limit: 10, includeApartments: true, includeHouses: true });
+  const apartments = await inspectOlxCategory(source, "apartments");
+  const houses = await inspectOlxCategory(source, "houses");
+  return { apartments, houses };
+}
+
+async function inspectOlxCategory(
+  source: OlxSource,
+  category: "apartments" | "houses",
+): Promise<LiveSourceProbeResult> {
+  const started = Date.now();
+  const result = await source.inspectLatest({
+    limit: 10,
+    includeApartments: category === "apartments",
+    includeHouses: category === "houses",
+  });
   const sellerTypes: Record<string, number> = {};
   const propertyTypes: Record<string, number> = {};
   const cities = new Set<string>();
@@ -76,6 +86,7 @@ export async function runLiveOlxProbe(): Promise<LiveSourceProbeResult> {
   return {
     source: "olx",
     mode: "live-olx",
+    category,
     ...(resultKind !== undefined ? { resultKind } : {}),
     ...(status !== undefined ? { httpStatus: status } : {}),
     ...(contentType !== undefined ? { contentType } : {}),

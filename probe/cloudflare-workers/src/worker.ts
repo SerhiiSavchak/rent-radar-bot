@@ -25,11 +25,11 @@ function json(data: unknown, status = 200): Response {
 
 export default {
   async fetch(request: Request, env: ProbeEnv): Promise<Response> {
-    if (request.method !== "GET") {
-      return json({ error: "method_not_allowed" }, 405);
-    }
     if (!authorized(request, env)) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (request.method !== "GET") {
+      return json({ error: "method_not_allowed" }, 405);
     }
     const url = new URL(request.url);
     if (url.pathname === "/fixtures") {
@@ -41,8 +41,9 @@ export default {
         generatedAt: new Date().toISOString(),
         runtime: "cloudflare-workers",
         cpuWarning:
-          "elapsedMs is wall time. Platform CPU is not in this JSON; read cpuTime from Workers Logs after deploy.",
-        liveOlx: live,
+          "elapsedMs is wall time. Platform CPU is not in this JSON; read cpuTime from wrangler tail / Workers Logs after deploy.",
+        apartments: live.apartments,
+        houses: live.houses,
       });
     }
     return json({ error: "not_found", routes: ["/fixtures", "/live-olx"] }, 404);
