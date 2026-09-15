@@ -70,6 +70,12 @@ web_modules/
 .env.*
 !.env.example
 
+# Local probe dumps and SQLite
+tmp-probe/
+data/
+*.sqlite
+*.sqlite-journal
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
