@@ -112,17 +112,27 @@ export class OlxSource implements ListingSourceAdapter {
     }
 
     const unique = dedupe(listings).slice(0, options?.limit ?? 10);
-    const healthy = unique.length > 0;
+    const resultKind =
+      unique.length > 0
+        ? "ok"
+        : lastStatus !== undefined && lastStatus !== 200
+          ? "http_error"
+          : jsonSucceeded
+            ? "valid_empty"
+            : "parser_failure";
+    const healthy = resultKind === "ok" || resultKind === "valid_empty";
     logger.info("olx.inspect", {
       status: lastStatus,
       count: unique.length,
       transport,
+      resultKind,
     });
 
     return {
       listings: unique,
       transport,
       dataKind: "LIVE DATA",
+      resultKind,
       ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
       rawNotes: notes,
       health: {
@@ -130,6 +140,7 @@ export class OlxSource implements ListingSourceAdapter {
         healthy,
         checkedAt: new Date(),
         latencyMs: Date.now() - started,
+        resultKind,
         ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
         transport,
         message: healthy

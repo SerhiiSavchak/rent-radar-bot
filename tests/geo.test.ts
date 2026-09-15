@@ -21,7 +21,12 @@ describe("haversine", () => {
 });
 
 describe("location filter", () => {
-  const config = { centerLat: 49.8397, centerLng: 24.0297, radiusKm: 15 };
+  const config = {
+    centerLat: 49.8397,
+    centerLng: 24.0297,
+    radiusKm: 15,
+    unknownPolicy: "exclude" as const,
+  };
 
   it("does not treat the word Lviv as a radius match", () => {
     const result = filterByLocation({ city: "Lviv" }, config);
@@ -33,5 +38,11 @@ describe("location filter", () => {
     const result = filterByLocation({ latitude: 49.84, longitude: 24.03 }, config);
     expect(result.matched).toBe(true);
     expect(result.reason).toBe("within-radius");
+  });
+
+  it("can include listings with unknown coordinates when policy is include", () => {
+    const result = filterByLocation({ city: "Lviv" }, { ...config, unknownPolicy: "include" });
+    expect(result.matched).toBe(true);
+    expect(result.reason).toBe("allowed-missing-coordinates");
   });
 });

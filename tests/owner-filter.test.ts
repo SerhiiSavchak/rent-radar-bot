@@ -12,6 +12,14 @@ describe("owner classifier", () => {
     expect(result.sellerEvidence.some((item) => item.includes("owner/no-intermediary"))).toBe(true);
   });
 
+  it("does not treat private-account flags as property ownership", () => {
+    const result = classifyOwner({
+      platformPrivate: true,
+    });
+    expect(result.sellerType).toBe("unknown");
+    expect(result.filterConsidersPrivateOwner).toBe(false);
+  });
+
   it("requires a platform owner signal", () => {
     const result = classifyOwner({
       platformOwner: true,

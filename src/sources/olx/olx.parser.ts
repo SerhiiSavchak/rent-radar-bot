@@ -24,10 +24,10 @@ function sellerSignals(offer: OlxOffer) {
   const business = offer.business === true || Boolean(company);
   const extra = collectTextEvidence(`${offer.title ?? ""} ${offer.description ?? ""}`);
   if (offer.business === false) {
-    extra.unshift("OLX business flag = false");
+    extra.unshift("OLX business flag = false (private account, not proof of property ownership)");
   }
   return classifyOwner({
-    platformPrivate: offer.business === false && !company,
+    platformPrivate: offer.business === false,
     platformBusiness: business,
     isBusiness: business,
     agencyName: company ?? undefined,

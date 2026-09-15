@@ -113,7 +113,9 @@ export function parseLunCard(
     text,
     extraEvidence: [
       ...collectTextEvidence(text),
+      ...(card.isOwner === true ? ["lun.isOwner=true"] : []),
       ...(card.site?.displayName ? [`aggregated site = ${card.site.displayName}`] : []),
+      ...(card.urlRaw ? [`originalUrl=${card.urlRaw}`] : []),
     ],
   });
   const coords = geoFromCard(card);
@@ -137,11 +139,13 @@ export function parseLunCard(
       categoryText: `${title} ${jsonLd && Array.isArray(jsonLd["@type"]) ? jsonLd["@type"].join(" ") : ""}`,
     }),
     sellerType: owner.sellerType,
+    sellerConfidence: owner.confidence,
     sellerEvidence: owner.sellerEvidence,
     discoveredAt,
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
       originalUrl: card.urlRaw,
+      originalHost: originalListingHost(card.urlRaw),
       withoutCommission: card.withoutCommission,
       isOwner: card.isOwner,
     },
@@ -178,9 +182,82 @@ export function parseLunCard(
 }
 
 export function parseLunHtml(html: string, discoveredAt = new Date()): Listing[] {
-  const cards = extractLunCards(html);
+  return inspectLunHtml(html, discoveredAt).listings;
+}
+
+export type LunHtmlInspection = {
+  listings: Listing[];
+  hasNextFlight: boolean;
+  hasRscCardsMarker: boolean;
+  hasJsonLdList: boolean;
+  rawCardCount: number;
+  validatedCardCount: number;
+  validationRatio: number;
+  resultKind: "ok" | "valid_empty" | "parser_failure";
+};
+
+export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtmlInspection {
+  const payload = extractNextFlightPayload(html);
+  const hasNextFlight = Boolean(payload);
+  const hasRscCardsMarker = Boolean(payload?.includes('"realties":{"cards":['));
   const jsonLd = parseLunJsonLdItems(html);
-  return cards
+  const hasJsonLdList = jsonLd.length > 0;
+  const cards = extractLunCards(html);
+  const rawMatch = payload?.match(/"realties":\{"cards":\[/);
+  let rawCardCount = 0;
+  if (payload && rawMatch) {
+    const start = payload.indexOf("[", payload.indexOf('"realties":{"cards":['));
+    if (start >= 0) {
+      try {
+        let depth = 0;
+        for (let i = start; i < payload.length; i += 1) {
+          if (payload[i] === "[") depth += 1;
+          else if (payload[i] === "]") {
+            depth -= 1;
+            if (depth === 0) {
+              const parsed = JSON.parse(payload.slice(start, i + 1)) as unknown;
+              rawCardCount = Array.isArray(parsed) ? parsed.length : 0;
+              break;
+            }
+          }
+        }
+      } catch {
+        rawCardCount = 0;
+      }
+    }
+  }
+  const listings = cards
     .map((card, index) => parseLunCard(card, jsonLd[index], discoveredAt))
     .filter((item): item is Listing => Boolean(item));
+  const validatedCardCount = cards.length;
+  const validationRatio = rawCardCount > 0 ? validatedCardCount / rawCardCount : 0;
+  let resultKind: LunHtmlInspection["resultKind"];
+  if (!hasRscCardsMarker) {
+    resultKind = "parser_failure";
+  } else if (rawCardCount === 0) {
+    resultKind = "valid_empty";
+  } else {
+    resultKind = "ok";
+  }
+  return {
+    listings,
+    hasNextFlight,
+    hasRscCardsMarker,
+    hasJsonLdList,
+    rawCardCount,
+    validatedCardCount,
+    validationRatio,
+    resultKind,
+  };
+}
+
+export function originalListingHost(urlRaw: string | undefined): string | undefined {
+  if (!urlRaw) {
+    return undefined;
+  }
+  try {
+    return new URL(urlRaw).hostname.replace(/^www\./, "");
+  } catch {
+    return undefined;
+  }
 }

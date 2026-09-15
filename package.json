@@ -19,6 +19,7 @@
     "live:domria": "tsx src/scripts/test-domria.ts",
     "live:lun": "tsx src/scripts/test-lun.ts",
     "live:all": "tsx src/scripts/test-all-sources.ts",
+    "research:lun-origins": "tsx src/scripts/research-lun-origins.ts",
     "test:olx": "tsx src/scripts/test-olx.ts",
     "test:domria": "tsx src/scripts/test-domria.ts",
     "test:lun": "tsx src/scripts/test-lun.ts",

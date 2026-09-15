@@ -22,6 +22,7 @@ describe("OLX parser", () => {
     expect(listings[0]?.source).toBe("olx");
     expect(listings[0]?.price?.amount).toBe(15000);
     expect(listings[0]?.location.latitude).toBeUndefined();
-    expect(listings[0]?.sellerType).toBe("owner");
+    expect(listings[0]?.sellerType).toBe("unknown");
+    expect(listings[0]?.sellerEvidence?.some((item) => item.includes("private account"))).toBe(true);
   });
 });

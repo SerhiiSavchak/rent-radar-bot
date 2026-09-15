@@ -33,7 +33,7 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     evidence.push("platform seller type = owner");
   }
   if (signals.platformPrivate === true) {
-    evidence.push("platform seller type = private");
+    evidence.push("platform private account flag (not proof of property ownership)");
   }
   if (signals.platformAgent === true) {
     evidence.push("platform seller type = agent");
@@ -80,7 +80,7 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     };
   }
 
-  const strongOwner = signals.platformOwner === true || signals.platformPrivate === true;
+  const strongOwner = signals.platformOwner === true;
   if (strongOwner) {
     return {
       sellerType: "owner",

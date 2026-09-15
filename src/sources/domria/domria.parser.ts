@@ -15,13 +15,29 @@ function num(value: unknown): number | undefined {
   return undefined;
 }
 
-function offerType(info: DomriaInfo): string | undefined {
+function classifyDomriaRole(info: DomriaInfo): {
+  offerLabel?: string;
+  platformOwner?: boolean;
+  platformAgent?: boolean;
+  platformBusiness?: boolean;
+  recognized: boolean;
+} {
   const raw = info.characteristics_values?.["1437"];
-  const id = raw === undefined ? undefined : String(raw);
-  if (!id) {
-    return undefined;
+  if (raw === undefined || raw === null || raw === "") {
+    return { recognized: false };
   }
-  return DOMRIA_OFFER_TYPE[id] ?? `characteristic 1437 = ${id}`;
+  const id = String(raw);
+  const offerLabel = DOMRIA_OFFER_TYPE[id];
+  if (!offerLabel) {
+    return { recognized: false, offerLabel: `unrecognized characteristic 1437 = ${id}` };
+  }
+  return {
+    offerLabel,
+    recognized: true,
+    platformOwner: offerLabel === "від власника",
+    platformAgent: offerLabel === "від посередника" || offerLabel === "від представника власника (без комісійних)",
+    platformBusiness: offerLabel === "від забудовника" || offerLabel === "від представника забудовника",
+  };
 }
 
 export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listing | undefined {
@@ -42,16 +58,19 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
   const title =
     [info.realty_type_name_uk, street, city].filter(Boolean).join(", ") || `DIM.RIA ${sourceId}`;
   const description = info.description_uk || info.description;
-  const offer = offerType(info);
+  const role = classifyDomriaRole(info);
   const agencyId = num(info.agency_id) ?? 0;
   const owner = classifyOwner({
-    platformOwner: offer === "від власника",
-    platformAgent: offer === "від посередника" || agencyId > 0,
-    platformBusiness: offer === "від забудовника" || offer === "від представника забудовника",
-    offerTypeLabel: offer,
-    agencyId: agencyId > 0 ? agencyId : undefined,
+    platformOwner: role.platformOwner === true,
+    platformAgent: role.platformAgent === true,
+    platformBusiness: role.platformBusiness === true,
+    offerTypeLabel: role.offerLabel,
     text: `${title}\n${description ?? ""}`,
-    extraEvidence: collectTextEvidence(`${title}\n${description ?? ""}`),
+    extraEvidence: [
+      ...collectTextEvidence(`${title}\n${description ?? ""}`),
+      ...(agencyId > 0 ? [`agency_id=${agencyId} (not used as ownership proof)`] : []),
+      ...(!role.recognized ? ["characteristic 1437 missing or unrecognized"] : []),
+    ],
   });
   const lat = num(info.latitude);
   const lng = num(info.longitude);
@@ -74,12 +93,15 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
       categoryText: `${info.realty_type_name_uk ?? ""} ${info.advert_type_name_uk ?? ""} ${path}`,
     }),
     sellerType: owner.sellerType,
+    sellerConfidence: owner.confidence,
     sellerEvidence: owner.sellerEvidence,
     discoveredAt,
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
+      sellerConfidence: owner.confidence,
       advertType: info.advert_type_name_uk ?? info.advert_type_name,
       userId: info.user_id,
+      characteristic1437Recognized: role.recognized,
     },
   };
   if (description) {
