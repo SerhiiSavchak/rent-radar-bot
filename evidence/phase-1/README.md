@@ -11,6 +11,9 @@ Created: 2026-09-15 on branch `cursor/phase-1-source-layer-closure-8797`.
 | `hosting.md` | Earlier browser-era Oracle vs GCP notes |
 | `http-runtime.md` | HTTP-only runtime research (Deno / CF / Oracle / GCP) |
 | `cloudflare-workers.md` | Isolated Workers probe: compatibility, bundle dry-run, local fixtures/OLX |
+| `cloudflare-cpu-attribution.md` | Platform cpuTime per hosted invocation |
+| `oracle-e2-micro-experiment.md` | Always Free E2.1.Micro proposed config + OLX experiment procedure (not executed) |
+| `oracle-olx/` | Cycle JSON from `npm run live:olx:experiment` (hosted PASS only) |
 | `../docs/PHASE_1_DECISION.md` | Decision and remaining blockers |
 
 Commands used for quality:

@@ -1,28 +1,25 @@
 # Recovery status
 
-Updated: 2026-09-16T12:00+03:00  
+Updated: 2026-09-16T14:55+03:00  
 Branch: `cursor/phase-1-source-layer-closure-8797`  
-HEAD: `d5d54b4` (= `origin/cursor/phase-1-source-layer-closure-8797`)
+Baseline HEAD verified: `d3891ed` (then experiment-pack commit)
 
-## Verified git state
+## Current task
 
-Local and remote match after push of the CPU-decision commit.
+Oracle Always Free `VM.Standard.E2.1.Micro` OLX feasibility experiment.
 
-## Completed this task
-
-- [x] Push verification (`eca65c5` was already on origin; new commit `d5d54b4` pushed)
-- [x] CPU attribution table → `evidence/phase-1/cloudflare-cpu-attribution.md`
-- [x] No Free-CPU optimization; redeploy skipped
-- [x] RIELTOR owner-filter live: apt declared=3 complete; houses valid_empty
-- [x] Verdict **B** — reject Workers Free for poller CPU
-- [x] `preferOwners` defaults from `OWNER_ONLY`
+| Step | Status |
+|------|--------|
+| Access check (oci / ~/.oci / VM) | **MISSING** on this workstation |
+| Experiment procedure + proposed VM | **DONE** → `evidence/phase-1/oracle-e2-micro-experiment.md` |
+| Script `npm run live:olx:experiment` | **DONE** (local smoke: both categories transport_blocked, as expected) |
+| Hosted Oracle execution | **NOT STARTED** (no authorized VM) |
 
 ## Temporary resources
 
-| Resource | Status |
-|----------|--------|
-| Hosted probe Worker | deleted earlier; not redeployed |
+None provisioned. No Oracle VM created.
 
-## Next exact action
+## Next exact action (operator)
 
-Explicit task: provision Oracle Always Free `VM.Standard.E2.1.Micro` and run `npm run live:olx` only (no proxies). See `docs/PHASE_1_DECISION.md`.
+1. Create or confirm Oracle Cloud **Free Tier** account: https://www.oracle.com/cloud/free/  
+2. Reply authorizing creation of the proposed Always Free E2.1.Micro (see experiment doc), **or** provide SSH to an existing unused Micro in the home region.

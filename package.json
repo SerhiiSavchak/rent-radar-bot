@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "live:olx": "tsx src/scripts/test-olx.ts",
+    "live:olx:experiment": "tsx src/scripts/oracle-olx-experiment.ts",
     "live:domria": "tsx src/scripts/test-domria.ts",
     "live:lun": "tsx src/scripts/test-lun.ts",
     "live:rieltor": "tsx src/scripts/test-rieltor.ts",

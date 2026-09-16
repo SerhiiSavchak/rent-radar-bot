@@ -33,8 +33,11 @@ Temporary Worker was deleted after the earlier experiment; no new deploy in this
 
 ## Next host candidate (docs only — not provisioned)
 
-From `evidence/phase-1/http-runtime.md`: **Oracle Always Free `VM.Standard.E2.1.Micro`**.  
-Unresolved until an explicit provisioning task: OLX/CloudFront on that IP, capacity, idle-reclaim, cycle RSS/CPU. Do not register or create VMs from this task.
+From `evidence/phase-1/http-runtime.md` and **`evidence/phase-1/oracle-e2-micro-experiment.md`**:  
+**Oracle Always Free `VM.Standard.E2.1.Micro`**.
+
+Prepared: reproducible Node 22 procedure + `npm run live:olx:experiment` (apartments/houses separate, JSON evidence, bounded 10-minute cycles).  
+**Not executed:** no OCI tooling/account/VM available to this agent. Do not create the VM without operator authorization.
 
 ## Source layer status
 
@@ -53,4 +56,4 @@ Unresolved until an explicit provisioning task: OLX/CloudFront on that IP, capac
 
 ## Recommended next action (one)
 
-**Open an explicit task to provision and smoke-test Oracle Always Free `E2.1.Micro` with `npm run live:olx` only** (ordinary HTTP, no proxies). Do not reopen Workers Free CPU validation unless the Free limit or workload changes with new measurements.
+**Operator:** create/confirm Oracle Cloud Free Tier at https://www.oracle.com/cloud/free/ (card for identity verification), then authorize the Exact Always Free `VM.Standard.E2.1.Micro` config in `evidence/phase-1/oracle-e2-micro-experiment.md` (or provide SSH to an existing idle Micro). Agent must not create paid resources.
