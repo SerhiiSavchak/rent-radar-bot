@@ -1,8 +1,8 @@
 # Recovery status
 
-Updated: 2026-09-16T14:55+03:00  
+Updated: 2026-09-16T14:56+03:00  
 Branch: `cursor/phase-1-source-layer-closure-8797`  
-Baseline HEAD verified: `d3891ed` (then experiment-pack commit)
+HEAD: `fcafe5e` (= origin)
 
 ## Current task
 
