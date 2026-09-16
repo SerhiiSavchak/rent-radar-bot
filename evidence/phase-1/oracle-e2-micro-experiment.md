@@ -2,7 +2,8 @@
 
 Date prepared: 2026-09-16  
 Branch / intended commit: `cursor/phase-1-source-layer-closure-8797` @ `d3891ed` or later tip  
-Status: **prepared, not executed** — no OCI CLI, no `~/.oci`, no authorized VM on this workstation.
+Status: **Cloud Shell provisioner ready; VM not created by the agent.**  
+Use `scripts/oracle-cloud-shell/provision-e2-micro.sh` in Oracle Cloud Shell (`plan` then `apply`).
 
 This is a **hosting feasibility** experiment (real `OlxSource` over ordinary HTTP). Not a production deploy. No browser, proxies, CAPTCHA bypass, Telegram, or database work.
 

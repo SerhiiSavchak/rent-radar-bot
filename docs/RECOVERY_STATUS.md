@@ -1,25 +1,19 @@
 # Recovery status
 
-Updated: 2026-09-16T15:18+03:00  
-Branch: `cursor/phase-1-source-layer-closure-8797`  
-HEAD: `c9c59eb` (= `origin/...`; reported `d3891ed` is superseded)
+Updated: 2026-09-16T16:20+03:00  
+Branch: `cursor/phase-1-source-layer-closure-8797`
 
 ## Current task
 
-Oracle Always Free `VM.Standard.E2.1.Micro` OLX HTTP feasibility.
+Oracle Always Free Micro via **Cloud Shell provisioner** (not manual console form).
 
 | Step | Status |
 |------|--------|
-| Repo / push | **OK** — no second push needed |
-| OCI CLI / `~/.oci` / authorized VM | **MISSING** (rechecked) |
-| Procedure + proposed free VM | **READY** — `evidence/phase-1/oracle-e2-micro-experiment.md` |
-| `npm run live:olx:experiment` | **READY** in repo |
-| Hosted Oracle OLX cycles | **NOT TESTED** |
+| Script `scripts/oracle-cloud-shell/provision-e2-micro.sh` | **READY** (`bash -n` OK) |
+| Instructions | `scripts/oracle-cloud-shell/README.md` |
+| VM created by agent | **NO** — awaiting your Cloud Shell `plan` → `apply` |
+| Hosted OLX on Oracle | **NOT TESTED** |
 
-## Temporary resources
+## Next exact console action
 
-None. No VM provisioned.
-
-## Next exact action (operator)
-
-Open https://www.oracle.com/cloud/free/ and create/confirm an Oracle Cloud Free Tier account (card for identity verification only). Then reply authorizing the Always Free `VM.Standard.E2.1.Micro` config in `oracle-e2-micro-experiment.md`, or provide SSH to an existing idle Micro.
+In OCI Cloud Shell (`eu-frankfurt-1`): upload `provision-e2-micro.sh`, then run `./provision-e2-micro.sh plan`.
