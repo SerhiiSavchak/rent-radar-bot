@@ -19,7 +19,6 @@ KEY_DIR="${KEY_DIR:-$STATE_DIR/ssh}"
 PUBLIC_KEY_FILE="${PUBLIC_KEY_FILE:-$KEY_DIR/${PREFIX}.pub}"
 PRIVATE_KEY_FILE="${PRIVATE_KEY_FILE:-$KEY_DIR/${PREFIX}}"
 DISPLAY_NAME="${DISPLAY_NAME:-${PREFIX}-olx-probe}"
-SSH_ALLOWED_CIDR="${SSH_ALLOWED_CIDR:-}"
 
 MODE="${1:-}"
 [[ -n "$MODE" ]] || { echo "Usage: $0 {plan|apply|status|cleanup}" >&2; exit 2; }
@@ -41,15 +40,26 @@ fi
 if [[ ! -f "${SCRIPT_DIR}/ssh-key-fips.inc.sh" ]]; then
   die "Missing ${SCRIPT_DIR}/ssh-key-fips.inc.sh — upload it next to provision-e2-micro.sh"
 fi
+if [[ ! -f "${SCRIPT_DIR}/ssh-cidr.inc.sh" ]]; then
+  die "Missing ${SCRIPT_DIR}/ssh-cidr.inc.sh — upload it next to provision-e2-micro.sh"
+fi
 # shellcheck source=tenancy-discovery.inc.sh
 source "${SCRIPT_DIR}/tenancy-discovery.inc.sh"
 # shellcheck source=ssh-key-fips.inc.sh
 source "${SCRIPT_DIR}/ssh-key-fips.inc.sh"
+# shellcheck source=ssh-cidr.inc.sh
+source "${SCRIPT_DIR}/ssh-cidr.inc.sh"
+
+# Preserve caller SSH_ALLOWED_CIDR before state.env can overwrite it (empty/placeholder).
+capture_ssh_allowed_cidr_from_env
 
 if [[ -f "$STATE_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$STATE_FILE"
 fi
+
+resolve_ssh_allowed_cidr
+log "SSH_ALLOWED_CIDR effective=${SSH_ALLOWED_CIDR:-<empty>} source=${SSH_ALLOWED_CIDR_SOURCE}"
 
 save_state() {
   umask 077
@@ -217,6 +227,7 @@ Image:          $IMAGE_NAME
 Boot:           ${BOOT_GB} GB (Always Free pool = 200 GB total)
 Name:           $DISPLAY_NAME
 SSH CIDR:       ${SSH_ALLOWED_CIDR:-<REQUIRED for apply>}
+SSH CIDR source: ${SSH_ALLOWED_CIDR_SOURCE:-unset}
 SSH key type:   ${SSH_KEY_TYPE} ${SSH_KEY_BITS}-bit (FIPS-compatible; not ed25519)
 SSH priv path:  $PRIVATE_KEY_FILE
 SSH pub path:   $PUBLIC_KEY_FILE
@@ -246,9 +257,18 @@ EOF
 
 validate_apply() {
   [[ "${BOOT_GB}" == "50" ]] || die "BOOT_GB must be 50 for this Always Free script"
-  [[ -n "$SSH_ALLOWED_CIDR" ]] || die "export SSH_ALLOWED_CIDR=x.x.x.x/32 before apply"
-  [[ "$SSH_ALLOWED_CIDR" != "0.0.0.0/0" ]] || die "Refusing world-open SSH"
-  [[ "$SSH_ALLOWED_CIDR" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]] || die "Bad SSH_ALLOWED_CIDR format"
+  log "Validating SSH_ALLOWED_CIDR=${SSH_ALLOWED_CIDR:-<empty>} (source=${SSH_ALLOWED_CIDR_SOURCE:-unset})"
+  if [[ -z "${SSH_ALLOWED_CIDR:-}" ]]; then
+    die "SSH_ALLOWED_CIDR is required for apply. Example: SSH_ALLOWED_CIDR=x.x.x.x/32 ./provision-e2-micro.sh apply"
+  fi
+  if ! is_valid_ssh_host_cidr32 "$SSH_ALLOWED_CIDR"; then
+    local why
+    why="$(ssh_allowed_cidr_invalid_reason "$SSH_ALLOWED_CIDR")"
+    if [[ "${SSH_ALLOWED_CIDR_SOURCE:-}" == "environment" ]]; then
+      die "SSH_ALLOWED_CIDR from environment is invalid (${why}). Fix the value; will not fall back to state.env."
+    fi
+    die "SSH_ALLOWED_CIDR is invalid (${why}). Provide a real IPv4 host /32, e.g. SSH_ALLOWED_CIDR=203.0.113.10/32"
+  fi
   if [[ -n "${INSTANCE_OCID:-}" ]]; then
     die "Instance already exists/recorded ($INSTANCE_OCID). Use '$0 status' — no duplicate create."
   fi

@@ -1,7 +1,7 @@
 # Oracle Cloud Shell — Always Free E2.1.Micro provisioner
 
 Script: `provision-e2-micro.sh`  
-Helpers: `tenancy-discovery.inc.sh`, `ssh-key-fips.inc.sh`  
+Helpers: `tenancy-discovery.inc.sh`, `ssh-key-fips.inc.sh`, `ssh-cidr.inc.sh`  
 Companion OLX test (on the VM later): `npm run live:olx:experiment`  
 Docs: `evidence/phase-1/oracle-e2-micro-experiment.md`
 
@@ -17,6 +17,14 @@ This provisioner uses **RSA 3072-bit** keys only:
 - `apply` — generates RSA-3072 **before** any OCI create, if missing
 - Never silently overwrites an existing private key (incomplete / ed25519 / weak RSA → stop with move-aside instructions)
 - Private key mode `600`, key directory `700`; private material is not logged
+
+## SSH_ALLOWED_CIDR precedence
+
+An explicit `SSH_ALLOWED_CIDR` on the command line / environment **always wins** over `state.env` (which previously overwrote a valid apply value with an empty or placeholder CIDR from an earlier plan).
+
+- Must be a real IPv4 **host** `/32` (rejects `0.0.0.0/0`, wider prefixes, placeholders, bad octets)
+- Invalid explicit values fail clearly — **no** silent fall back to saved state
+- Startup logs `SSH_ALLOWED_CIDR effective=… source=environment|state|unset` (no state dump)
 
 ## Cloud Shell auth (important)
 
@@ -63,18 +71,19 @@ NSG allows TCP/22 only from `SSH_ALLOWED_CIDR`. Subnet uses a custom security li
 
 ### A. Replace the uploaded scripts
 
-Upload **these three files** into `~/rent-radar-phase1-oracle/`:
+Upload **these four files** into `~/rent-radar-phase1-oracle/`:
 
 1. `provision-e2-micro.sh`
 2. `tenancy-discovery.inc.sh`
 3. `ssh-key-fips.inc.sh`
+4. `ssh-cidr.inc.sh`
 
 ```bash
 mkdir -p ~/rent-radar-phase1-oracle
-mv ~/provision-e2-micro.sh ~/tenancy-discovery.inc.sh ~/ssh-key-fips.inc.sh ~/rent-radar-phase1-oracle/ 2>/dev/null || true
+mv ~/provision-e2-micro.sh ~/tenancy-discovery.inc.sh ~/ssh-key-fips.inc.sh ~/ssh-cidr.inc.sh ~/rent-radar-phase1-oracle/ 2>/dev/null || true
 chmod +x ~/rent-radar-phase1-oracle/provision-e2-micro.sh
 cd ~/rent-radar-phase1-oracle
-ls -l provision-e2-micro.sh tenancy-discovery.inc.sh ssh-key-fips.inc.sh
+ls -l provision-e2-micro.sh tenancy-discovery.inc.sh ssh-key-fips.inc.sh ssh-cidr.inc.sh
 # If a prior failed ed25519 attempt left junk keys:
 #   mv ssh/rrb-p1 ssh/rrb-p1.ed25519.bak 2>/dev/null || true
 #   mv ssh/rrb-p1.pub ssh/rrb-p1.pub.ed25519.bak 2>/dev/null || true
@@ -96,19 +105,20 @@ grep -E '^\[' "${OCI_CLI_CONFIG_FILE:-/etc/oci/config}" 2>/dev/null || true
 oci iam region-subscription list --query 'data[?"is-home-region"]."region-name"' --output json
 ```
 
-### C. Plan (read-only)
+### C. Plan (read-only) — verify effective SSH CIDR
 
 ```bash
 export OCI_CLI_REGION=eu-frankfurt-1
-./provision-e2-micro.sh plan
+SSH_ALLOWED_CIDR="37.55.172.239/32" ./provision-e2-micro.sh plan
+# Expect a log line: SSH_ALLOWED_CIDR effective=37.55.172.239/32 source=environment
+# Plan must NOT generate keys or create resources.
 ```
 
 ### D. Apply (only after plan looks correct)
 
 ```bash
 # Cloud Shell Network menu → Public Network, then:
-export SSH_ALLOWED_CIDR="$(curl -4 -s https://api.ipify.org)/32"
-./provision-e2-micro.sh apply
+SSH_ALLOWED_CIDR="$(curl -4 -s https://api.ipify.org)/32" ./provision-e2-micro.sh apply
 ```
 
 ### E. Status / cleanup
@@ -124,8 +134,10 @@ export SSH_ALLOWED_CIDR="$(curl -4 -s https://api.ipify.org)/32"
 bash -n scripts/oracle-cloud-shell/provision-e2-micro.sh
 bash -n scripts/oracle-cloud-shell/tenancy-discovery.inc.sh
 bash -n scripts/oracle-cloud-shell/ssh-key-fips.inc.sh
+bash -n scripts/oracle-cloud-shell/ssh-cidr.inc.sh
 bash scripts/oracle-cloud-shell/test-tenancy-discovery.sh
 bash scripts/oracle-cloud-shell/test-ssh-key-fips.sh
+bash scripts/oracle-cloud-shell/test-ssh-cidr.sh
 ```
 
 These do **not** prove live Cloud Shell FIPS authentication; they only check script logic offline.
