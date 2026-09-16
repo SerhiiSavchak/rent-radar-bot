@@ -30,9 +30,9 @@ No credible single optimization closes Free CPU for OLX + DIM.RIA + LUN + RIELTO
 
 Temporary Worker was deleted after the earlier experiment; no new deploy in this decision pass.
 
-## Oracle Always Free E2.1.Micro — first OLX HTTP experiment
+## Oracle Always Free E2.1.Micro — OLX HTTP experiment
 
-**Executed** on operator VM: Ubuntu, Node 22.23.2, x64, `npm run live:olx:experiment`, cycle 1 only.
+**Executed** on operator VM (public IP recorded by operator: `92.5.160.179`): Ubuntu, Node 22.23.2, x64, `npm run live:olx:experiment`, cycle 1 only.
 
 | Scope | Result |
 |-------|--------|
@@ -40,29 +40,47 @@ Temporary Worker was deleted after the earlier experiment; no new deploy in this
 | OLX `api/v1/offers` (apartments + houses) | **FAIL** — HTTP 403, CloudFront `text/html` |
 | HTML fallback | HTTP 200, **no** parseable listings → not PASS |
 | Experiment classification | API 403 → `transport_blocked`; bare HTML 200 ≠ success |
-| Browser transport | **Unproven** (not attempted) |
-| Further cycles / bypass / proxies | **Not run** (correct stop after cycle 1) |
+| Further HTTP cycles / bypass / proxies | **Not run** |
 
-Evidence write-up: `evidence/phase-1/oracle-olx/oracle-cycle-1-review.md`.  
-Raw VM `cycle-1.json` was not in the review workspace; commit it when copied off the VM.
+Evidence: `evidence/phase-1/oracle-olx/oracle-cycle-1-review.md` (raw `cycle-1.json` commit when available).
 
-Compare: Cloudflare Workers egress had OLX JSON **PASS**; this Always Free Micro egress matches workstation-style **403** CloudFront for ordinary Node HTTP.
+Compare: Cloudflare Workers egress had OLX JSON **PASS**; this Always Free Micro egress matched workstation-style **403** CloudFront for ordinary Node HTTP.
+
+## Oracle Always Free — OLX browser probe (prepared)
+
+Isolated script: `npm run live:olx:browser-experiment` (stock Playwright Chromium; no stealth/proxies/CAPTCHA/WAF bypass; not wired into production `OlxSource`).
+
+| Scope | Result |
+|-------|--------|
+| Probe implemented in repo | **YES** |
+| Run from Oracle IP | **NOT TESTED** (awaiting operator one-cycle run) |
+| Browser transport PASS/FAIL | **NOT TESTED** |
+
+Evidence directory: `evidence/phase-1/oracle-olx-browser/`.
 
 ## Source layer status
 
 | Source | Status |
 |--------|--------|
-| OLX | Query/parser verified; **Workers HTTP PASS**; **Oracle Micro HTTP FAIL** (403); workstation 403; browser unproven |
+| OLX | Query/parser verified; **Workers HTTP PASS**; **Oracle Micro HTTP FAIL** (403); workstation 403; **Oracle browser NOT TESTED** |
 | DIM.RIA | Live HTML OK; char 1437 ownership; free API quota incompatible with 10-min polls |
 | LUN | Live OK; first-page / unofficial RSC |
 | RIELTOR | Live OK; **owner-filtered** market is small (2026-09-16: apt `declared=3` complete, houses `valid_empty`); unfiltered 743≈38 pages is **not** the owner product path. `OWNER_ONLY` now drives `f-owners=1`. Suburb coverage on owner apartments still thin (n=3). Multi-day soak open. |
 
 ## Remaining Phase 1 blockers
 
-1. Hosted zero-cost runtime where OLX ordinary HTTP works **and** CPU/cost fit (Workers Free rejected on CPU; Oracle Micro rejected on OLX 403 for this first sample).  
-2. Multi-day source soak from a controlled host that can reach OLX.  
-3. Optional: deeper non-owner RIELTOR pagination only if product scope drops `OWNER_ONLY`.
+1. Hosted zero-cost runtime where OLX works **and** CPU/cost fit (Workers Free rejected on CPU; Oracle Micro ordinary HTTP rejected on 403).  
+2. Whether stock Chromium from the Oracle IP can load OLX catalogs with listing payload — **not measured yet**.  
+3. Multi-day source soak from a controlled host that can reach OLX.  
+4. Optional: deeper non-owner RIELTOR pagination only if product scope drops `OWNER_ONLY`.
 
 ## Recommended next action (one)
 
-**Commit the VM’s raw `evidence/phase-1/oracle-olx/cycle-1.json` into the repo** (if not already), then decide the next host/path using only recorded evidence — without another live OLX cycle, browser automation, or anti-bot bypass until that artifact is archived.
+On the Oracle VM, install Chromium deps and run **one** browser cycle only:
+
+```bash
+npx playwright install --with-deps chromium
+OLX_BROWSER_OUT_DIR=evidence/phase-1/oracle-olx-browser npm run live:olx:browser-experiment
+```
+
+Then commit `evidence/phase-1/oracle-olx-browser/cycle-1.json`. Do not add bypass techniques.

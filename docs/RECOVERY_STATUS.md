@@ -1,20 +1,22 @@
 # Recovery status
 
-Updated: 2026-09-17T00:15+03:00  
+Updated: 2026-09-17T00:25+03:00  
 Branch: `cursor/phase-1-source-layer-closure-8797`
 
 ## Current task
 
-Oracle Always Free OLX cycle 1 **reviewed**: ordinary HTTP **FAIL** (403 CloudFront). Classification + houses HTML URL diagnostics fixed in repo. No further live OLX cycles in this pass.
+Oracle OLX **browser** probe prepared (`npm run live:olx:browser-experiment`). Not executed from this agent. Oracle HTTP remains FAIL; browser transport **NOT TESTED**.
 
 | Step | Status |
 |------|--------|
-| Oracle Micro provisioned / experiment run | **DONE** (operator) |
-| HTTP transport on Oracle | **FAIL** |
-| Browser transport | **Unproven** |
-| Decision doc | `docs/PHASE_1_DECISION.md` |
-| Review note | `evidence/phase-1/oracle-olx/oracle-cycle-1-review.md` |
+| Oracle Micro HTTP OLX | **FAIL** (403 CloudFront) |
+| Browser probe in repo | **READY** |
+| Browser probe on Oracle IP | **NOT TESTED** |
 
-## Next exact action
+## Next exact console action (on VM `92.5.160.179`)
 
-Copy VM `cycle-1.json` into `evidence/phase-1/oracle-olx/` and commit it if not already present. Do not start another live OLX cycle until that archive step is done.
+```bash
+cd ~/rent-radar-bot && git pull && npm ci
+npx playwright install --with-deps chromium
+OLX_BROWSER_OUT_DIR=evidence/phase-1/oracle-olx-browser npm run live:olx:browser-experiment
+```
