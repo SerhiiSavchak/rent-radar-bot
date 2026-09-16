@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import type { Listing } from "../domain/listing.ts";
 import type { SourceFetchResult } from "../domain/source.ts";
-import { isOlxTransportBlocked } from "../probe/cloudflare-source-probe.ts";
+import { classifyOlxExperimentCategory } from "../probe/olx-experiment-classify.ts";
 import { OlxSource } from "../sources/olx/olx.source.ts";
 
 loadDotenv();
@@ -95,32 +95,22 @@ function summarize(
 ): CategorySummary {
   const notes = result.rawNotes ?? [];
   const kind = result.resultKind ?? result.health.resultKind ?? "unknown";
-  const blocked = isOlxTransportBlocked(notes, result.httpStatus);
   const tallied = tally(result.listings);
   const sample = result.listings.slice(0, 5);
   const contentType = contentTypeFromNotes(notes);
-  let failureReason: string | undefined;
-  let success = false;
-  if (blocked || result.httpStatus === 403 || result.httpStatus === 429) {
-    failureReason = "transport_blocked";
-  } else if (kind === "parser_failure") {
-    failureReason = "parser_failure";
-  } else if (kind === "http_error") {
-    failureReason = "http_error";
-  } else if (kind === "valid_empty") {
-    failureReason = "valid_empty_not_success_for_olx_market_probe";
-  } else if (kind === "ok" && result.listings.length > 0) {
-    success = true;
-  } else {
-    failureReason = "no_listings";
-  }
+  const classification = classifyOlxExperimentCategory({
+    notes,
+    resultKind: kind,
+    listingCount: result.listings.length,
+    ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
+  });
 
   return {
     category,
     resultKind: kind,
     ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
     ...(contentType !== undefined ? { contentType } : {}),
-    blocked,
+    blocked: classification.blocked,
     healthy: result.health.healthy,
     extracted: result.listings.length,
     elapsedMs: result.health.latencyMs ?? 0,
@@ -128,8 +118,8 @@ function summarize(
     sampleIds: sample.map((item) => item.sourceId),
     sampleCities: sample.map((item) => item.location.city ?? item.location.raw).filter(Boolean),
     notes: sanitizeNotes(notes),
-    success,
-    ...(failureReason !== undefined ? { failureReason } : {}),
+    success: classification.success,
+    ...(classification.failureReason !== undefined ? { failureReason: classification.failureReason } : {}),
   };
 }
 

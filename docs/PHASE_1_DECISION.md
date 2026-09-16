@@ -1,9 +1,8 @@
 # Phase 1 decision (source layer)
 
-Date: 2026-09-16  
+Date: 2026-09-17  
 Branch: `cursor/phase-1-source-layer-closure-8797`  
-Repo: `rent-radar-bot` / `SerhiiSavchak/rent-radar-bot`  
-Verified HEAD at decision update: see latest commit on this branch (recovery + CPU attribution).
+Repo: `rent-radar-bot` / `SerhiiSavchak/rent-radar-bot`
 
 Phase 1 is **not complete**.
 
@@ -31,29 +30,39 @@ No credible single optimization closes Free CPU for OLX + DIM.RIA + LUN + RIELTO
 
 Temporary Worker was deleted after the earlier experiment; no new deploy in this decision pass.
 
-## Next host candidate (docs only — not provisioned)
+## Oracle Always Free E2.1.Micro — first OLX HTTP experiment
 
-From `evidence/phase-1/http-runtime.md` and **`evidence/phase-1/oracle-e2-micro-experiment.md`**:  
-**Oracle Always Free `VM.Standard.E2.1.Micro`**.
+**Executed** on operator VM: Ubuntu, Node 22.23.2, x64, `npm run live:olx:experiment`, cycle 1 only.
 
-Prepared: reproducible Node 22 procedure + `npm run live:olx:experiment` (apartments/houses separate, JSON evidence, bounded 10-minute cycles).  
-**Not executed:** no OCI tooling/account/VM available to this agent. Do not create the VM without operator authorization.
+| Scope | Result |
+|-------|--------|
+| Process / script start | OK |
+| OLX `api/v1/offers` (apartments + houses) | **FAIL** — HTTP 403, CloudFront `text/html` |
+| HTML fallback | HTTP 200, **no** parseable listings → not PASS |
+| Experiment classification | API 403 → `transport_blocked`; bare HTML 200 ≠ success |
+| Browser transport | **Unproven** (not attempted) |
+| Further cycles / bypass / proxies | **Not run** (correct stop after cycle 1) |
+
+Evidence write-up: `evidence/phase-1/oracle-olx/oracle-cycle-1-review.md`.  
+Raw VM `cycle-1.json` was not in the review workspace; commit it when copied off the VM.
+
+Compare: Cloudflare Workers egress had OLX JSON **PASS**; this Always Free Micro egress matches workstation-style **403** CloudFront for ordinary Node HTTP.
 
 ## Source layer status
 
 | Source | Status |
 |--------|--------|
-| OLX | Query/parser verified; hosted HTTP OK; workstation 403 |
+| OLX | Query/parser verified; **Workers HTTP PASS**; **Oracle Micro HTTP FAIL** (403); workstation 403; browser unproven |
 | DIM.RIA | Live HTML OK; char 1437 ownership; free API quota incompatible with 10-min polls |
 | LUN | Live OK; first-page / unofficial RSC |
 | RIELTOR | Live OK; **owner-filtered** market is small (2026-09-16: apt `declared=3` complete, houses `valid_empty`); unfiltered 743≈38 pages is **not** the owner product path. `OWNER_ONLY` now drives `f-owners=1`. Suburb coverage on owner apartments still thin (n=3). Multi-day soak open. |
 
 ## Remaining Phase 1 blockers
 
-1. Hosted zero-cost runtime other than Workers Free (Oracle candidate not provisioned).  
-2. Multi-day source soak from a controlled host.  
+1. Hosted zero-cost runtime where OLX ordinary HTTP works **and** CPU/cost fit (Workers Free rejected on CPU; Oracle Micro rejected on OLX 403 for this first sample).  
+2. Multi-day source soak from a controlled host that can reach OLX.  
 3. Optional: deeper non-owner RIELTOR pagination only if product scope drops `OWNER_ONLY`.
 
 ## Recommended next action (one)
 
-**Operator:** create/confirm Oracle Cloud Free Tier at https://www.oracle.com/cloud/free/ (card for identity verification), then authorize the Exact Always Free `VM.Standard.E2.1.Micro` config in `evidence/phase-1/oracle-e2-micro-experiment.md` (or provide SSH to an existing idle Micro). Agent must not create paid resources.
+**Commit the VM’s raw `evidence/phase-1/oracle-olx/cycle-1.json` into the repo** (if not already), then decide the next host/path using only recorded evidence — without another live OLX cycle, browser automation, or anti-bot bypass until that artifact is archived.

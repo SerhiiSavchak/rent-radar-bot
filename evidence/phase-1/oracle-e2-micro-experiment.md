@@ -142,5 +142,6 @@ After the run, copy those files into the git repo on a machine with push access 
 |------|--------|
 | Procedure + proposed VM | **DONE** (this file) |
 | Script `npm run live:olx:experiment` | **DONE** (in repo) |
-| Account / VM access from this agent | **MISSING** |
-| Hosted OLX on Oracle | **NOT TESTED** |
+| Account / VM | **DONE** (operator Always Free Micro) |
+| Hosted OLX on Oracle (cycle 1) | **FAIL** — API 403 CloudFront; see `oracle-olx/oracle-cycle-1-review.md` |
+| Browser transport | **Unproven** |
