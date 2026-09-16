@@ -34,6 +34,13 @@ need() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; 
 need oci
 need jq
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -f "${SCRIPT_DIR}/tenancy-discovery.inc.sh" ]]; then
+  die "Missing ${SCRIPT_DIR}/tenancy-discovery.inc.sh — upload it next to provision-e2-micro.sh"
+fi
+# shellcheck source=tenancy-discovery.inc.sh
+source "${SCRIPT_DIR}/tenancy-discovery.inc.sh"
+
 if [[ -f "$STATE_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$STATE_FILE"
@@ -69,19 +76,55 @@ EOF
 
 discover_context() {
   log "Discovering tenancy / region / ADs / images…"
+  log "OCI config file: ${OCI_CLI_CONFIG_FILE:-<unset>}  profile: ${OCI_CLI_PROFILE:-<unset>}  auth: ${OCI_CLI_AUTH:-<unset>}"
 
-  if [[ -z "${TENANCY_OCID:-}" ]]; then
-    if [[ -f "$HOME/.oci/config" ]]; then
-      TENANCY_OCID="$(awk -F= '/^tenancy=/{print $2; exit}' "$HOME/.oci/config")"
+  local discovered=""
+  TENANCY_DISCOVERY_SOURCE=""
+  RESOLVED_TENANCY_OCID=""
+  if resolve_tenancy_ocid_offline; then
+    TENANCY_OCID="$RESOLVED_TENANCY_OCID"
+    log "Tenancy from ${TENANCY_DISCOVERY_SOURCE}"
+  else
+    log "Offline tenancy discovery missed (Cloud Shell uses /etc/oci/config + region profiles, not ~/.oci/config [DEFAULT]). Trying read-only OCI API…"
+    local api_out api_rc=0
+    api_out="$(discover_tenancy_via_oci_api)" || api_rc=$?
+    if (( api_rc == 0 )) && is_tenancy_ocid "$api_out"; then
+      TENANCY_OCID="$api_out"
+      TENANCY_DISCOVERY_SOURCE="oci_api:compartment_list_include_root"
+      log "Tenancy from ${TENANCY_DISCOVERY_SOURCE}"
+    else
+      case "$api_out" in
+        authentication)
+          die "OCI authentication failure while discovering tenancy. Cloud Shell session may need refresh (re-open Cloud Shell). Do not run oci setup config."
+          ;;
+        permission)
+          die "OCI permission failure while listing compartments. Your user lacks IAM inspect on compartments/tenancy."
+          ;;
+      esac
+      die "Tenancy discovery failed. Set an explicit override from Console (Governance → Tenancy details → OCID), then: export TENANCY_OCID=ocid1.tenancy...."
     fi
   fi
-  [[ -n "${TENANCY_OCID:-}" ]] || die "Could not read tenancy from ~/.oci/config (Cloud Shell auth missing?)"
+
+  local validation
+  validation="$(validate_tenancy_ocid "$TENANCY_OCID")" || true
+  case "$validation" in
+    ok) log "Tenancy OCID validated (read-only)" ;;
+    authentication)
+      die "Discovered tenancy OCID but OCI authentication failed on validate. Re-open Cloud Shell; do not run oci setup config."
+      ;;
+    permission)
+      die "Discovered tenancy OCID but IAM read was denied (permission failure)."
+      ;;
+    *)
+      die "Discovered value did not validate as a readable tenancy/root compartment. Check TENANCY_OCID override from Console."
+      ;;
+  esac
 
   COMPARTMENT_OCID="${COMPARTMENT_OCID:-$TENANCY_OCID}"
 
   HOME_REGION="$(oci iam region-subscription list --output json \
     | jq -r '.data[] | select(.["is-home-region"]==true) | .["region-name"]' | head -1)"
-  [[ -n "$HOME_REGION" ]] || die "Could not resolve home region"
+  [[ -n "$HOME_REGION" ]] || die "Could not resolve home region (permission or auth failure on region-subscription list)"
   REGION="${OCI_CLI_REGION:-${REGION:-$HOME_REGION}}"
   export OCI_CLI_REGION="$REGION"
   if [[ "$REGION" != "$HOME_REGION" ]]; then

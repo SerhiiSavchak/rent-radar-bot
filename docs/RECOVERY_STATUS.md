@@ -16,4 +16,8 @@ Oracle Always Free Micro via **Cloud Shell provisioner** (not manual console for
 
 ## Next exact console action
 
-In OCI Cloud Shell (`eu-frankfurt-1`): upload `provision-e2-micro.sh`, then run `./provision-e2-micro.sh plan`.
+Upload **both** `provision-e2-micro.sh` and `tenancy-discovery.inc.sh` into `~/rent-radar-phase1-oracle/`, then:
+
+```bash
+cd ~/rent-radar-phase1-oracle && chmod +x provision-e2-micro.sh && export OCI_CLI_REGION=eu-frankfurt-1 && ./provision-e2-micro.sh plan
+```
