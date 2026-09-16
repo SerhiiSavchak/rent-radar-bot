@@ -1,11 +1,22 @@
 # Oracle Cloud Shell — Always Free E2.1.Micro provisioner
 
 Script: `provision-e2-micro.sh`  
-Helpers: `tenancy-discovery.inc.sh`  
+Helpers: `tenancy-discovery.inc.sh`, `ssh-key-fips.inc.sh`  
 Companion OLX test (on the VM later): `npm run live:olx:experiment`  
 Docs: `evidence/phase-1/oracle-e2-micro-experiment.md`
 
 **This agent has not executed `apply` in your tenancy.**
+
+## Cloud Shell FIPS + SSH keys
+
+Cloud Shell OpenSSH runs in **FIPS mode**. **ED25519 key generation is rejected.**
+
+This provisioner uses **RSA 3072-bit** keys only:
+
+- `plan` — inspects key paths; **never** generates keys
+- `apply` — generates RSA-3072 **before** any OCI create, if missing
+- Never silently overwrites an existing private key (incomplete / ed25519 / weak RSA → stop with move-aside instructions)
+- Private key mode `600`, key directory `700`; private material is not logged
 
 ## Cloud Shell auth (important)
 
@@ -25,7 +36,7 @@ The provisioner discovers tenancy in this order:
 
 It does **not** run `oci setup config` or create API keys.
 
-### Optional override (from Console)
+### Optional tenancy OCID override
 
 Governance / Administration → **Tenancy details** → copy **OCID**:
 
@@ -50,19 +61,23 @@ NSG allows TCP/22 only from `SSH_ALLOWED_CIDR`. Subnet uses a custom security li
 
 ## Exact Cloud Shell steps
 
-### A. Replace the uploaded script
+### A. Replace the uploaded scripts
 
-Upload **both** files into `~/rent-radar-phase1-oracle/` (Cloud Shell Upload):
+Upload **these three files** into `~/rent-radar-phase1-oracle/`:
 
-- `provision-e2-micro.sh`
-- `tenancy-discovery.inc.sh` (must sit next to the provisioner)
+1. `provision-e2-micro.sh`
+2. `tenancy-discovery.inc.sh`
+3. `ssh-key-fips.inc.sh`
 
 ```bash
 mkdir -p ~/rent-radar-phase1-oracle
-mv ~/provision-e2-micro.sh ~/tenancy-discovery.inc.sh ~/rent-radar-phase1-oracle/ 2>/dev/null || true
+mv ~/provision-e2-micro.sh ~/tenancy-discovery.inc.sh ~/ssh-key-fips.inc.sh ~/rent-radar-phase1-oracle/ 2>/dev/null || true
 chmod +x ~/rent-radar-phase1-oracle/provision-e2-micro.sh
 cd ~/rent-radar-phase1-oracle
-ls -l provision-e2-micro.sh tenancy-discovery.inc.sh
+ls -l provision-e2-micro.sh tenancy-discovery.inc.sh ssh-key-fips.inc.sh
+# If a prior failed ed25519 attempt left junk keys:
+#   mv ssh/rrb-p1 ssh/rrb-p1.ed25519.bak 2>/dev/null || true
+#   mv ssh/rrb-p1.pub ssh/rrb-p1.pub.ed25519.bak 2>/dev/null || true
 ```
 
 ### B. Optional sanitized diagnostics (read-only)
@@ -108,7 +123,9 @@ export SSH_ALLOWED_CIDR="$(curl -4 -s https://api.ipify.org)/32"
 ```bash
 bash -n scripts/oracle-cloud-shell/provision-e2-micro.sh
 bash -n scripts/oracle-cloud-shell/tenancy-discovery.inc.sh
+bash -n scripts/oracle-cloud-shell/ssh-key-fips.inc.sh
 bash scripts/oracle-cloud-shell/test-tenancy-discovery.sh
+bash scripts/oracle-cloud-shell/test-ssh-key-fips.sh
 ```
 
-These do **not** prove live Cloud Shell authentication.
+These do **not** prove live Cloud Shell FIPS authentication; they only check script logic offline.

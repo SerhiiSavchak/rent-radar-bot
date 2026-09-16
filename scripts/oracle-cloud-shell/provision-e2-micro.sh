@@ -38,8 +38,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${SCRIPT_DIR}/tenancy-discovery.inc.sh" ]]; then
   die "Missing ${SCRIPT_DIR}/tenancy-discovery.inc.sh — upload it next to provision-e2-micro.sh"
 fi
+if [[ ! -f "${SCRIPT_DIR}/ssh-key-fips.inc.sh" ]]; then
+  die "Missing ${SCRIPT_DIR}/ssh-key-fips.inc.sh — upload it next to provision-e2-micro.sh"
+fi
 # shellcheck source=tenancy-discovery.inc.sh
 source "${SCRIPT_DIR}/tenancy-discovery.inc.sh"
+# shellcheck source=ssh-key-fips.inc.sh
+source "${SCRIPT_DIR}/ssh-key-fips.inc.sh"
 
 if [[ -f "$STATE_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -183,21 +188,26 @@ discover_context() {
 }
 
 ensure_ssh_key() {
-  if [[ -f "$PRIVATE_KEY_FILE" && -f "$PUBLIC_KEY_FILE" ]]; then
-    log "Reusing SSH keypair in $KEY_DIR (private key not printed)"
-    return
-  fi
+  # Apply-only. Plan must never call this (Cloud Shell FIPS rejects ed25519 generation).
   need ssh-keygen
-  log "Generating ed25519 keypair in $KEY_DIR (private key not printed)"
-  ssh-keygen -t ed25519 -N "" -f "$PRIVATE_KEY_FILE" -C "${PREFIX}@cloudshell" >/dev/null
+  log "Ensuring FIPS-compatible RSA-${SSH_KEY_BITS} SSH key (private key not printed)…"
+  if ! ensure_ssh_key_fips "$PRIVATE_KEY_FILE" "$PUBLIC_KEY_FILE"; then
+    die "SSH key preparation failed (see message above). No cloud resources were created yet."
+  fi
+  local status
+  status="$(classify_ssh_keypair "$PRIVATE_KEY_FILE" "$PUBLIC_KEY_FILE")"
+  [[ "$status" == "rsa_ok" ]] || die "SSH keypair not ready after ensure (status=${status})"
+  chmod 700 "$KEY_DIR"
   chmod 600 "$PRIVATE_KEY_FILE"
   chmod 644 "$PUBLIC_KEY_FILE"
+  log "SSH public key ready at $PUBLIC_KEY_FILE (algo=$(ssh_pubkey_algorithm "$PUBLIC_KEY_FILE"))"
 }
 
 print_plan() {
+  describe_ssh_key_plan "$PRIVATE_KEY_FILE" "$PUBLIC_KEY_FILE"
   cat <<EOF
 
-======== PLAN (read-only; no create) ========
+======== PLAN (read-only; no create; no key generation) ========
 Tenancy:        $TENANCY_OCID
 Compartment:    $COMPARTMENT_OCID
 Region:         $REGION (home)
@@ -207,7 +217,12 @@ Image:          $IMAGE_NAME
 Boot:           ${BOOT_GB} GB (Always Free pool = 200 GB total)
 Name:           $DISPLAY_NAME
 SSH CIDR:       ${SSH_ALLOWED_CIDR:-<REQUIRED for apply>}
-State/keys:     $STATE_FILE / $KEY_DIR
+SSH key type:   ${SSH_KEY_TYPE} ${SSH_KEY_BITS}-bit (FIPS-compatible; not ed25519)
+SSH priv path:  $PRIVATE_KEY_FILE
+SSH pub path:   $PUBLIC_KEY_FILE
+SSH key status: $SSH_KEY_PLAN_STATUS
+SSH key action: $SSH_KEY_PLAN_ACTION
+State file:     $STATE_FILE
 
 Create if missing (tag created-by=${PREFIX}):
   VCN, IGW, public RT, custom Security List (no world SSH),
@@ -223,6 +238,8 @@ Restricted SSH: NSG allowlist SSH_ALLOWED_CIDR only. Discover IP:
   # In Cloud Shell: Network menu -> Public Network, then:
   curl -4 -s https://api.ipify.org; echo
   export SSH_ALLOWED_CIDR=<ip>/32
+
+Cloud Shell FIPS: plan never generates keys; apply creates RSA ${SSH_KEY_BITS} only if missing.
 =============================================
 EOF
 }
@@ -235,9 +252,17 @@ validate_apply() {
   if [[ -n "${INSTANCE_OCID:-}" ]]; then
     die "Instance already exists/recorded ($INSTANCE_OCID). Use '$0 status' — no duplicate create."
   fi
+  describe_ssh_key_plan "$PRIVATE_KEY_FILE" "$PUBLIC_KEY_FILE"
+  case "${SSH_KEY_PLAN_STATUS:-}" in
+    missing|rsa_ok) ;;
+    *)
+      die "SSH key not ready for apply (status=${SSH_KEY_PLAN_STATUS}). ${SSH_KEY_PLAN_ACTION}. Fix keys before apply — no cloud resources will be created."
+      ;;
+  esac
 }
 
 create_all() {
+  # Keys first — before any OCI create — so a FIPS/key failure leaves no partial cloud spend.
   ensure_ssh_key
   local pubkey
   pubkey="$(tr -d '\n' <"$PUBLIC_KEY_FILE")"
@@ -422,7 +447,7 @@ cleanup_created() {
 }
 
 case "$MODE" in
-  plan) discover_context; ensure_ssh_key; print_plan; save_state ;;
+  plan) discover_context; print_plan; save_state ;;
   apply) discover_context; validate_apply; print_plan; create_all ;;
   status) show_status ;;
   cleanup) cleanup_created ;;
