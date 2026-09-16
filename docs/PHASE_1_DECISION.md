@@ -2,88 +2,55 @@
 
 Date: 2026-09-16  
 Branch: `cursor/phase-1-source-layer-closure-8797`  
-Repo: `rent-radar-bot` at `origin` GitHub `SerhiiSavchak/rent-radar-bot`  
-Verified HEAD: `689e6d9` (local = `origin/cursor/phase-1-source-layer-closure-8797`)
+Repo: `rent-radar-bot` / `SerhiiSavchak/rent-radar-bot`  
+Verified HEAD at decision update: see latest commit on this branch (recovery + CPU attribution).
 
-This document records what is **in this repository**, what was **claimed elsewhere**, and what was **verified in recovery**. Phase 1 is **not complete**.
+Phase 1 is **not complete**.
 
-## Inventory of reported claims
+## Cloudflare Workers Free — final Phase 1 hosting decision
 
-| Claim | Repository evidence | Verdict |
-|-------|---------------------|---------|
-| Branch `cursor/phase-1-source-layer-closure-8797` | Present; tracks origin | **Verified** |
-| Remote stuck at `dd8280c` | Remote HEAD is `689e6d9` including `dd8280c`…`ab63b81` | **Contradicted** (was stale) |
-| 35 tests | `npm test` → 35, then 38 after recovery fixes | **Verified** (was 35 at start) |
-| `wrangler` unauthenticated | `wrangler whoami` → logged in as `itsavchak@gmail.com` | **Contradicted** (docs were stale) |
-| Hosted OLX NOT TESTED | Workers Free probe ran 3× `/live-olx` | **Superseded** — see below |
-| Workers Free CPU OK | Platform `cpuTime` 8–45 ms on OLX-only | **FAIL** vs 10 ms Free limit |
-| `AGENTS.md` | Not present | **Missing** |
-| RIELTOR adapter | Present; live PASS; truncated catalogs | **Adapter present** |
-| DIM.RIA characteristic 1437 | Parser + types | **Verified** |
-| `agency_id` must not establish ownership | Fixed again 2026-09-16: evidence-only | **Verified + fixed** |
-| OLX `business=false` ≠ owner | Parser | **Verified** |
-| Hosted autonomous zero-cost full cycle | Not demonstrated | **OPEN** |
+**Verdict: B — REJECT the current poller workload on Workers Free.**
 
-## Critical source corrections
+| Scope | Result |
+|-------|--------|
+| OLX HTTP access from Workers egress | **PASS** (3 hosted `/live-olx` cycles) |
+| Free CPU budget (10 ms / request, [limits](https://developers.cloudflare.com/workers/platform/limits/)) | **FAIL** for measured OLX-alone work |
+| Full four-source live cycle on Free | **Not measured**; not needed to reject (OLX-alone already usually over budget) |
+| Browser required for OLX | **Not claimed** — ordinary HTTP worked on Workers |
 
-### DIM.RIA
+Attribution detail: `evidence/phase-1/cloudflare-cpu-attribution.md`.
 
-Ownership only from `characteristics_values["1437"]` (1436 owner, 1434/1435 agent, 1473/1506 business, else unknown).  
-`agency_id` is evidence only.
+Supporting CPU samples (platform `cpuTime`, not Node wall time):
 
-### Owner classifier (2026-09-16)
+- `/live-olx` cycle 1 (`a3bab41d5a2c324d`): **45 ms**
+- Further `/live-olx` samples: **36 ms, 41 ms, 28 ms**
+- `/live-olx` cycle 3 (`a3bae986fdf29ce0`): **8 ms** (one under-limit sample; not headroom)
+- `/fixtures` padded batch: **19 ms** (includes artificial ~1.14 MiB fixture — **not** a production cycle)
 
-`classifyOwner` no longer promotes `agencyId` alone to `agent`. Explicit `platformAgent` still does. `platformOwner` wins over agency id.
+No credible single optimization closes Free CPU for OLX + DIM.RIA + LUN + RIELTOR + later normalize/dedup/persist/delivery. Redeploy skipped.
 
-### OLX
+Temporary Worker was deleted after the earlier experiment; no new deploy in this decision pass.
 
-- Geo/category: region **5**, city **176**, categories **1760/330**, `distance=15`.  
-- Coords from `map.{lat,lon}`; `publishedAt` = `created_time`; URL token opaque string.  
-- `business: false` → private-account evidence, not ownership.
+## Next host candidate (docs only — not provisioned)
 
-### LUN
+From `evidence/phase-1/http-runtime.md`: **Oracle Always Free `VM.Standard.E2.1.Micro`**.  
+Unresolved until an explicit provisioning task: OLX/CloudFront on that IP, capacity, idle-reclaim, cycle RSS/CPU. Do not register or create VMs from this task.
 
-`inspectLunHtml` distinguishes `parser_failure` / `valid_empty` / `ok`.
+## Source layer status
 
-### RIELTOR
-
-Primary catalog only (`data-listing-items`); ignore recommended blocks; location validated; truncation recorded.
-
-## OLX access (2026-09-16)
-
-| Environment | Apartments | Houses |
-|-------------|------------|--------|
-| This workstation Node | JSON **403** | JSON **403** |
-| Cursor WebFetch (prior) | 200 (not a host) | 200 (not a host) |
-| **Cloudflare Workers Free** (egress) | **200 JSON, ok, 10 listings ×3 cycles** | **200 JSON, ok, 10 ×3** |
-
-Hosted Workers proves OLX HTTP works from that egress. It does **not** prove Free-plan CPU headroom.
-
-## Cloudflare Workers Free (bounded probe)
-
-Probe: `probe/cloudflare-workers/` + `src/probe/`. No D1/SQLite/Telegram/cron.
-
-| Gate | Verdict |
-|------|---------|
-| Deploy + auth | **PASS** |
-| Hosted OLX apartments + houses | **PASS** (3 cycles ~10 min apart) |
-| Platform CPU for OLX-only | **FAIL** (typically 28–45 ms; Free limit 10 ms; one sample 8 ms) |
-| Fixture-only parse CPU | **19 ms** (already > 10 ms) |
-| Full four-source live cycle | **OPEN** / expected worse |
-| Unattended 10-minute Free cron | **Disqualified** |
-
-Worker deleted after the bounded experiment (or pending cleanup if delete blocked — see `docs/RECOVERY_STATUS.md`).
+| Source | Status |
+|--------|--------|
+| OLX | Query/parser verified; hosted HTTP OK; workstation 403 |
+| DIM.RIA | Live HTML OK; char 1437 ownership; free API quota incompatible with 10-min polls |
+| LUN | Live OK; first-page / unofficial RSC |
+| RIELTOR | Live OK; **owner-filtered** market is small (2026-09-16: apt `declared=3` complete, houses `valid_empty`); unfiltered 743≈38 pages is **not** the owner product path. `OWNER_ONLY` now drives `f-owners=1`. Suburb coverage on owner apartments still thin (n=3). Multi-day soak open. |
 
 ## Remaining Phase 1 blockers
 
-1. Need a **hosted zero-cost runtime** where OLX works **and** CPU/wall budget fits four sources every ~10 minutes. Workers Free is **not** that runtime.  
-2. Do **not** provision Oracle from an interrupted session without operator confirmation; next action is recorded below.  
-3. RIELTOR full pagination / soak.  
-4. DIM.RIA official free quota incompatible with 144 cycles/day.  
-5. Telegram not exercised in this review (by design).
+1. Hosted zero-cost runtime other than Workers Free (Oracle candidate not provisioned).  
+2. Multi-day source soak from a controlled host.  
+3. Optional: deeper non-owner RIELTOR pagination only if product scope drops `OWNER_ONLY`.
 
 ## Recommended next action (one)
 
-**Record Workers Free as CPU-disqualified for the full poller.** Next operator step: decide whether to test the next documented HTTP-only Always Free candidate (Oracle `E2.1.Micro` in `evidence/phase-1/http-runtime.md`) in a **new explicit task**, or accept a paid Workers plan (out of project zero-cost scope). Do not restart broad hosting research in parallel.
-
-Phase 1 source layer is **not** marked complete.
+**Open an explicit task to provision and smoke-test Oracle Always Free `E2.1.Micro` with `npm run live:olx` only** (ordinary HTTP, no proxies). Do not reopen Workers Free CPU validation unless the Free limit or workload changes with new measurements.

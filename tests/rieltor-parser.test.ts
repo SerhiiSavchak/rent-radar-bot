@@ -42,6 +42,18 @@ describe("RIELTOR parser", () => {
     );
   });
 
+  it("reads owner-filter declared counts from the filtered catalogue label", () => {
+    const inspection = inspectRieltorHtml(ownerPage, {
+      category: "apartment",
+      pageUrl: "https://rieltor.ua/lvov/flats-rent/?f-owners=1",
+    });
+    // Fixture embeds 1 of 3 declared owner cards; live 2026-09-16 saw declared=3 with 3 cards, truncated=false.
+    expect(inspection.declaredCount).toBe(3);
+    expect(inspection.listings).toHaveLength(1);
+    expect(inspection.listings[0]?.sellerType).toBe("owner");
+    expect(inspection.extractedCardCount).toBe(1);
+  });
+
   it("uses the platform Власник label as owner evidence and ignores recommended extras", () => {
     const inspection = inspectRieltorHtml(ownerPage, {
       category: "apartment",

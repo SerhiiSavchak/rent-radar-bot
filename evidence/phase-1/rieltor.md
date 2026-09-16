@@ -23,11 +23,9 @@ Unfiltered first page of apartments and houses was **all Рієлтор** in thi
 ## Pagination / completeness
 
 - Page size 20. URL page 1 has no `page` param; page 2 is `?page=2`.
-- Apartments: 743 declared ⇒ ~38 pages. Visible pager in the HTML only went to `data-page="9"` (10 numbered links) plus an empty `.last` li. A first-page fetch is **truncated**, not a complete scan.
-- Houses: 53 declared, pager showed pages 1–3 (`?page=2`, `?page=3`). Completeness needs 3 requests; the adapter caps at 2 pages/category in this phase, so houses are also marked truncated when declared count exceeds fetched cards.
-- The adapter records `TRUNCATED` instead of presenting a partial scan as complete.
-
-High-page probing (page 11+/38) was **not** done, to avoid rate-limit threshold hunting.
+- **Unfiltered** apartments: 743 declared ⇒ ~38 pages. A first-page unfiltered fetch is **truncated**.
+- **Owner filter (`f-owners=1`) recheck 2026-09-16:** apartments `declared=3`, 3 primary cards, `truncated=false`, 1 request; houses `declared=0` / `valid_empty`, `truncated=false`. Recommendations in `data-listing-add-items` remain excluded. The 38-page figure applies to the **unfiltered** catalogue, not the owner-filtered product path when `OWNER_ONLY` / `preferOwners` is used.
+- Adapter default (2026-09-16): `preferOwners` falls back to `getConfig().ownerOnly` so production owner mode does not inherit unfiltered 743 totals.
 
 ## Dates and coordinates
 

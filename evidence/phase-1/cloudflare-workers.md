@@ -41,8 +41,9 @@ All six fixture parses `ok`. Platform **cpuTime 19 ms** (no network; parse only)
 | Gate | Verdict |
 |------|---------|
 | Hosted OLX access | **PASS** |
-| Parser CPU vs Free 10 ms | **FAIL** (OLX-only often 28–45 ms; fixtures 19 ms) |
-| Full four-source Free cron | **Disqualified** |
+| Parser CPU vs Free 10 ms | **FAIL** for live OLX-alone (typically 28–45 ms; see `cloudflare-cpu-attribution.md`) |
+| Fixture batch 19 ms | **Not** a production cycle (includes ~1.14 MiB padding fixture) |
+| Full four-source Free cron | **Disqualified** (OLX-alone already usually over budget) |
 | Repeated ~10 min polling (access) | **PASS** (3 cycles) |
 
-Workers Free is **not** a viable unattended host for this project's poll interval and parser cost.
+**Decision:** reject Workers Free for the unattended poller CPU budget (verdict B). Access success does not imply Free CPU fitness.

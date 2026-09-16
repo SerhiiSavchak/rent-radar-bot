@@ -42,12 +42,18 @@ export class RieltorSource implements ListingSourceAdapter {
   async inspectLatest(options?: FetchListingsOptions): Promise<SourceFetchResult> {
     const started = Date.now();
     const config = getConfig();
+    // OWNER_ONLY product mode must use the platform filter; otherwise declared
+    // totals reflect the unfiltered ~700+ apartment catalogue and false TRUNCATED.
+    const effectiveOptions: FetchListingsOptions = {
+      ...options,
+      preferOwners: options?.preferOwners ?? config.ownerOnly,
+    };
     const notes: string[] = [];
     const categories: RieltorCategory[] = [];
-    if (options?.includeApartments !== false) {
+    if (effectiveOptions.includeApartments !== false) {
       categories.push("apartment");
     }
-    if (options?.includeHouses !== false) {
+    if (effectiveOptions.includeHouses !== false) {
       categories.push("house");
     }
 
@@ -68,7 +74,12 @@ export class RieltorSource implements ListingSourceAdapter {
       if (index > 0) {
         await sleep(RIELTOR_REQUEST_GAP_MS);
       }
-      const page = await this.fetchCategoryPages(category, options, notes, config.sourceTimeoutMs);
+      const page = await this.fetchCategoryPages(
+        category,
+        effectiveOptions,
+        notes,
+        config.sourceTimeoutMs,
+      );
       requestCount += page.requestCount;
       lastStatus = page.lastStatus ?? lastStatus;
       extractedCardCount += page.extractedCardCount;
