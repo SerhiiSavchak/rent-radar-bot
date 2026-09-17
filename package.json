@@ -19,6 +19,8 @@
     "live:olx:experiment": "tsx src/scripts/oracle-olx-experiment.ts",
     "live:olx:browser-experiment": "tsx src/scripts/oracle-olx-browser-experiment.ts",
     "live:oracle:soak": "tsx src/scripts/oracle-soak.ts",
+    "live:test-telegram": "tsx src/scripts/test-telegram.ts",
+    "live:test-telegram:poll": "tsx src/scripts/test-telegram-poll.ts",
     "live:domria": "tsx src/scripts/test-domria.ts",
     "live:lun": "tsx src/scripts/test-lun.ts",
     "live:rieltor": "tsx src/scripts/test-rieltor.ts",
