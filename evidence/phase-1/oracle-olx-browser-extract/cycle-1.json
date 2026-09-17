@@ -1,0 +1,56 @@
+{
+  "message": "olx-browser-extract.done",
+  "startedAt": "2026-09-17T12:33:04.572Z",
+  "finishedAt": "2026-09-17T12:33:38.356Z",
+  "accessibilityOk": true,
+  "extractionOk": false,
+  "validatedListingCount": 0,
+  "apartments": {
+    "accessibility": "browser_accessible",
+    "accessibilityOk": true,
+    "apiResponsesCaptured": 0,
+    "rawOfferCount": 0,
+    "validatedListingCount": 0,
+    "rejections": [
+      {
+        "reason": "no_offers_api_payload_captured",
+        "detail": "page accessible but no /api/v1/offers JSON intercepted"
+      },
+      {
+        "reason": "dom_fallback_insufficient",
+        "detail": "card markers alone do not yield validated Listing objects"
+      }
+    ],
+    "elapsedMs": 12723,
+    "httpStatus": 200
+  },
+  "houses": {
+    "accessibility": "browser_accessible",
+    "accessibilityOk": true,
+    "apiResponsesCaptured": 0,
+    "rawOfferCount": 0,
+    "validatedListingCount": 0,
+    "rejections": [
+      {
+        "reason": "no_offers_api_payload_captured",
+        "detail": "page accessible but no /api/v1/offers JSON intercepted"
+      },
+      {
+        "reason": "dom_fallback_insufficient",
+        "detail": "card markers alone do not yield validated Listing objects"
+      }
+    ],
+    "elapsedMs": 15010,
+    "httpStatus": 200
+  },
+  "sampleListings": [],
+  "notes": [
+    "transport=stock_playwright_chromium",
+    "opt_in_only=true",
+    "not_wired_to_telegram=true",
+    "maxPagesPerCategory=1",
+    "concurrency=1",
+    "accessibility_without_extraction=true"
+  ],
+  "browserClosed": true
+}
