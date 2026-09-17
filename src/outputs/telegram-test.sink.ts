@@ -97,9 +97,22 @@ function formatPrice(listing: Listing): string {
   return `${listing.price.amount} ${listing.price.currency}/${listing.price.period ?? "unknown"}`;
 }
 
+export function formatSellerLabel(listing: Listing): string {
+  if (listing.sellerType === "owner") {
+    return "owner (platform-verified)";
+  }
+  if (listing.sellerType === "agent") {
+    return "agent (not owner)";
+  }
+  if (listing.sellerType === "business") {
+    return "business (not owner)";
+  }
+  return "unknown (not verified ownership)";
+}
+
 export function formatListingTelegramHtml(listing: Listing): string {
   const cityArea = [listing.location.city, listing.location.district, listing.location.raw]
-    .filter(Boolean)
+    .filter((item): item is string => Boolean(item))
     .filter((item, index, arr) => arr.indexOf(item) === index)
     .join(" · ");
   const published = listing.publishedAt?.toISOString() ?? "n/a";
@@ -110,7 +123,7 @@ export function formatListingTelegramHtml(listing: Listing): string {
     "",
     `💰 ${escapeHtml(formatPrice(listing))}`,
     `📍 ${escapeHtml(cityArea || listing.location.raw)}`,
-    `👤 ${escapeHtml(listing.sellerType)}`,
+    `👤 ${escapeHtml(formatSellerLabel(listing))}`,
     `🕒 ${escapeHtml(published)}`,
     `📦 ${escapeHtml(listing.source)} · ${escapeHtml(listing.propertyType)}`,
     "",

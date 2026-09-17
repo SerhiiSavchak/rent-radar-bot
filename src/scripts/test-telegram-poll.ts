@@ -12,7 +12,11 @@
 import { config as loadDotenv } from "dotenv";
 import { getConfig } from "../config/env.ts";
 import { InMemoryListingDedupe } from "../delivery/listing-dedupe-memory.ts";
-import { runTelegramTestCycle } from "../delivery/telegram-test-pipeline.ts";
+import {
+  formatTelegramFinalSummary,
+  formatTelegramStartupMessage,
+  runTelegramTestCycle,
+} from "../delivery/telegram-test-pipeline.ts";
 import {
   createTelegramTestSinkFromEnv,
   redactTelegramSecrets,
@@ -43,6 +47,19 @@ try {
   });
   const adapters = [new DomriaSource(), new LunSource(), new RieltorSource(), new OlxSource()];
   const dedupe = new InMemoryListingDedupe();
+  const dryRun = process.env.TELEGRAM_DRY_RUN === "true";
+
+  const startup = formatTelegramStartupMessage({
+    chatId: sink.chatId,
+    cycles,
+    intervalMs,
+    dryRun,
+    enableDomria: config.enableDomria,
+    enableLun: config.enableLun,
+    enableRieltor: config.enableRieltor,
+    enableOlx: config.enableOlx,
+    ownerOnly: config.ownerOnly,
+  });
 
   console.log(
     JSON.stringify({
@@ -50,12 +67,30 @@ try {
       cycles,
       intervalMs,
       chatId: sink.chatId,
-      dryRun: process.env.TELEGRAM_DRY_RUN === "true",
-      note: "Bounded poll only. Token not logged.",
+      dryRun,
+      enableOlx: config.enableOlx,
+      note: "Bounded poll only. OLX browser probe is not a delivery transport. Token not logged.",
     }),
   );
 
+  const startupSend = await sink.sendText(startup);
+  if (!startupSend.ok) {
+    console.error(
+      JSON.stringify({
+        message: "live:test-telegram:poll.startup_notify_failed",
+        error: startupSend.errorSafe,
+      }),
+    );
+  }
+
   let exitFail = false;
+  let totalSentOk = 0;
+  let totalSentFailed = 0;
+  let totalNewAfterDedupe = 0;
+  let sourceFailureCycles = 0;
+  let zeroEligibleCycles = 0;
+  let cyclesAttempted = 0;
+
   for (let cycle = 1; cycle <= cycles; cycle += 1) {
     if (stop) {
       console.log(JSON.stringify({ message: "live:test-telegram:poll.aborted", cycle }));
@@ -70,8 +105,18 @@ try {
       },
       cycle,
     );
+    cyclesAttempted += 1;
+    totalSentOk += report.sentOk;
+    totalSentFailed += report.sentFailed;
+    totalNewAfterDedupe += report.newAfterDedupe;
+    if (report.hasSourceFailures) {
+      sourceFailureCycles += 1;
+    }
+    if (report.zeroEligibleListings) {
+      zeroEligibleCycles += 1;
+    }
     console.log(JSON.stringify({ message: "live:test-telegram:poll.cycle", ...report }));
-    if (report.sentFailed > 0) {
+    if (report.sentFailed > 0 || report.hasSourceFailures) {
       exitFail = true;
     }
     if (cycle < cycles && !stop && intervalMs > 0) {
@@ -87,10 +132,36 @@ try {
     }
   }
 
+  const summaryText = formatTelegramFinalSummary({
+    cyclesAttempted,
+    totalSentOk,
+    totalSentFailed,
+    totalNewAfterDedupe,
+    sourceFailureCycles,
+    zeroEligibleCycles,
+    dryRun,
+  });
+  const summarySend = await sink.sendText(summaryText);
+  if (!summarySend.ok) {
+    exitFail = true;
+    console.error(
+      JSON.stringify({
+        message: "live:test-telegram:poll.summary_notify_failed",
+        error: summarySend.errorSafe,
+      }),
+    );
+  }
+
   console.log(
     JSON.stringify({
       message: "live:test-telegram:poll.done",
       finishedAt: new Date().toISOString(),
+      cyclesAttempted,
+      totalSentOk,
+      totalSentFailed,
+      totalNewAfterDedupe,
+      sourceFailureCycles,
+      zeroEligibleCycles,
       exitFail,
     }),
   );

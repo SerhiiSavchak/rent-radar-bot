@@ -48,3 +48,5 @@ npm run live:test-telegram:poll
 - No Igor credentials or destinations are hard-coded.
 - Unit tests do not send unless a fake `fetch` is injected; live scripts require explicit env.
 - Production `ListingMonitorService` / `TelegramOutput` defaults are unchanged.
+- OLX browser probe is **not** wired into Telegram; `ENABLE_OLX` uses HTTP only (blocked on Oracle).
+- Startup and final summary messages are always sent on `live:test-telegram:poll`.

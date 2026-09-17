@@ -1,0 +1,107 @@
+{
+  "experiment": "oracle-soak",
+  "cycle": 11,
+  "startedAt": "2026-09-17T03:23:55.095Z",
+  "endedAt": "2026-09-17T03:28:18.466Z",
+  "status": "degraded",
+  "elapsedMs": 263371,
+  "memoryBefore": {
+    "rssBytes": 171929600,
+    "heapUsedBytes": 65886776,
+    "externalBytes": 13642620
+  },
+  "memoryAfter": {
+    "rssBytes": 172998656,
+    "heapUsedBytes": 73899552,
+    "externalBytes": 13703381
+  },
+  "sources": [
+    {
+      "source": "domria",
+      "required": true,
+      "success": false,
+      "transport": "public HTML embedded JSON",
+      "classification": "unknown",
+      "resultKind": "unknown",
+      "httpStatus": 200,
+      "extractedCount": 10,
+      "elapsedMs": 1429,
+      "errorSafe": "DIM.RIA returned 10 listings via public HTML embedded JSON",
+      "notes": [
+        "DOM.RIA live test requires DOMRIA_API_KEY for the official developers.ria.com API.",
+        "https://dom.ria.com/uk/arenda-kvartir/lvov/ -> 200 content-type=text/html; charset=utf-8; server=nginx",
+        "https://dom.ria.com/uk/arenda-domov/lvov/ -> 200 content-type=text/html; charset=utf-8; server=nginx"
+      ]
+    },
+    {
+      "source": "lun",
+      "required": true,
+      "success": true,
+      "transport": "embedded JSON (Next.js RSC cards + JSON-LD)",
+      "classification": "ok",
+      "resultKind": "ok",
+      "httpStatus": 200,
+      "extractedCount": 10,
+      "elapsedMs": 1177,
+      "notes": [
+        "https://lun.ua/rent/lviv/flats-bez-poserednykiv -> 200 content-type=text/html; charset=utf-8; server=cloudflare; cf-ray=a3c4febe6fdf65d2-FRA",
+        "https://lun.ua/rent/lviv/flats-bez-poserednykiv integrity: rsc=true jsonld=true rawCards=24 validated=22 kind=ok",
+        "https://lun.ua/rent/lviv/houses -> 200 content-type=text/html; charset=utf-8; server=cloudflare; cf-ray=a3c4fec3697365d2-FRA",
+        "https://lun.ua/rent/lviv/houses integrity: rsc=true jsonld=true rawCards=24 validated=12 kind=ok"
+      ]
+    },
+    {
+      "source": "rieltor",
+      "required": true,
+      "success": true,
+      "transport": "public HTML catalog cards + optional JSON-LD",
+      "classification": "ok",
+      "resultKind": "ok",
+      "httpStatus": 200,
+      "extractedCount": 3,
+      "elapsedMs": 2947,
+      "notes": [
+        "https://rieltor.ua/lvov/flats-rent/?f-owners=1 -> 200 content-type=text/html; charset=UTF-8; server=cloudflare; cf-ray=a3c4fec61fe8e0c9-MUC final=https://rieltor.ua/lvov/flats-rent/?f-owners=1",
+        "apartment p1 kind=ok declared=3 cards=3 validated=3 jsonld=false location=true truncated=false",
+        "https://rieltor.ua/lvov/houses-rent/?f-owners=1 -> 200 content-type=text/html; charset=UTF-8; server=cloudflare; cf-ray=a3c4fed57e09e0c9-MUC final=https://rieltor.ua/lvov/houses-rent/?f-owners=1",
+        "house p1 kind=valid_empty declared=0 cards=0 validated=0 jsonld=false location=true truncated=false",
+        "requests=2",
+        "scanCompleteWithinFetchedPages=true (full-catalog completeness still depends on declaredCount)"
+      ]
+    },
+    {
+      "source": "olx_http",
+      "required": false,
+      "success": false,
+      "transport": "HTTP HTML",
+      "classification": "transport_blocked",
+      "resultKind": "http_error",
+      "httpStatus": 403,
+      "extractedCount": 0,
+      "elapsedMs": 2106,
+      "notes": [
+        "https://www.olx.ua/api/v1/offers/?offset=0&limit=10&category_id=1760&region_id=5&city_id=176&distance=15&sort_by=created_at%3Adesc -> 403 content-type=text/html; server=CloudFront; x-cache=Error from cloudfront",
+        "HTML https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/ -> 200 content-type=text/html; charset=utf-8; server=nginx; x-cache=Miss from cloudfront",
+        "HTML reached, but Phase 0 does not scrape brittle OLX CSS cards without JSON. HTML 200 is not successful OLX API access.",
+        "olx_http is diagnostic-only; not a soak success path"
+      ]
+    },
+    {
+      "source": "olx_browser",
+      "required": true,
+      "success": true,
+      "transport": "playwright-chromium",
+      "classification": "browser_accessible",
+      "resultKind": "browser_accessible",
+      "extractedCount": 2,
+      "elapsedMs": 255711,
+      "notes": [
+        "apartments:browser_accessible",
+        "houses:browser_accessible",
+        "browserClosed=true",
+        "supported listing structure signals present in page HTML",
+        "supported listing structure signals present in page HTML"
+      ]
+    }
+  ]
+}

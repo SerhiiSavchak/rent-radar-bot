@@ -79,6 +79,17 @@ function mapRequiredHttp(
       : (kind === "ok" && extractedCount > 0) || kind === "valid_empty";
 
   const notes = result.rawNotes ? sanitizeSoakNotes(result.rawNotes) : undefined;
+  // Only attach errorSafe for real failures — not success health messages misclassified via missing resultKind.
+  const errorSafe =
+    !success && result.health.message && !/^DIM\.RIA returned \d+ listings/i.test(result.health.message)
+      ? sanitizeSoakText(result.health.message)
+      : !success && kind === "unknown" && extractedCount > 0
+        ? sanitizeSoakText(
+            `missing resultKind with ${extractedCount} listings (adapter must set resultKind=ok|valid_empty|…)`,
+          )
+        : !success && result.health.message
+          ? sanitizeSoakText(result.health.message)
+          : undefined;
 
   return {
     source,
@@ -90,9 +101,7 @@ function mapRequiredHttp(
     ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
     extractedCount,
     elapsedMs,
-    ...(!success && result.health.message
-      ? { errorSafe: sanitizeSoakText(result.health.message) }
-      : {}),
+    ...(errorSafe !== undefined ? { errorSafe } : {}),
     ...(notes !== undefined ? { notes } : {}),
   };
 }

@@ -106,7 +106,10 @@ describe("Telegram formatting and splitting", () => {
     expect(text).toContain("Квартира");
     expect(text).toContain("12000");
     expect(text).toContain("Львів");
-    expect(text).toContain("owner");
+    expect(text).toContain("owner (platform-verified)");
+    expect(formatListingTelegramHtml(sampleListing({ sellerType: "unknown" }))).toContain(
+      "unknown (not verified ownership)",
+    );
     expect(text).toContain("2026-09-16T12:00:00.000Z");
     expect(text).toContain("https://rieltor.ua/flats-rent/100/");
     expect(text).toContain("rieltor");
@@ -260,6 +263,7 @@ describe("in-memory dedupe + pipeline", () => {
     });
     expect(report.zeroResult).toBe(true);
     expect(report.newAfterDedupe).toBe(0);
+    expect(report.zeroEligibleListings || report.hasSourceFailures).toBe(true);
     expect(sendListing).not.toHaveBeenCalled();
     resetConfigCache();
   });
