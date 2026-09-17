@@ -3,7 +3,9 @@ import type { Browser, BrowserContext, Page, Response } from "playwright";
 import { extractOlxListingsViaBrowser } from "../src/sources/olx/olx-browser.extract.ts";
 import {
   collectOfferLikeObjects,
+  extractListingsFromOlxBrowserDocuments,
   extractListingsFromOlxCatalogHtml,
+  inspectPrerenderedState,
   normalizeEmbeddedOlxAd,
   parsePrerenderedState,
 } from "../src/sources/olx/olx-browser.html-extract.ts";
@@ -14,6 +16,15 @@ import {
   olxCatalogHtmlWithNextDataOffers,
   olxCatalogHtmlWithPrerenderedOffers,
 } from "./fixtures/olx-catalog-html.ts";
+import {
+  derivedOracleApartmentBusinessAd,
+  derivedOracleApartmentPrivateAd,
+  derivedOracleHousePrivateAd,
+  derivedOracleMainDocumentHtml,
+  derivedOracleMalformedPrerenderedHtml,
+  derivedOracleRenderedHtmlWithoutState,
+  derivedOracleTruncatedMainDocumentHtml,
+} from "./fixtures/olx-prerendered-oracle-derived.ts";
 
 describe("OLX HTML structured extract", () => {
   it("extracts validated listings from __PRERENDERED_STATE__", () => {
@@ -40,15 +51,20 @@ describe("OLX HTML structured extract", () => {
   it("keeps missing seller/date/geo as unknown without inventing values", () => {
     const html = olxCatalogHtmlWithPrerenderedOffers({
       omitCreatedTime: true,
-      omitLocation: true,
       omitMap: true,
     });
     const result = extractListingsFromOlxCatalogHtml(html);
     expect(result.listings).toHaveLength(1);
     expect(result.listings[0]?.publishedAt).toBeUndefined();
-    expect(result.listings[0]?.location.city).toBeUndefined();
     expect(result.listings[0]?.location.latitude).toBeUndefined();
     expect(result.listings[0]?.sellerType).toBe("unknown");
+  });
+
+  it("rejects prerendered ads without a city label", () => {
+    const html = olxCatalogHtmlWithPrerenderedOffers({ omitLocation: true });
+    const result = extractListingsFromOlxCatalogHtml(html);
+    expect(result.listings).toHaveLength(0);
+    expect(result.rejections.some((r) => r.reason === "rejected_missing_location")).toBe(true);
   });
 
   it("rejects card markers alone", () => {
@@ -62,9 +78,15 @@ describe("OLX HTML structured extract", () => {
   it("records malformed prerendered payload", () => {
     const result = extractListingsFromOlxCatalogHtml(olxCatalogHtmlWithMalformedPrerendered());
     expect(result.listings).toHaveLength(0);
-    expect(result.rejections.some((r) => r.reason === "no_structured_html_payload" || r.reason === "dom_fallback_insufficient")).toBe(
-      true,
-    );
+    expect(
+      result.rejections.some(
+        (r) =>
+          r.reason === "prerendered_state_truncated" ||
+          r.reason === "prerendered_state_malformed" ||
+          r.reason === "no_structured_html_payload" ||
+          r.reason === "dom_fallback_insufficient",
+      ),
+    ).toBe(true);
   });
 
   it("parses embedded offers API shape and Next data", () => {
@@ -95,8 +117,12 @@ describe("OLX HTML structured extract", () => {
 });
 
 describe("OLX browser extract integration", () => {
-  function mockBrowser(html: string, networkOffers?: unknown): Browser {
+  function mockBrowser(
+    renderedHtml: string,
+    options?: { networkOffers?: unknown; mainDocumentHtml?: string },
+  ): Browser {
     let responseHandler: ((response: Response) => void) | undefined;
+    const mainHtml = options?.mainDocumentHtml ?? renderedHtml;
     const page = {
       on: (event: string, handler: (response: Response) => void) => {
         if (event === "response") {
@@ -104,24 +130,26 @@ describe("OLX browser extract integration", () => {
         }
       },
       goto: vi.fn(async () => {
-        if (networkOffers) {
+        if (options?.networkOffers) {
           responseHandler?.({
             url: () => "https://www.olx.ua/api/v1/offers/?category_id=1760",
             status: () => 200,
             headers: () => ({ "content-type": "application/json" }),
-            json: async () => networkOffers,
+            json: async () => options.networkOffers,
+            text: async () => JSON.stringify(options.networkOffers),
           } as unknown as Response);
         }
-        // Unrelated JSON probe (diagnostics).
         responseHandler?.({
           url: () => "https://www.olx.ua/api/v1/config/",
           status: () => 200,
           headers: () => ({ "content-type": "application/json" }),
           json: async () => ({ ok: true }),
+          text: async () => "{\"ok\":true}",
         } as unknown as Response);
         return {
           status: () => 200,
           headers: () => ({ "content-type": "text/html" }),
+          text: async () => mainHtml,
         };
       }),
       waitForLoadState: vi.fn(async () => undefined),
@@ -133,7 +161,7 @@ describe("OLX browser extract integration", () => {
       }),
       url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
       title: async () => "OLX",
-      content: async () => html,
+      content: async () => renderedHtml,
     } as unknown as Page;
 
     const context = {
@@ -162,7 +190,7 @@ describe("OLX browser extract integration", () => {
         },
       ],
     };
-    const browser = mockBrowser(olxCatalogHtmlCardsOnly(), offerPayload);
+    const browser = mockBrowser(olxCatalogHtmlCardsOnly(), { networkOffers: offerPayload });
     const result = await extractOlxListingsViaBrowser({
       timeoutMs: 5_000,
       maxPagesPerCategory: 1,
@@ -205,5 +233,167 @@ describe("OLX browser extract integration", () => {
     expect(result.apartments.networkJsonProbes?.some((p) => p.url.includes("/api/v1/config/"))).toBe(
       true,
     );
+  });
+
+  it("reads quoted prerendered state from the original document when rendered DOM dropped it", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const browser = mockBrowser(derivedOracleRenderedHtmlWithoutState(ads), {
+      mainDocumentHtml: derivedOracleMainDocumentHtml(ads),
+    });
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 5_000,
+      launch: async () => browser,
+    });
+    expect(inspectPrerenderedState(derivedOracleRenderedHtmlWithoutState(ads)).present).toBe(false);
+    expect(result.extractionOk).toBe(true);
+    expect(result.apartments.htmlInputKind).toBe("main_document");
+    expect(result.apartments.extractSource).toBe("prerendered_state");
+    expect(result.listings[0]?.sourceId).toBe("935081899");
+    expect(result.listings[0]?.price?.amount).toBe(53650);
+  });
+});
+
+describe("OLX Oracle-derived prerendered catalog adapter", () => {
+  it("maps camelCase catalog fields without inventing ownership", () => {
+    const html = derivedOracleMainDocumentHtml([
+      derivedOracleApartmentPrivateAd(),
+      derivedOracleApartmentBusinessAd(),
+    ]);
+    const result = extractListingsFromOlxCatalogHtml(html, new Date(), { expectedCategoryId: 1760 });
+    expect(result.source).toBe("prerendered_state");
+    expect(result.listings).toHaveLength(2);
+
+    const priv = result.listings.find((item) => item.sourceId === "935081899");
+    expect(priv?.sellerType).toBe("unknown");
+    expect(priv?.sellerEvidence?.some((item) => item.includes("private account"))).toBe(true);
+    expect(priv?.metadata?.filterConsidersPrivateOwner).toBe(false);
+    expect(priv?.metadata?.olxUserSellerType).toBeNull();
+    expect(priv?.metadata?.coordinatesApproximate).toBe(true);
+    expect(priv?.metadata?.coordinatesShowDetailed).toBe(false);
+    expect(priv?.publishedAt?.toISOString()).toBe(new Date("2026-09-17T08:34:26+03:00").toISOString());
+    expect(priv?.refreshedAt?.toISOString()).toBe(new Date("2026-09-17T08:40:09+03:00").toISOString());
+    expect(priv?.metadata?.publishedAtProvenance).toBe("olx.createdTime");
+    expect(priv?.metadata?.pushupTime).toBeUndefined();
+    expect(priv?.location.city).toBe("Львів");
+    expect(priv?.propertyType).toBe("apartment");
+
+    const biz = result.listings.find((item) => item.sourceId === "931996810");
+    expect(biz?.sellerType).toBe("business");
+    expect(biz?.metadata?.pushupTime).toBe("2026-09-17T10:27:55+03:00");
+    expect(result.diagnostics.ownerEligibleCount).toBe(0);
+    expect(result.diagnostics.freshnessEligibleCount).toBe(2);
+  });
+
+  it("deduplicates by source + listing id and keeps old createdTime separate from refresh", () => {
+    const stale = derivedOracleApartmentBusinessAd();
+    const html = derivedOracleMainDocumentHtml([stale, { ...stale }, derivedOracleApartmentPrivateAd()]);
+    const result = extractListingsFromOlxCatalogHtml(html, new Date(), { expectedCategoryId: 1760 });
+    expect(result.listings).toHaveLength(2);
+    expect(result.diagnostics.rawObjectCount).toBe(3);
+    expect(result.diagnostics.uniqueIdCount).toBe(2);
+    const biz = result.listings.find((item) => item.sourceId === "931996810");
+    expect(biz?.publishedAt?.toISOString()).toBe(new Date("2026-08-17T01:13:35+03:00").toISOString());
+    expect(biz?.refreshedAt?.toISOString()).toBe(new Date("2026-09-17T10:27:55+03:00").toISOString());
+  });
+
+  it("maps house private-account ads without treating title phrasing as ownership", () => {
+    const html = derivedOracleMainDocumentHtml([derivedOracleHousePrivateAd()]);
+    const result = extractListingsFromOlxCatalogHtml(html, new Date(), { expectedCategoryId: 330 });
+    expect(result.listings).toHaveLength(1);
+    expect(result.listings[0]?.propertyType).toBe("house");
+    expect(result.listings[0]?.sellerType).toBe("unknown");
+    expect(result.diagnostics.ownerEligibleCount).toBe(0);
+  });
+
+  it("does not recover listings from truncated quoted state", () => {
+    const truncated = derivedOracleTruncatedMainDocumentHtml();
+    expect(inspectPrerenderedState(truncated).truncated).toBe(true);
+    const result = extractListingsFromOlxBrowserDocuments({
+      mainDocumentHtml: truncated,
+      renderedHtml: derivedOracleRenderedHtmlWithoutState([derivedOracleApartmentPrivateAd()]),
+    });
+    expect(result.listings).toHaveLength(0);
+    expect(result.rejections.some((item) => item.reason === "prerendered_state_truncated")).toBe(true);
+  });
+
+  it("records malformed closed quoted state", () => {
+    const result = extractListingsFromOlxCatalogHtml(derivedOracleMalformedPrerenderedHtml());
+    expect(result.listings).toHaveLength(0);
+    expect(
+      result.rejections.some(
+        (item) =>
+          item.reason === "prerendered_state_malformed" || item.reason === "prerendered_state_truncated",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("OLX browser extract deadlines", () => {
+  it("expires the total budget, skips the next category, and still closes the browser", async () => {
+    let nowMs = 1_000;
+    const close = vi.fn(async () => undefined);
+    const contextClose = vi.fn(async () => undefined);
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const rendered = derivedOracleRenderedHtmlWithoutState(ads);
+    const main = derivedOracleMainDocumentHtml(ads);
+    let responseHandler: ((response: Response) => void) | undefined;
+    const page = {
+      on: (event: string, handler: (response: Response) => void) => {
+        if (event === "response") {
+          responseHandler = handler;
+        }
+      },
+      goto: vi.fn(async () => {
+        nowMs += 20_000;
+        responseHandler?.({
+          url: () => "https://www.olx.ua/api/v1/config/",
+          status: () => 200,
+          headers: () => ({ "content-type": "application/json" }),
+          json: async () => ({}),
+          text: async () => "{}",
+        } as unknown as Response);
+        return {
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html" }),
+          text: async () => {
+            nowMs += 1_000;
+            return main;
+          },
+        };
+      }),
+      waitForLoadState: vi.fn(async () => {
+        nowMs += 1_000;
+      }),
+      locator: () => ({
+        first: () => ({
+          isVisible: async () => false,
+          click: async () => undefined,
+        }),
+      }),
+      url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
+      title: async () => "OLX",
+      content: async () => rendered,
+    } as unknown as Page;
+    const browser = {
+      newContext: async () => ({
+        newPage: async () => page,
+        close: contextClose,
+      }),
+      close,
+    } as unknown as Browser;
+
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 5_000,
+      categoryBudgetMs: 5_000,
+      totalBudgetMs: 10_000,
+      launch: async () => browser,
+      clockMs: () => nowMs,
+    });
+    expect(result.houses.rejections.some((item) => item.reason === "total_budget_exhausted")).toBe(true);
+    expect(result.houses.timedOut).toBe(true);
+    expect(result.browserClosed).toBe(true);
+    expect(close).toHaveBeenCalled();
+    expect(contextClose).toHaveBeenCalled();
+    expect(result.notes.some((item) => item.includes("houses_skipped_total_budget"))).toBe(true);
   });
 });

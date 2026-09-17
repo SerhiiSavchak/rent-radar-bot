@@ -4,7 +4,7 @@
  */
 
 import type { Listing } from "../../domain/listing.ts";
-import { parseOlxOffer, parseOlxOffersPayload } from "./olx.parser.ts";
+import { parseOlxOffer } from "./olx.parser.ts";
 
 export type OlxHtmlExtractRejection = {
   reason: string;
@@ -13,10 +13,21 @@ export type OlxHtmlExtractRejection = {
 
 export type OlxHtmlExtractDiagnostics = {
   hasPrerenderedState: boolean;
+  prerenderedStateComplete?: boolean;
+  prerenderedStateTruncated?: boolean;
+  prerenderedAdsPathFound?: boolean;
   hasNextData: boolean;
   hasOffersApiShapeInHtml: boolean;
   markerHits: string[];
   rawCandidateCount: number;
+  rawObjectCount?: number;
+  uniqueIdCount?: number;
+  normalizedListingCount?: number;
+  ownerEligibleCount?: number;
+  freshnessEligibleCount?: number;
+  htmlSource?: "main_document" | "rendered_dom";
+  rejectedWrongCategory?: number;
+  rejectedMissingLocation?: number;
 };
 
 export type OlxHtmlStructuredExtract = {
@@ -118,21 +129,61 @@ export function extractPrerenderedStateRaw(html: string): string | undefined {
 }
 
 export function parsePrerenderedState(html: string): unknown | undefined {
+  return inspectPrerenderedState(html).decoded;
+}
+
+export type PrerenderedStateInspection = {
+  present: boolean;
+  complete: boolean;
+  truncated: boolean;
+  decoded?: unknown;
+};
+
+/**
+ * Decode `window.__PRERENDERED_STATE__ = "…"` as data (JSON.parse only; never eval).
+ * An unclosed quoted assignment is truncated — not a successful full-state parse.
+ */
+export function inspectPrerenderedState(html: string): PrerenderedStateInspection {
   const raw = extractPrerenderedStateRaw(html);
+  const present = html.includes("__PRERENDERED_STATE__");
+  if (!present) {
+    return { present: false, complete: false, truncated: false };
+  }
   if (!raw) {
-    return undefined;
+    return { present: true, complete: false, truncated: true };
   }
   let parsed = tryJsonParse(raw);
   if (parsed === undefined) {
-    // Some pages leave the string unescaped in the assignment capture.
     parsed = tryJsonParse(`"${raw.replaceAll('"', '\\"')}"`);
   }
-  // Double-encoded: first parse yields a string of JSON.
   if (typeof parsed === "string") {
     const second = tryJsonParse(parsed);
-    return second;
+    if (second === undefined) {
+      return { present: true, complete: true, truncated: false };
+    }
+    return { present: true, complete: true, truncated: false, decoded: second };
   }
-  return parsed;
+  if (parsed === undefined) {
+    return { present: true, complete: true, truncated: false };
+  }
+  return { present: true, complete: true, truncated: false, decoded: parsed };
+}
+
+/** Evidenced Oracle path: decodedState.listing.listing.ads */
+export function extractListingAdsFromPrerenderedState(state: unknown): unknown[] {
+  if (!state || typeof state !== "object") {
+    return [];
+  }
+  const listing = (state as { listing?: unknown }).listing;
+  if (!listing || typeof listing !== "object") {
+    return [];
+  }
+  const inner = (listing as { listing?: unknown }).listing;
+  if (!inner || typeof inner !== "object") {
+    return [];
+  }
+  const ads = (inner as { ads?: unknown }).ads;
+  return Array.isArray(ads) ? ads : [];
 }
 
 export function extractNextDataJson(html: string): unknown | undefined {
@@ -202,114 +253,416 @@ export function collectOfferLikeObjects(root: unknown, max = 200): unknown[] {
   return out;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readRegularPrice(ad: Record<string, unknown>): { value: number; currency: string } | undefined {
+  const price = asRecord(ad.price);
+  if (!price) {
+    return undefined;
+  }
+  const regular = asRecord(price.regularPrice) ?? asRecord(price.regular_price);
+  const amountRaw = regular?.value ?? price.value ?? price.amount;
+  const amount = typeof amountRaw === "number" ? amountRaw : Number(amountRaw);
+  if (!Number.isFinite(amount)) {
+    return undefined;
+  }
+  const currency =
+    (typeof regular?.currencyCode === "string" && regular.currencyCode) ||
+    (typeof regular?.currency === "string" && regular.currency) ||
+    (typeof price.currencyCode === "string" && price.currencyCode) ||
+    (typeof price.currency === "string" && price.currency) ||
+    "UAH";
+  return { value: amount, currency };
+}
+
+function categoryIdOf(raw: unknown): number | undefined {
+  const id = asRecord(raw)?.category && asRecord(asRecord(raw)?.category)?.id;
+  const n = typeof id === "number" ? id : typeof id === "string" ? Number(id) : Number.NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Explicit adapter for the Oracle catalog camelCase schema
+ * (`createdTime`, `isBusiness`, `price.regularPrice`, `location.cityName`, …)
+ * plus the older snake_case api/v1/offers shape used by existing fixtures.
+ */
+export function adaptOracleCatalogAd(raw: unknown): Record<string, unknown> | undefined {
+  const ad = asRecord(raw);
+  if (!ad) {
+    return undefined;
+  }
+  const id = ad.id;
+  const title = typeof ad.title === "string" ? ad.title : undefined;
+  if (id === undefined || !title) {
+    return undefined;
+  }
+
+  const created =
+    (typeof ad.createdTime === "string" && ad.createdTime) ||
+    (typeof ad.created_time === "string" && ad.created_time) ||
+    undefined;
+  const refreshed =
+    (typeof ad.lastRefreshTime === "string" && ad.lastRefreshTime) ||
+    (typeof ad.last_refresh_time === "string" && ad.last_refresh_time) ||
+    undefined;
+  const pushup =
+    (typeof ad.pushupTime === "string" && ad.pushupTime) ||
+    (typeof ad.pushup_time === "string" && ad.pushup_time) ||
+    undefined;
+  const business =
+    typeof ad.isBusiness === "boolean"
+      ? ad.isBusiness
+      : typeof ad.business === "boolean"
+        ? ad.business
+        : undefined;
+
+  const locIn = asRecord(ad.location);
+  let location: Record<string, unknown> | undefined;
+  if (locIn) {
+    if (asRecord(locIn.city)) {
+      location = locIn;
+    } else {
+      const cityName =
+        typeof locIn.cityName === "string"
+          ? locIn.cityName
+          : typeof locIn.city === "string"
+            ? locIn.city
+            : undefined;
+      const districtName =
+        typeof locIn.districtName === "string"
+          ? locIn.districtName
+          : typeof locIn.district === "string"
+            ? locIn.district
+            : undefined;
+      const regionName =
+        typeof locIn.regionName === "string"
+          ? locIn.regionName
+          : typeof locIn.region === "string"
+            ? locIn.region
+            : undefined;
+      const cityId = locIn.cityId ?? locIn.city_id;
+      location = {
+        ...(cityName ? { city: { name: cityName, ...(cityId !== undefined ? { id: cityId } : {}) } } : {}),
+        ...(districtName ? { district: { name: districtName } } : {}),
+        ...(regionName ? { region: { name: regionName } } : {}),
+      };
+    }
+  }
+
+  const paramsIn = Array.isArray(ad.params) ? [...ad.params] : [];
+  const hasPriceParam = paramsIn.some(
+    (item) => asRecord(item)?.key === "price",
+  );
+  const regular = readRegularPrice(ad);
+  if (!hasPriceParam && regular) {
+    paramsIn.push({ key: "price", value: { value: regular.value, currency: regular.currency } });
+  }
+
+  const mapIn = asRecord(ad.map);
+  const userIn = asRecord(ad.user);
+  const company =
+    typeof userIn?.company_name === "string" && userIn.company_name.trim()
+      ? userIn.company_name.trim()
+      : undefined;
+
+  return {
+    id,
+    title,
+    ...(typeof ad.description === "string" ? { description: ad.description } : {}),
+    ...(typeof ad.url === "string" ? { url: ad.url } : {}),
+    ...(created ? { created_time: created } : {}),
+    ...(refreshed ? { last_refresh_time: refreshed } : {}),
+    ...(pushup ? { pushup_time: pushup } : {}),
+    ...(business !== undefined ? { business } : {}),
+    ...(paramsIn.length > 0 ? { params: paramsIn } : {}),
+    ...(location ? { location } : {}),
+    ...(mapIn ? { map: mapIn } : {}),
+    ...(userIn
+      ? {
+          user: {
+            ...userIn,
+            ...(company ? { company_name: company } : { company_name: userIn.company_name ?? null }),
+            sellerType: userIn.sellerType ?? null,
+          },
+        }
+      : {}),
+    ...(asRecord(ad.category) ? { category: asRecord(ad.category) } : {}),
+    ...(Array.isArray(ad.photos) ? { photos: ad.photos } : {}),
+  };
+}
+
 /**
  * Normalize common embedded catalog shapes into api/v1/offers-compatible records.
  * Does not invent seller ownership or publication time.
  */
 export function normalizeEmbeddedOlxAd(raw: unknown): unknown {
-  if (!raw || typeof raw !== "object") {
-    return raw;
-  }
-  const ad = raw as Record<string, unknown>;
-  const location = ad.location;
-  let normalizedLocation: Record<string, unknown> | undefined;
-  if (location && typeof location === "object" && !Array.isArray(location)) {
-    const loc = location as Record<string, unknown>;
-    if (loc.city && typeof loc.city === "object") {
-      normalizedLocation = loc;
-    } else {
-      const cityName =
-        typeof loc.cityName === "string"
-          ? loc.cityName
-          : typeof loc.city === "string"
-            ? loc.city
-            : undefined;
-      const districtName =
-        typeof loc.districtName === "string"
-          ? loc.districtName
-          : typeof loc.district === "string"
-            ? loc.district
-            : undefined;
-      const regionName =
-        typeof loc.regionName === "string"
-          ? loc.regionName
-          : typeof loc.region === "string"
-            ? loc.region
-            : undefined;
-      normalizedLocation = {
-        ...(cityName ? { city: { name: cityName } } : {}),
-        ...(districtName ? { district: { name: districtName } } : {}),
-        ...(regionName ? { region: { name: regionName } } : {}),
-        ...(typeof loc.lat === "number" ? { lat: loc.lat } : {}),
-        ...(typeof loc.lon === "number" ? { lon: loc.lon } : {}),
-      };
-    }
-  }
+  return adaptOracleCatalogAd(raw) ?? raw;
+}
 
-  let params = Array.isArray(ad.params) ? ad.params : undefined;
-  if (!params) {
-    const price = ad.price;
-    if (price && typeof price === "object" && !Array.isArray(price)) {
-      const p = price as Record<string, unknown>;
-      const amount =
-        typeof p.value === "number"
-          ? p.value
-          : typeof p.amount === "number"
-            ? p.amount
-            : undefined;
-      const currency =
-        typeof p.currency === "string"
-          ? p.currency
-          : typeof p.currencyCode === "string"
-            ? p.currencyCode
-            : "UAH";
-      if (amount !== undefined) {
-        params = [{ key: "price", value: { value: amount, currency } }];
-      }
-    }
-  }
-
-  const created =
-    (typeof ad.created_time === "string" && ad.created_time) ||
-    (typeof ad.createdTime === "string" && ad.createdTime) ||
-    undefined;
-  const refreshed =
-    (typeof ad.last_refresh_time === "string" && ad.last_refresh_time) ||
-    (typeof ad.lastRefreshTime === "string" && ad.lastRefreshTime) ||
-    undefined;
-  const business =
-    typeof ad.business === "boolean"
-      ? ad.business
-      : typeof ad.isBusiness === "boolean"
-        ? ad.isBusiness
-        : undefined;
-
-  return {
-    ...ad,
-    ...(normalizedLocation ? { location: normalizedLocation } : {}),
-    ...(params ? { params } : {}),
-    ...(created ? { created_time: created } : {}),
-    ...(refreshed ? { last_refresh_time: refreshed } : {}),
-    ...(business !== undefined ? { business } : {}),
-  };
+function hasCityLabel(normalized: Record<string, unknown>): boolean {
+  const location = asRecord(normalized.location);
+  const city = asRecord(location?.city);
+  return typeof city?.name === "string" && city.name.trim().length > 0;
 }
 
 function listingsFromCandidates(
   candidates: unknown[],
   discoveredAt: Date,
-): { listings: Listing[]; rawOfferCount: number; rejectedMalformed: number } {
+  options?: { expectedCategoryId?: number },
+): {
+  listings: Listing[];
+  rawOfferCount: number;
+  uniqueIdCount: number;
+  rejectedMalformed: number;
+  rejectedWrongCategory: number;
+  rejectedMissingLocation: number;
+} {
   const listings: Listing[] = [];
+  const seenIds = new Set<string>();
   let rejectedMalformed = 0;
+  let rejectedWrongCategory = 0;
+  let rejectedMissingLocation = 0;
   for (const candidate of candidates) {
-    const normalized = normalizeEmbeddedOlxAd(candidate);
-    const listing = parseOlxOffer(normalized, discoveredAt);
-    if (listing) {
-      listings.push(listing);
-    } else {
-      rejectedMalformed += 1;
+    if (
+      options?.expectedCategoryId !== undefined &&
+      categoryIdOf(candidate) !== undefined &&
+      categoryIdOf(candidate) !== options.expectedCategoryId
+    ) {
+      rejectedWrongCategory += 1;
+      continue;
     }
+    const normalized = adaptOracleCatalogAd(candidate);
+    if (!normalized) {
+      rejectedMalformed += 1;
+      continue;
+    }
+    if (!hasCityLabel(normalized)) {
+      rejectedMissingLocation += 1;
+      continue;
+    }
+    const listing = parseOlxOffer(normalized, discoveredAt);
+    if (!listing) {
+      rejectedMalformed += 1;
+      continue;
+    }
+    const key = `${listing.source}:${listing.sourceId}`;
+    if (seenIds.has(key)) {
+      continue;
+    }
+    seenIds.add(key);
+    listings.push(listing);
   }
-  return { listings, rawOfferCount: candidates.length, rejectedMalformed };
+  return {
+    listings,
+    rawOfferCount: candidates.length,
+    uniqueIdCount: seenIds.size,
+    rejectedMalformed,
+    rejectedWrongCategory,
+    rejectedMissingLocation,
+  };
+}
+
+function htmlSourceField(
+  source: "main_document" | "rendered_dom" | undefined,
+): { htmlSource?: "main_document" | "rendered_dom" } {
+  return source ? { htmlSource: source } : {};
+}
+
+function markerHitsFromHtml(html: string): string[] {
+  const markerHits: string[] = [];
+  if (/data-cy=["']l-card["']/i.test(html)) {
+    markerHits.push("data_cy_l_card");
+  }
+  if (/ID[A-Za-z0-9]+\.html/i.test(html)) {
+    markerHits.push("offer_id_html_link");
+  }
+  return markerHits;
+}
+
+function eligibilityCounts(listings: Listing[]): {
+  ownerEligibleCount: number;
+  freshnessEligibleCount: number;
+} {
+  return {
+    ownerEligibleCount: listings.filter((item) => item.sellerType === "owner").length,
+    freshnessEligibleCount: listings.filter((item) => item.publishedAt instanceof Date).length,
+  };
+}
+
+function extractFromPrerenderedHtml(
+  html: string,
+  discoveredAt: Date,
+  options?: { expectedCategoryId?: number; htmlSource?: "main_document" | "rendered_dom" },
+): OlxHtmlStructuredExtract | undefined {
+  const inspection = inspectPrerenderedState(html);
+  const markerHits = markerHitsFromHtml(html);
+  if (inspection.decoded !== undefined) {
+    markerHits.push("prerendered_state");
+  }
+  const ads = extractListingAdsFromPrerenderedState(inspection.decoded);
+  const adsPathFound = ads.length > 0 || (inspection.decoded !== undefined && Array.isArray(
+    asRecord(asRecord(asRecord(inspection.decoded)?.listing)?.listing)?.ads,
+  ));
+  if (inspection.decoded !== undefined && ads.length > 0) {
+    const parsed = listingsFromCandidates(ads, discoveredAt, options);
+    const eligibility = eligibilityCounts(parsed.listings);
+    const rejections: OlxHtmlExtractRejection[] = [];
+    if (parsed.rejectedMalformed > 0) {
+      rejections.push({
+        reason: "embedded_offers_partial_schema_failure",
+        detail: `rejected=${parsed.rejectedMalformed}`,
+      });
+    }
+    if (parsed.rejectedWrongCategory > 0) {
+      rejections.push({
+        reason: "rejected_wrong_category",
+        detail: `rejected=${parsed.rejectedWrongCategory}`,
+      });
+    }
+    if (parsed.rejectedMissingLocation > 0) {
+      rejections.push({
+        reason: "rejected_missing_location",
+        detail: `rejected=${parsed.rejectedMissingLocation}`,
+      });
+    }
+    if (parsed.listings.length > 0) {
+      return {
+        listings: parsed.listings,
+        rawOfferCount: parsed.rawOfferCount,
+        source: "prerendered_state",
+        rejections,
+        diagnostics: {
+          hasPrerenderedState: true,
+          prerenderedStateComplete: inspection.complete,
+          prerenderedStateTruncated: inspection.truncated,
+          prerenderedAdsPathFound: true,
+          hasNextData: false,
+          hasOffersApiShapeInHtml: false,
+          markerHits,
+          rawCandidateCount: parsed.rawOfferCount,
+          rawObjectCount: parsed.rawOfferCount,
+          uniqueIdCount: parsed.uniqueIdCount,
+          normalizedListingCount: parsed.listings.length,
+          ...eligibility,
+          ...htmlSourceField(options?.htmlSource),
+          rejectedWrongCategory: parsed.rejectedWrongCategory,
+          rejectedMissingLocation: parsed.rejectedMissingLocation,
+        },
+      };
+    }
+    return {
+      listings: [],
+      rawOfferCount: parsed.rawOfferCount,
+      source: "none",
+      rejections:
+        rejections.length > 0
+          ? rejections
+          : [
+              {
+                reason: "prerendered_offers_failed_schema_validation",
+                detail: `raw=${parsed.rawOfferCount}`,
+              },
+            ],
+      diagnostics: {
+        hasPrerenderedState: true,
+        prerenderedStateComplete: inspection.complete,
+        prerenderedStateTruncated: inspection.truncated,
+        prerenderedAdsPathFound: true,
+        hasNextData: false,
+        hasOffersApiShapeInHtml: false,
+        markerHits,
+        rawCandidateCount: parsed.rawOfferCount,
+        rawObjectCount: parsed.rawOfferCount,
+        uniqueIdCount: parsed.uniqueIdCount,
+        normalizedListingCount: 0,
+        ...htmlSourceField(options?.htmlSource),
+        rejectedWrongCategory: parsed.rejectedWrongCategory,
+        rejectedMissingLocation: parsed.rejectedMissingLocation,
+      },
+    };
+  }
+
+  if (inspection.present && inspection.truncated) {
+    return {
+      listings: [],
+      rawOfferCount: 0,
+      source: "none",
+      rejections: [
+        {
+          reason: "prerendered_state_truncated",
+          detail: "quoted __PRERENDERED_STATE__ assignment was not closed; not a full-state parse",
+        },
+      ],
+      diagnostics: {
+        hasPrerenderedState: true,
+        prerenderedStateComplete: false,
+        prerenderedStateTruncated: true,
+        prerenderedAdsPathFound: adsPathFound,
+        hasNextData: false,
+        hasOffersApiShapeInHtml: false,
+        markerHits,
+        rawCandidateCount: 0,
+        ...htmlSourceField(options?.htmlSource),
+      },
+    };
+  }
+
+  if (inspection.present && inspection.decoded !== undefined && ads.length === 0) {
+    return {
+      listings: [],
+      rawOfferCount: 0,
+      source: "none",
+      rejections: [
+        {
+          reason: "prerendered_state_present_without_offer_objects",
+          detail: "state parsed but listing.listing.ads was missing or empty",
+        },
+      ],
+      diagnostics: {
+        hasPrerenderedState: true,
+        prerenderedStateComplete: inspection.complete,
+        prerenderedStateTruncated: inspection.truncated,
+        prerenderedAdsPathFound: false,
+        hasNextData: false,
+        hasOffersApiShapeInHtml: false,
+        markerHits,
+        rawCandidateCount: 0,
+        ...htmlSourceField(options?.htmlSource),
+      },
+    };
+  }
+
+  if (inspection.present && inspection.decoded === undefined && inspection.complete) {
+    return {
+      listings: [],
+      rawOfferCount: 0,
+      source: "none",
+      rejections: [
+        {
+          reason: "prerendered_state_malformed",
+          detail: "quoted state assignment could not be JSON.parsed",
+        },
+      ],
+      diagnostics: {
+        hasPrerenderedState: true,
+        prerenderedStateComplete: inspection.complete,
+        prerenderedStateTruncated: false,
+        prerenderedAdsPathFound: false,
+        hasNextData: false,
+        hasOffersApiShapeInHtml: false,
+        markerHits,
+        rawCandidateCount: 0,
+        ...htmlSourceField(options?.htmlSource),
+      },
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -318,65 +671,25 @@ function listingsFromCandidates(
 export function extractListingsFromOlxCatalogHtml(
   html: string,
   discoveredAt = new Date(),
+  options?: { expectedCategoryId?: number; htmlSource?: "main_document" | "rendered_dom" },
 ): OlxHtmlStructuredExtract {
-  const rejections: OlxHtmlExtractRejection[] = [];
-  const markerHits: string[] = [];
-  if (/data-cy=["']l-card["']/i.test(html)) {
-    markerHits.push("data_cy_l_card");
-  }
-  if (/ID[A-Za-z0-9]+\.html/i.test(html)) {
-    markerHits.push("offer_id_html_link");
+  const prerendered = extractFromPrerenderedHtml(html, discoveredAt, options);
+  if (prerendered && (prerendered.listings.length > 0 || prerendered.rejections.length > 0)) {
+    return prerendered;
   }
 
-  const prerendered = parsePrerenderedState(html);
-  const hasPrerenderedState = prerendered !== undefined;
-  if (hasPrerenderedState) {
-    markerHits.push("prerendered_state");
-    const candidates = collectOfferLikeObjects(prerendered);
-    const parsed = listingsFromCandidates(candidates, discoveredAt);
-    if (parsed.listings.length > 0) {
-      return {
-        listings: parsed.listings,
-        rawOfferCount: parsed.rawOfferCount,
-        source: "prerendered_state",
-        rejections:
-          parsed.rejectedMalformed > 0
-            ? [
-                {
-                  reason: "embedded_offers_partial_schema_failure",
-                  detail: `rejected=${parsed.rejectedMalformed}`,
-                },
-              ]
-            : [],
-        diagnostics: {
-          hasPrerenderedState: true,
-          hasNextData: false,
-          hasOffersApiShapeInHtml: false,
-          markerHits,
-          rawCandidateCount: parsed.rawOfferCount,
-        },
-      };
-    }
-    if (candidates.length > 0) {
-      rejections.push({
-        reason: "prerendered_offers_failed_schema_validation",
-        detail: `raw=${candidates.length}`,
-      });
-    } else {
-      rejections.push({
-        reason: "prerendered_state_present_without_offer_objects",
-        detail: "state parsed but no offer-like nodes found",
-      });
-    }
-  }
+  const rejections: OlxHtmlExtractRejection[] = [...(prerendered?.rejections ?? [])];
+  const markerHits = markerHitsFromHtml(html);
+  const inspection = inspectPrerenderedState(html);
 
   const nextData = extractNextDataJson(html);
   const hasNextData = nextData !== undefined;
   if (hasNextData) {
     markerHits.push("next_data");
     const candidates = collectOfferLikeObjects(nextData);
-    const parsed = listingsFromCandidates(candidates, discoveredAt);
+    const parsed = listingsFromCandidates(candidates, discoveredAt, options);
     if (parsed.listings.length > 0) {
+      const eligibility = eligibilityCounts(parsed.listings);
       return {
         listings: parsed.listings,
         rawOfferCount: parsed.rawOfferCount,
@@ -391,17 +704,23 @@ export function extractListingsFromOlxCatalogHtml(
               ]
             : [],
         diagnostics: {
-          hasPrerenderedState,
+          hasPrerenderedState: inspection.present,
+          prerenderedStateComplete: inspection.complete,
+          prerenderedStateTruncated: inspection.truncated,
           hasNextData: true,
           hasOffersApiShapeInHtml: false,
           markerHits,
           rawCandidateCount: parsed.rawOfferCount,
+          rawObjectCount: parsed.rawOfferCount,
+          uniqueIdCount: parsed.uniqueIdCount,
+          normalizedListingCount: parsed.listings.length,
+          ...eligibility,
+          ...htmlSourceField(options?.htmlSource),
         },
       };
     }
   }
 
-  // Direct api/v1/offers-shaped JSON embedded in HTML/scripts.
   const apiShapeMatch = html.match(/\{\s*"data"\s*:\s*\[[\s\S]{0,500000}?\]\s*(?:,\s*"metadata"[\s\S]{0,20000}?)?\}/);
   let hasOffersApiShapeInHtml = false;
   if (apiShapeMatch?.[0]) {
@@ -409,28 +728,34 @@ export function extractListingsFromOlxCatalogHtml(
     if (payload) {
       hasOffersApiShapeInHtml = true;
       markerHits.push("embedded_offers_api_shape");
-      const listings = parseOlxOffersPayload(payload, discoveredAt);
       const data = (payload as { data?: unknown }).data;
-      const rawOfferCount = Array.isArray(data) ? data.length : 0;
-      if (listings.length > 0) {
+      const raw = Array.isArray(data) ? data : [];
+      const parsed = listingsFromCandidates(raw, discoveredAt, options);
+      if (parsed.listings.length > 0) {
+        const eligibility = eligibilityCounts(parsed.listings);
         return {
-          listings,
-          rawOfferCount,
+          listings: parsed.listings,
+          rawOfferCount: parsed.rawOfferCount,
           source: "embedded_offers_api_shape",
           rejections: [],
           diagnostics: {
-            hasPrerenderedState,
+            hasPrerenderedState: inspection.present,
             hasNextData,
             hasOffersApiShapeInHtml: true,
             markerHits,
-            rawCandidateCount: rawOfferCount,
+            rawCandidateCount: parsed.rawOfferCount,
+            rawObjectCount: parsed.rawOfferCount,
+            uniqueIdCount: parsed.uniqueIdCount,
+            normalizedListingCount: parsed.listings.length,
+            ...eligibility,
+            ...htmlSourceField(options?.htmlSource),
           },
         };
       }
-      if (rawOfferCount > 0) {
+      if (raw.length > 0) {
         rejections.push({
           reason: "embedded_offers_failed_schema_validation",
-          detail: `raw=${rawOfferCount}`,
+          detail: `raw=${raw.length}`,
         });
       }
     } else {
@@ -447,7 +772,7 @@ export function extractListingsFromOlxCatalogHtml(
       detail: "card markers alone do not yield validated Listing objects",
     });
   }
-  if (!hasPrerenderedState && !hasNextData && !hasOffersApiShapeInHtml) {
+  if (!inspection.present && !hasNextData && !hasOffersApiShapeInHtml) {
     rejections.push({
       reason: "no_structured_html_payload",
       detail: "no __PRERENDERED_STATE__, __NEXT_DATA__, or offers API JSON in HTML",
@@ -460,11 +785,54 @@ export function extractListingsFromOlxCatalogHtml(
     source: "none",
     rejections,
     diagnostics: {
-      hasPrerenderedState,
+      hasPrerenderedState: inspection.present,
+      prerenderedStateComplete: inspection.complete,
+      prerenderedStateTruncated: inspection.truncated,
+      prerenderedAdsPathFound: false,
       hasNextData,
       hasOffersApiShapeInHtml,
       markerHits,
       rawCandidateCount: 0,
+      ...htmlSourceField(options?.htmlSource),
     },
   };
+}
+
+/**
+ * Parser input priority: original navigation HTML, then rendered DOM.
+ * Rendered Oracle pages drop `__PRERENDERED_STATE__`; main-document retains it.
+ */
+export function extractListingsFromOlxBrowserDocuments(
+  input: { mainDocumentHtml?: string; renderedHtml?: string },
+  discoveredAt = new Date(),
+  options?: { expectedCategoryId?: number },
+): OlxHtmlStructuredExtract {
+  if (input.mainDocumentHtml) {
+    const fromMain = extractListingsFromOlxCatalogHtml(input.mainDocumentHtml, discoveredAt, {
+      ...options,
+      htmlSource: "main_document",
+    });
+    if (fromMain.listings.length > 0 || fromMain.source !== "none") {
+      return fromMain;
+    }
+    if (fromMain.rejections.some((item) => item.reason === "prerendered_state_truncated")) {
+      const fromRendered = input.renderedHtml
+        ? extractListingsFromOlxCatalogHtml(input.renderedHtml, discoveredAt, {
+            ...options,
+            htmlSource: "rendered_dom",
+          })
+        : undefined;
+      if (fromRendered && fromRendered.listings.length > 0) {
+        return fromRendered;
+      }
+      return fromMain;
+    }
+  }
+  if (input.renderedHtml) {
+    return extractListingsFromOlxCatalogHtml(input.renderedHtml, discoveredAt, {
+      ...options,
+      htmlSource: "rendered_dom",
+    });
+  }
+  return extractListingsFromOlxCatalogHtml("", discoveredAt, options);
 }

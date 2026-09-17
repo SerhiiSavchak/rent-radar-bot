@@ -6,6 +6,7 @@ export const olxUserSchema = z
     name: z.string().optional(),
     is_online: z.boolean().optional(),
     company_name: z.string().nullable().optional(),
+    sellerType: z.string().nullable().optional(),
     uuid: z.string().optional(),
   })
   .passthrough();
@@ -64,6 +65,7 @@ export const olxOfferSchema = z
     url: z.string().optional(),
     created_time: z.string().optional(),
     last_refresh_time: z.string().optional(),
+    pushup_time: z.string().nullable().optional(),
     business: z.boolean().optional(),
     params: z.array(olxParamSchema).optional(),
     location: olxLocationSchema.optional(),

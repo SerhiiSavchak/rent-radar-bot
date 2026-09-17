@@ -1,4 +1,4 @@
-import type { Listing } from "../../domain/listing.ts";
+import type { Listing, PropertyType } from "../../domain/listing.ts";
 import { detectPropertyType } from "../../filters/listing-filter.ts";
 import { classifyOwner } from "../../filters/owner-filter.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
@@ -20,19 +20,43 @@ function readPrice(offer: OlxOffer): Listing["price"] | undefined {
 }
 
 function sellerSignals(offer: OlxOffer) {
-  const company = offer.user?.company_name;
+  const company = offer.user?.company_name?.trim() || undefined;
+  const userSellerType =
+    typeof offer.user?.sellerType === "string" && offer.user.sellerType.trim()
+      ? offer.user.sellerType.trim()
+      : undefined;
   const business = offer.business === true || Boolean(company);
   const extra = collectTextEvidence(`${offer.title ?? ""} ${offer.description ?? ""}`);
   if (offer.business === false) {
-    extra.unshift("OLX business flag = false (private account, not proof of property ownership)");
+    extra.unshift("OLX isBusiness/business = false (private account, not proof of property ownership)");
+  }
+  if (userSellerType) {
+    extra.push(`OLX user.sellerType = ${userSellerType}`);
+  } else if (offer.user && (offer.user.sellerType === null || offer.user.sellerType === undefined)) {
+    extra.push("OLX user.sellerType is null (does not establish ownership)");
   }
   return classifyOwner({
     platformPrivate: offer.business === false,
     platformBusiness: business,
     isBusiness: business,
-    agencyName: company ?? undefined,
+    agencyName: company,
     text: `${offer.title ?? ""}\n${offer.description ?? ""}`,
     extraEvidence: extra,
+  });
+}
+
+function propertyTypeFromOlx(offer: OlxOffer): PropertyType {
+  const categoryId = Number(offer.category?.id);
+  // 1760 = long-term apartment rent; 330 = long-term house rent (see olx.source.ts).
+  if (categoryId === 1760) {
+    return "apartment";
+  }
+  if (categoryId === 330) {
+    return "house";
+  }
+  return detectPropertyType({
+    title: offer.title,
+    categoryText: `${offer.title ?? ""} ${JSON.stringify(offer.category ?? {})}`,
   });
 }
 
@@ -79,6 +103,7 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
     }
   }
   const urlToken = extractOlxUrlToken(url);
+  const showDetailed = offer.map?.show_detailed;
   const listing: Listing = {
     source: "olx",
     sourceId,
@@ -91,7 +116,7 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
       ...(lat !== undefined ? { latitude: lat } : {}),
       ...(lon !== undefined ? { longitude: lon } : {}),
     },
-    propertyType: detectPropertyType({ categoryText: `${offer.title} ${JSON.stringify(offer.category ?? {})}` }),
+    propertyType: propertyTypeFromOlx(offer),
     sellerType: owner.sellerType,
     sellerEvidence: owner.sellerEvidence,
     discoveredAt,
@@ -99,10 +124,16 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
       transportCandidate: "public JSON API api/v1/offers",
-      publishedAtProvenance: offer.created_time ? "olx.created_time" : "missing",
+      publishedAtProvenance: offer.created_time ? "olx.createdTime" : "missing",
       ...(urlToken ? { urlToken } : {}),
       ...(offer.map?.radius !== undefined ? { coordinatesRadiusKm: offer.map.radius } : {}),
+      ...(showDetailed !== undefined ? { coordinatesShowDetailed: showDetailed } : {}),
+      ...(showDetailed === false ? { coordinatesApproximate: true } : {}),
       ...(offer.last_refresh_time ? { lastRefreshTime: offer.last_refresh_time } : {}),
+      ...(offer.pushup_time ? { pushupTime: offer.pushup_time } : {}),
+      ...(offer.business !== undefined ? { olxIsBusiness: offer.business } : {}),
+      ...(offer.user ? { olxUserSellerType: offer.user.sellerType ?? null } : {}),
+      ...(offer.category?.id !== undefined ? { olxCategoryId: offer.category.id } : {}),
     },
   };
   if (offer.description) {

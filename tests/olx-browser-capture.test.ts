@@ -205,6 +205,97 @@ describe("OLX browser extract budgets + capture wiring", () => {
       expect(result.apartments.htmlInputKind).toBe("rendered_dom");
       expect(result.apartments.capturePaths?.manifestPath).toContain("apartments");
       expect(readFileSync(result.apartments.capturePaths!.manifestPath, "utf8")).toContain("abc123");
+      expect(result.apartments.capturePaths?.truncation?.mainDocument.truncated).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("records HTML dump truncation separately from relevant-state bytes", () => {
+    const root = mkdtempSync(join(tmpdir(), "olx-cap3-"));
+    try {
+      const huge = `<html>${"x".repeat(5_000)}</html>`;
+      const paths = writeOlxCategoryCapture({
+        captureDir: root,
+        category: "houses",
+        commit: "deadbeef",
+        startedAt: new Date().toISOString(),
+        requestedUrl: "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/",
+        finalUrl: "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/",
+        mainDocumentHtml: huge,
+        renderedHtml: "<html>small</html>",
+        relevantStateJson: `${JSON.stringify({ path: "listing.listing.ads", ads: [{ id: 1 }] }, null, 2)}\n`,
+        scripts: [],
+        cards: [],
+        networkMeta: [],
+        limits: { ...DEFAULT_OLX_CAPTURE_LIMITS, maxHtmlBytes: 100, maxRelevantStateBytes: 50_000 },
+      });
+      expect(paths.truncation?.mainDocument.truncated).toBe(true);
+      expect(paths.truncation?.mainDocument.originalBytes).toBeGreaterThan(100);
+      expect(paths.truncation?.mainDocument.savedBytes).toBe(100);
+      expect(paths.truncation?.renderedHtml.truncated).toBe(false);
+      expect(paths.truncation?.relevantState.truncated).toBe(false);
+      expect(readFileSync(paths.relevantStatePath!, "utf8")).toContain("listing.listing.ads");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips heavy capture after the category deadline and still closes the browser", async () => {
+    const root = mkdtempSync(join(tmpdir(), "olx-cap4-"));
+    let nowMs = 0;
+    const close = vi.fn(async () => undefined);
+    const contextClose = vi.fn(async () => undefined);
+    const page = {
+      on: vi.fn(),
+      goto: vi.fn(async () => {
+        nowMs += 6_000;
+        return {
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html" }),
+          text: async () => {
+            nowMs += 1_000;
+            return olxCatalogHtmlCardsOnly();
+          },
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      locator: () => ({
+        first: () => ({
+          isVisible: async () => false,
+          click: async () => undefined,
+        }),
+      }),
+      url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
+      title: async () => "OLX",
+      content: async () => olxCatalogHtmlCardsOnly(),
+    } as unknown as Page;
+    const browser = {
+      newContext: async () =>
+        ({
+          newPage: async () => page,
+          close: contextClose,
+        }) as unknown as BrowserContext,
+      close,
+    } as unknown as Browser;
+    try {
+      const result = await extractOlxListingsViaBrowser({
+        timeoutMs: 5_000,
+        categoryBudgetMs: 5_000,
+        totalBudgetMs: 20_000,
+        launch: async () => browser,
+        clockMs: () => nowMs,
+        captureDir: root,
+        commit: "deadline",
+      });
+      expect(result.browserClosed).toBe(true);
+      expect(close).toHaveBeenCalled();
+      expect(contextClose).toHaveBeenCalled();
+      expect(result.apartments.timedOut).toBe(true);
+      const manifest = JSON.parse(readFileSync(result.apartments.capturePaths!.manifestPath, "utf8")) as {
+        skippedReason?: string;
+      };
+      expect(manifest.skippedReason).toBe("deadline_before_capture");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

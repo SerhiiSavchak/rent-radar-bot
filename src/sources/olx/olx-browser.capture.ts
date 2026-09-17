@@ -31,13 +31,22 @@ export type OlxNetworkCaptureMeta = {
   skippedReason?: string;
 };
 
+export type OlxByteClipRecord = {
+  originalBytes: number;
+  savedBytes: number;
+  truncated: boolean;
+};
+
 export type OlxCaptureLimits = {
+  /** Diagnostic HTML dump cap (not the production parser input cap). */
   maxHtmlBytes: number;
   maxScripts: number;
   maxCards: number;
   maxInlinePreviewChars: number;
   maxCardHtmlChars: number;
   maxNetworkMeta: number;
+  /** Bounded complete ads/state JSON saved beside clipped HTML. */
+  maxRelevantStateBytes: number;
 };
 
 export const DEFAULT_OLX_CAPTURE_LIMITS: OlxCaptureLimits = {
@@ -47,7 +56,11 @@ export const DEFAULT_OLX_CAPTURE_LIMITS: OlxCaptureLimits = {
   maxInlinePreviewChars: 240,
   maxCardHtmlChars: 1_200,
   maxNetworkMeta: 40,
+  maxRelevantStateBytes: 4_000_000,
 };
+
+/** Production parser may read the full navigation body up to this size. */
+export const OLX_PARSER_MAX_HTML_BYTES = 8_000_000;
 
 const ANALYTICS_HOST_RE =
   /(google-analytics|googletagmanager|doubleclick|criteo|newrelic|facebook|hotjar|scorecardresearch|olx-st\.com|ninja\.data\.olxcdn)/i;
@@ -107,29 +120,53 @@ export function truncateUtf8Bytes(text: string, maxBytes: number): { text: strin
   };
 }
 
+function attrValue(attrs: string, name: string): string | null {
+  const re = new RegExp(`${name}\\s*=\\s*["']([^"']+)["']`, "i");
+  return re.exec(attrs)?.[1] ?? null;
+}
+
 /**
  * Inventory <script> tags from HTML without executing them.
+ * Uses indexOf scans (not nested [\s\S]*? regex) so large documents cannot stall the deadline.
  */
 export function inventoryScriptsFromHtml(
   html: string,
   limits: OlxCaptureLimits = DEFAULT_OLX_CAPTURE_LIMITS,
 ): OlxScriptInventoryItem[] {
   const items: OlxScriptInventoryItem[] = [];
-  const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
-  let match: RegExpExecArray | null;
+  const scan = html.length > 1_500_000 ? html.slice(0, 1_500_000) : html;
+  let cursor = 0;
   let index = 0;
-  while ((match = re.exec(html)) !== null && items.length < limits.maxScripts) {
-    const attrs = match[1] ?? "";
-    const body = match[2] ?? "";
-    const type = /type\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1] ?? null;
-    const id = /id\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1] ?? null;
-    const src = /src\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1] ?? null;
+  while (items.length < limits.maxScripts) {
+    const open = scan.indexOf("<script", cursor);
+    if (open < 0) {
+      break;
+    }
+    const tagEnd = scan.indexOf(">", open + 7);
+    if (tagEnd < 0) {
+      break;
+    }
+    const attrs = scan.slice(open + 7, tagEnd);
+    const type = attrValue(attrs, "type");
+    const id = attrValue(attrs, "id");
+    const srcRaw = attrValue(attrs, "src");
+    let body = "";
+    let next = tagEnd + 1;
+    if (!attrs.trimEnd().endsWith("/")) {
+      const close = scan.indexOf("</script>", tagEnd + 1);
+      if (close < 0) {
+        break;
+      }
+      body = scan.slice(tagEnd + 1, close);
+      next = close + 9;
+    }
+    const src = srcRaw ? sanitizeUrlForLog(srcRaw) : null;
     const inlineLength = src ? 0 : body.length;
     const item: OlxScriptInventoryItem = {
       index,
       type,
       id,
-      src: src ? sanitizeUrlForLog(src) : null,
+      src,
       inlineLength,
     };
     if (!src && inlineLength > 0) {
@@ -137,6 +174,7 @@ export function inventoryScriptsFromHtml(
     }
     items.push(item);
     index += 1;
+    cursor = next;
   }
   return items;
 }
@@ -192,10 +230,13 @@ export type OlxCategoryCaptureWriteInput = {
   httpStatus?: number;
   mainDocumentHtml?: string;
   renderedHtml?: string;
+  /** Complete evidenced ads/state JSON (parser-relevant), independent of HTML dump caps. */
+  relevantStateJson?: string;
   scripts: OlxScriptInventoryItem[];
   cards: OlxCardFragment[];
   networkMeta: OlxNetworkCaptureMeta[];
   limits?: OlxCaptureLimits;
+  skippedReason?: string;
 };
 
 export type OlxCategoryCapturePaths = {
@@ -203,10 +244,35 @@ export type OlxCategoryCapturePaths = {
   manifestPath: string;
   mainDocumentPath?: string;
   renderedHtmlPath?: string;
+  relevantStatePath?: string;
   scriptsPath: string;
   cardsPath: string;
   networkMetaPath: string;
+  truncation?: {
+    mainDocument: OlxByteClipRecord;
+    renderedHtml: OlxByteClipRecord;
+    relevantState: OlxByteClipRecord;
+  };
 };
+
+function clipRecord(text: string | undefined, maxBytes: number): {
+  text?: string;
+  record: OlxByteClipRecord;
+} {
+  if (text === undefined) {
+    return { record: { originalBytes: 0, savedBytes: 0, truncated: false } };
+  }
+  const originalBytes = Buffer.byteLength(text, "utf8");
+  const clipped = truncateUtf8Bytes(text, maxBytes);
+  return {
+    text: clipped.text,
+    record: {
+      originalBytes,
+      savedBytes: clipped.bytes,
+      truncated: clipped.truncated,
+    },
+  };
+}
 
 export function writeOlxCategoryCapture(
   input: OlxCategoryCaptureWriteInput,
@@ -223,18 +289,30 @@ export function writeOlxCategoryCapture(
     networkMetaPath: join(categoryDir, "network-meta.json"),
   };
 
-  if (input.mainDocumentHtml !== undefined) {
-    const clipped = truncateUtf8Bytes(input.mainDocumentHtml, limits.maxHtmlBytes);
+  const mainClip = clipRecord(input.mainDocumentHtml, limits.maxHtmlBytes);
+  const renderedClip = clipRecord(input.renderedHtml, limits.maxHtmlBytes);
+  const stateClip = clipRecord(input.relevantStateJson, limits.maxRelevantStateBytes);
+
+  if (mainClip.text !== undefined) {
     const path = join(categoryDir, "main-document.html");
-    writeFileSync(path, clipped.text, { mode: 0o600 });
+    writeFileSync(path, mainClip.text, { mode: 0o600 });
     paths.mainDocumentPath = path;
   }
-  if (input.renderedHtml !== undefined) {
-    const clipped = truncateUtf8Bytes(input.renderedHtml, limits.maxHtmlBytes);
+  if (renderedClip.text !== undefined) {
     const path = join(categoryDir, "rendered.html");
-    writeFileSync(path, clipped.text, { mode: 0o600 });
+    writeFileSync(path, renderedClip.text, { mode: 0o600 });
     paths.renderedHtmlPath = path;
   }
+  if (stateClip.text !== undefined) {
+    const path = join(categoryDir, "relevant-state.json");
+    writeFileSync(path, stateClip.text, { mode: 0o600 });
+    paths.relevantStatePath = path;
+  }
+  paths.truncation = {
+    mainDocument: mainClip.record,
+    renderedHtml: renderedClip.record,
+    relevantState: stateClip.record,
+  };
 
   writeFileSync(paths.scriptsPath, `${JSON.stringify(input.scripts, null, 2)}\n`, { mode: 0o600 });
   writeFileSync(paths.cardsPath, `${JSON.stringify(input.cards, null, 2)}\n`, { mode: 0o600 });
@@ -250,23 +328,29 @@ export function writeOlxCategoryCapture(
     requestedUrl: sanitizeUrlForLog(input.requestedUrl),
     finalUrl: sanitizeUrlForLog(input.finalUrl),
     ...(input.httpStatus !== undefined ? { httpStatus: input.httpStatus } : {}),
+    ...(input.skippedReason ? { skippedReason: input.skippedReason } : {}),
     artifactPaths: {
       mainDocument: paths.mainDocumentPath ?? null,
       renderedHtml: paths.renderedHtmlPath ?? null,
+      relevantState: paths.relevantStatePath ?? null,
       scripts: paths.scriptsPath,
       cards: paths.cardsPath,
       networkMeta: paths.networkMetaPath,
     },
+    truncation: paths.truncation,
     counts: {
       scripts: input.scripts.length,
       cards: input.cards.length,
       networkMeta: input.networkMeta.length,
-      mainDocumentBytes: input.mainDocumentHtml
-        ? Buffer.byteLength(input.mainDocumentHtml, "utf8")
-        : 0,
-      renderedHtmlBytes: input.renderedHtml ? Buffer.byteLength(input.renderedHtml, "utf8") : 0,
+      mainDocumentBytes: mainClip.record.originalBytes,
+      renderedHtmlBytes: renderedClip.record.originalBytes,
+      relevantStateBytes: stateClip.record.originalBytes,
     },
-    limits,
+    limits: {
+      ...limits,
+      parserMaxHtmlBytes: OLX_PARSER_MAX_HTML_BYTES,
+      note: "maxHtmlBytes is the diagnostic dump cap; parserMaxHtmlBytes is production parser input.",
+    },
     note: "Diagnostic capture only. Card fragments are not validated Listing objects.",
   };
   writeFileSync(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
