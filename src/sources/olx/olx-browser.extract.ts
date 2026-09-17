@@ -5,9 +5,12 @@
  * Separates:
  * - browser accessibility (page/card markers reachable)
  * - extraction success (validated Listing objects)
+ *
+ * Oracle evidence (2026-09-17): HTML 200 + card markers, but apiResponsesCaptured=0.
+ * Catalog SSR often embeds offers in __PRERENDERED_STATE__ without a client /api/v1/offers call.
  */
 
-import { chromium, type Browser, type Page, type Response } from "playwright";
+import { chromium, type Browser, type Response } from "playwright";
 import type { Listing } from "../../domain/listing.ts";
 import {
   OLX_BROWSER_APARTMENTS_URL,
@@ -15,11 +18,22 @@ import {
   classifyOlxBrowserProbe,
   type OlxBrowserOutcome,
 } from "../../probe/olx-browser-classify.ts";
+import {
+  extractListingsFromOlxCatalogHtml,
+  type OlxHtmlExtractDiagnostics,
+} from "./olx-browser.html-extract.ts";
 import { parseOlxOffersPayload } from "./olx.parser.ts";
 
 export type OlxBrowserExtractRejection = {
   reason: string;
   detail?: string;
+};
+
+export type OlxNetworkJsonProbe = {
+  url: string;
+  status: number;
+  contentType: string;
+  matchedOffersApi: boolean;
 };
 
 export type OlxBrowserCategoryExtract = {
@@ -35,6 +49,9 @@ export type OlxBrowserCategoryExtract = {
   rejections: OlxBrowserExtractRejection[];
   elapsedMs: number;
   httpStatus?: number;
+  extractSource?: string;
+  htmlDiagnostics?: OlxHtmlExtractDiagnostics;
+  networkJsonProbes?: OlxNetworkJsonProbe[];
 };
 
 export type OlxBrowserExtractResult = {
@@ -58,6 +75,7 @@ export type OlxBrowserExtractDeps = {
 };
 
 const OFFERS_API_RE = /\/api\/v1\/offers\/?/i;
+const MAX_NETWORK_PROBES = 40;
 
 function dedupeListings(listings: Listing[]): Listing[] {
   const seen = new Set<string>();
@@ -82,26 +100,42 @@ async function extractCategory(
   const started = Date.now();
   const rejections: OlxBrowserExtractRejection[] = [];
   const capturedPayloads: unknown[] = [];
+  const networkJsonProbes: OlxNetworkJsonProbe[] = [];
+  const pendingJson: Promise<void>[] = [];
   const context = await browser.newContext({ locale: "uk-UA" });
-  let page: Page | undefined;
   try {
-    page = await context.newPage();
+    const page = await context.newPage();
     page.on("response", (response: Response) => {
       const responseUrl = response.url();
+      const contentType = response.headers()["content-type"] ?? "";
+      const isJson = /json/i.test(contentType) || OFFERS_API_RE.test(responseUrl);
+      if (!isJson) {
+        return;
+      }
+      if (networkJsonProbes.length < MAX_NETWORK_PROBES) {
+        networkJsonProbes.push({
+          url: responseUrl.slice(0, 240),
+          status: response.status(),
+          contentType: contentType.slice(0, 80),
+          matchedOffersApi: OFFERS_API_RE.test(responseUrl),
+        });
+      }
       if (!OFFERS_API_RE.test(responseUrl)) {
         return;
       }
-      void response
-        .json()
-        .then((json) => {
-          capturedPayloads.push(json);
-        })
-        .catch(() => {
-          rejections.push({
-            reason: "api_json_parse_failed",
-            detail: responseUrl.slice(0, 120),
-          });
-        });
+      pendingJson.push(
+        response
+          .json()
+          .then((json) => {
+            capturedPayloads.push(json);
+          })
+          .catch(() => {
+            rejections.push({
+              reason: "api_json_parse_failed",
+              detail: responseUrl.slice(0, 120),
+            });
+          }),
+      );
     });
 
     const response = await page.goto(url, {
@@ -110,7 +144,6 @@ async function extractCategory(
     });
     await page.waitForLoadState("networkidle", { timeout: Math.min(15_000, timeoutMs) }).catch(() => undefined);
 
-    // Bounded extra pagination clicks if present (never more than maxPages-1).
     for (let p = 1; p < maxPages; p += 1) {
       const next = page.locator('a[data-cy="pagination-forward"], a[data-testid="pagination-forward"]').first();
       const visible = await next.isVisible().catch(() => false);
@@ -121,10 +154,10 @@ async function extractCategory(
       await page.waitForLoadState("networkidle", { timeout: Math.min(10_000, timeoutMs) }).catch(() => undefined);
     }
 
-    // Allow in-flight XHR to settle briefly.
     await new Promise((resolve) => {
       setTimeout(resolve, 500);
     });
+    await Promise.all(pendingJson);
 
     const finalUrl = page.url();
     const title = await page.title();
@@ -142,6 +175,8 @@ async function extractCategory(
 
     const listings: Listing[] = [];
     let rawOfferCount = 0;
+    let extractSource = "none";
+
     for (const payload of capturedPayloads) {
       const data = (payload as { data?: unknown })?.data;
       if (Array.isArray(data)) {
@@ -156,17 +191,23 @@ async function extractCategory(
         });
       }
     }
+    if (listings.length > 0) {
+      extractSource = "network_offers_api";
+    }
+
+    const htmlExtract = extractListingsFromOlxCatalogHtml(bodyText, now());
+    if (listings.length === 0 && htmlExtract.listings.length > 0) {
+      listings.push(...htmlExtract.listings);
+      rawOfferCount = Math.max(rawOfferCount, htmlExtract.rawOfferCount);
+      extractSource = htmlExtract.source;
+    } else if (listings.length === 0) {
+      rejections.push(...htmlExtract.rejections);
+    }
 
     if (classified.success && capturedPayloads.length === 0) {
       rejections.push({
         reason: "no_offers_api_payload_captured",
-        detail: "page accessible but no /api/v1/offers JSON intercepted",
-      });
-      // DOM fallback: structured JSON-LD / card hrefs are not full Listing contracts —
-      // refuse to invent validated listings without API (or equivalent) fields.
-      rejections.push({
-        reason: "dom_fallback_insufficient",
-        detail: "card markers alone do not yield validated Listing objects",
+        detail: "page accessible but no /api/v1/offers JSON intercepted (SSR may embed state instead)",
       });
     }
 
@@ -183,6 +224,9 @@ async function extractCategory(
       listings: unique,
       rejections,
       elapsedMs: Date.now() - started,
+      extractSource,
+      htmlDiagnostics: htmlExtract.diagnostics,
+      networkJsonProbes,
       ...(httpStatus !== undefined ? { httpStatus } : {}),
     };
   } finally {
@@ -206,6 +250,7 @@ export async function extractOlxListingsViaBrowser(
     "not_wired_to_telegram=true",
     `maxPagesPerCategory=${maxPages}`,
     "concurrency=1",
+    "html_sources=prerendered_state|next_data|embedded_offers_api_shape",
   ];
   let apartments: OlxBrowserCategoryExtract | undefined;
   let houses: OlxBrowserCategoryExtract | undefined;
@@ -238,6 +283,8 @@ export async function extractOlxListingsViaBrowser(
   if (accessibilityOk && !extractionOk) {
     notes.push("accessibility_without_extraction=true");
   }
+  notes.push(`apartments_extractSource=${apartments.extractSource ?? "none"}`);
+  notes.push(`houses_extractSource=${houses.extractSource ?? "none"}`);
   return {
     apartments,
     houses,
