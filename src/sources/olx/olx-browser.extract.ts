@@ -3,12 +3,14 @@
  * Opt-in only — not wired into Telegram delivery until a live Oracle check passes.
  *
  * Parser input priority:
- * 1. original navigation response body (main-document) — contains quoted __PRERENDERED_STATE__
- * 2. rendered DOM (`page.content()`) — Oracle captures showed this drops the assignment
+ * 1. original page.goto() response body (`response.body()`), read before page.content()
+ * 2. rendered DOM (`page.content()`) — diagnostic / fallback only when the original body
+ *    has no `__PRERENDERED_STATE__`
  * 3. intercepted /api/v1/offers JSON when present
  *
  * timeoutMs = per-navigation (page.goto) deadline only.
- * categoryBudgetMs / totalBudgetMs cover goto + settle + parse + capture + cleanup.
+ * categoryBudgetMs / totalBudgetMs abort in-flight navigation/capture, skip the next
+ * category, and close the owned browser.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -113,6 +115,7 @@ const OFFERS_API_RE = /\/api\/v1\/offers\/?/i;
 const MAX_NETWORK_PROBES = 40;
 const MIN_CATEGORY_START_MS = 5_000;
 const MAX_NETWORKIDLE_MS = 3_000;
+const MIN_GOTO_BUDGET_MS = 20;
 
 function dedupeListings(listings: Listing[]): Listing[] {
   const seen = new Set<string>();
@@ -130,23 +133,82 @@ function remainingMs(deadlineAt: number, nowMs: number): number {
   return Math.max(0, deadlineAt - nowMs);
 }
 
-async function settleWithDeadline(
-  tasks: Promise<unknown>[],
+class OlxDeadlineExceededError extends Error {
+  constructor() {
+    super("olx_browser_deadline_exceeded");
+    this.name = "OlxDeadlineExceededError";
+  }
+}
+
+export function isOlxCategoryHtmlResponse(input: {
+  requestedUrl: string;
+  responseUrl: string;
+  contentType: string;
+}): boolean {
+  const contentType = input.contentType.toLowerCase();
+  if (contentType && !contentType.includes("html") && !contentType.startsWith("text/plain")) {
+    return false;
+  }
+  try {
+    const requested = new URL(input.requestedUrl);
+    const actual = new URL(input.responseUrl);
+    if (actual.hostname.replace(/^www\./, "") !== requested.hostname.replace(/^www\./, "")) {
+      return false;
+    }
+    const requestedPath = requested.pathname.replace(/\/+$/, "");
+    const actualPath = actual.pathname.replace(/\/+$/, "");
+    return actualPath === requestedPath || actualPath.startsWith(`${requestedPath}/`);
+  } catch {
+    return false;
+  }
+}
+
+async function readGotoHtmlBody(
+  response: Response,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean; originalBytes: number }> {
+  const buf = await response.body();
+  const originalBytes = buf.byteLength;
+  const clipped = truncateUtf8Bytes(buf.toString("utf8"), maxBytes);
+  return { text: clipped.text, truncated: clipped.truncated, originalBytes };
+}
+
+async function raceDeadline<T>(
+  work: Promise<T>,
   deadlineAt: number,
   clock: () => number,
-): Promise<void> {
+  cancel: () => Promise<void>,
+): Promise<T> {
   const left = remainingMs(deadlineAt, clock());
-  if (left <= 0 || tasks.length === 0) {
-    return;
+  if (left <= 0) {
+    await cancel().catch(() => undefined);
+    throw new OlxDeadlineExceededError();
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
   try {
-    await Promise.race([
-      Promise.allSettled(tasks),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, left);
-      }),
-    ]);
+    return await new Promise<T>((resolve, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        void cancel()
+          .catch(() => undefined)
+          .finally(() => {
+            reject(new OlxDeadlineExceededError());
+          });
+      }, left);
+      work.then(
+        (value) => {
+          if (!expired) {
+            resolve(value);
+          }
+        },
+        (error: unknown) => {
+          if (!expired) {
+            reject(error);
+          }
+        },
+      );
+    });
   } finally {
     if (timer) {
       clearTimeout(timer);
@@ -183,6 +245,7 @@ function expectedCategoryId(category: "apartments" | "houses"): number {
 }
 
 function relevantStateJsonFromHtml(html: string | undefined): string | undefined {
+  // Diagnostic artifact only — never a production parser input.
   if (!html) {
     return undefined;
   }
@@ -223,24 +286,39 @@ async function extractCategory(
   const capturedPayloads: unknown[] = [];
   const networkJsonProbes: OlxNetworkJsonProbe[] = [];
   const networkMeta: OlxNetworkCaptureMeta[] = [];
-  const pendingTasks: Promise<void>[] = [];
   let mainDocumentHtml: string | undefined;
+  let renderedHtml = "";
   let timedOut = false;
+  const listings: Listing[] = [];
+  let rawOfferCount = 0;
+  let extractSource = "none";
+  let htmlInputKind: OlxHtmlInputKind = "none";
+  let htmlExtract = extractListingsFromOlxBrowserDocuments({}, deps.now(), {
+    expectedCategoryId: expectedCategoryId(category),
+  });
   const markTimeout = () => {
     timedOut = true;
   };
 
   const context = await browser.newContext({ locale: "uk-UA" });
+  let pageClosed = false;
+  const page = await context.newPage();
+  const cancelOwnedWork = async () => {
+    markTimeout();
+    if (!pageClosed) {
+      pageClosed = true;
+      await page.close().catch(() => undefined);
+    }
+  };
+
   try {
     if (remainingMs(categoryDeadlineAt, deps.clock()) <= 0) {
-      markTimeout();
+      await cancelOwnedWork();
       return {
         ...emptyCategory(category, url, "category_budget_exhausted", "expired before navigation"),
         elapsedMs: deps.clock() - started,
       };
     }
-
-    const page = await context.newPage();
 
     page.on("response", (response: Response) => {
       if (deps.clock() >= categoryDeadlineAt) {
@@ -283,18 +361,16 @@ async function extractCategory(
       if (!OFFERS_API_RE.test(responseUrl)) {
         return;
       }
-      pendingTasks.push(
-        response
-          .json()
-          .then((json) => {
-            capturedPayloads.push(json);
-          })
-          .catch(() => {
-            rejections.push({
-              reason: "api_json_parse_failed",
-              detail: sanitizeUrlForLog(responseUrl).slice(0, 120),
-            });
-          }),
+      void response.json().then(
+        (json) => {
+          capturedPayloads.push(json);
+        },
+        () => {
+          rejections.push({
+            reason: "api_json_parse_failed",
+            detail: sanitizeUrlForLog(responseUrl).slice(0, 120),
+          });
+        },
       );
     });
 
@@ -302,122 +378,147 @@ async function extractCategory(
       deps.navigationTimeoutMs,
       remainingMs(categoryDeadlineAt, deps.clock()),
     );
-    if (gotoBudget < 1_000) {
-      markTimeout();
+    if (gotoBudget < MIN_GOTO_BUDGET_MS) {
+      await cancelOwnedWork();
       return {
         ...emptyCategory(category, url, "category_budget_exhausted", "insufficient time for navigation"),
         elapsedMs: deps.clock() - started,
       };
     }
 
-    const response = await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: gotoBudget,
-    });
+    const response = await raceDeadline(
+      page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: gotoBudget,
+      }),
+      categoryDeadlineAt,
+      deps.clock,
+      cancelOwnedWork,
+    );
 
-    if (response) {
-      pendingTasks.push(
-        response
-          .text()
-          .then((text) => {
-            const clipped = truncateUtf8Bytes(text, OLX_PARSER_MAX_HTML_BYTES);
-            mainDocumentHtml = clipped.text;
-            if (clipped.truncated) {
-              rejections.push({
-                reason: "main_document_parser_input_truncated",
-                detail: `originalBytes=${clipped.bytes}+`,
-              });
-            }
+    if (!response) {
+      rejections.push({ reason: "navigation_response_missing", detail: url });
+    } else {
+      const responseUrl = response.url();
+      const contentType = response.headers()["content-type"] ?? "";
+      if (
+        !isOlxCategoryHtmlResponse({
+          requestedUrl: url,
+          responseUrl,
+          contentType,
+        })
+      ) {
+        rejections.push({
+          reason: "navigation_response_not_category_html",
+          detail: sanitizeUrlForLog(responseUrl),
+        });
+      } else {
+        const body = await raceDeadline(
+          readGotoHtmlBody(response, OLX_PARSER_MAX_HTML_BYTES),
+          categoryDeadlineAt,
+          deps.clock,
+          cancelOwnedWork,
+        );
+        mainDocumentHtml = body.text;
+        if (body.truncated) {
+          rejections.push({
+            reason: "main_document_parser_input_truncated",
+            detail: `originalBytes=${body.originalBytes}`,
+          });
+        }
+      }
+    }
+
+    const listingsFromMain: Listing[] = [];
+    htmlInputKind = mainDocumentHtml ? "main_document" : "none";
+
+    htmlExtract = extractListingsFromOlxBrowserDocuments(
+      {
+        ...(mainDocumentHtml ? { mainDocumentHtml } : {}),
+      },
+      deps.now(),
+      { expectedCategoryId: expectedCategoryId(category) },
+    );
+
+    if (htmlExtract.listings.length > 0) {
+      listingsFromMain.push(...htmlExtract.listings);
+      listings.push(...htmlExtract.listings);
+      rawOfferCount = Math.max(rawOfferCount, htmlExtract.rawOfferCount);
+      extractSource = htmlExtract.source;
+      htmlInputKind = "main_document";
+    } else {
+      rejections.push(...htmlExtract.rejections);
+    }
+
+    if (listingsFromMain.length === 0 && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
+      await raceDeadline(
+        page
+          .waitForLoadState("networkidle", {
+            timeout: Math.min(MAX_NETWORKIDLE_MS, remainingMs(categoryDeadlineAt, deps.clock())),
           })
-          .catch(() => {
-            rejections.push({
-              reason: "main_document_capture_failed",
-              detail: "could not read navigation response body",
-            });
-          }),
+          .catch(() => undefined),
+        categoryDeadlineAt,
+        deps.clock,
+        cancelOwnedWork,
       );
     }
 
-    const settleBudget = remainingMs(categoryDeadlineAt, deps.clock());
-    if (settleBudget > 200) {
-      await page
-        .waitForLoadState("networkidle", {
-          timeout: Math.min(MAX_NETWORKIDLE_MS, settleBudget),
-        })
-        .catch(() => undefined);
-    } else {
-      markTimeout();
+    if (listingsFromMain.length === 0) {
+      for (const payload of capturedPayloads) {
+        const data = (payload as { data?: unknown })?.data;
+        if (Array.isArray(data)) {
+          rawOfferCount += data.length;
+        }
+        const parsed = parseOlxOffersPayload(payload, deps.now());
+        listings.push(...parsed);
+        if (Array.isArray(data) && data.length > 0 && parsed.length === 0) {
+          rejections.push({
+            reason: "offers_failed_schema_validation",
+            detail: `raw=${data.length}`,
+          });
+        }
+      }
+      if (listings.length > 0) {
+        extractSource = "network_offers_api";
+        htmlInputKind = "network_offers_api";
+      }
     }
 
-    await settleWithDeadline(pendingTasks, categoryDeadlineAt, deps.clock);
-
-    if (deps.clock() >= categoryDeadlineAt) {
-      markTimeout();
-    }
-
-    let renderedHtml = "";
-    const renderBudget = remainingMs(categoryDeadlineAt, deps.clock());
-    if (renderBudget > 200) {
-      renderedHtml = await page.content();
-    } else {
-      markTimeout();
+    const stillNeedDomFallback =
+      listings.length === 0 && !htmlExtract.diagnostics.hasPrerenderedState;
+    if (stillNeedDomFallback && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
+      renderedHtml = await raceDeadline(page.content(), categoryDeadlineAt, deps.clock, cancelOwnedWork);
+      const fromRendered = extractListingsFromOlxBrowserDocuments(
+        { renderedHtml },
+        deps.now(),
+        { expectedCategoryId: expectedCategoryId(category) },
+      );
+      htmlExtract = fromRendered;
+      if (fromRendered.listings.length > 0) {
+        listings.push(...fromRendered.listings);
+        rawOfferCount = Math.max(rawOfferCount, fromRendered.rawOfferCount);
+        extractSource = fromRendered.source;
+        htmlInputKind = "rendered_dom";
+      } else {
+        rejections.push(...fromRendered.rejections);
+        htmlInputKind = "rendered_dom";
+      }
+    } else if (deps.captureDir && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
+      renderedHtml = await raceDeadline(page.content(), categoryDeadlineAt, deps.clock, cancelOwnedWork);
     }
 
     const finalUrl = page.url();
-    const title = await page.title();
+    const title = await page.title().catch(() => "");
     const httpStatus = response?.status();
     const contentType = response?.headers()["content-type"];
     const classified = classifyOlxBrowserProbe({
       requestedUrl: url,
       finalUrl,
       title,
-      bodyText: renderedHtml || mainDocumentHtml || "",
+      bodyText: mainDocumentHtml || renderedHtml || "",
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(contentType !== undefined ? { contentType } : {}),
     });
-
-    const listings: Listing[] = [];
-    let rawOfferCount = 0;
-    let extractSource = "none";
-    let htmlInputKind: OlxHtmlInputKind = "none";
-
-    for (const payload of capturedPayloads) {
-      const data = (payload as { data?: unknown })?.data;
-      if (Array.isArray(data)) {
-        rawOfferCount += data.length;
-      }
-      const parsed = parseOlxOffersPayload(payload, deps.now());
-      listings.push(...parsed);
-      if (Array.isArray(data) && data.length > 0 && parsed.length === 0) {
-        rejections.push({
-          reason: "offers_failed_schema_validation",
-          detail: `raw=${data.length}`,
-        });
-      }
-    }
-    if (listings.length > 0) {
-      extractSource = "network_offers_api";
-      htmlInputKind = "network_offers_api";
-    }
-
-    const htmlExtract = extractListingsFromOlxBrowserDocuments(
-      {
-        ...(mainDocumentHtml ? { mainDocumentHtml } : {}),
-        ...(renderedHtml ? { renderedHtml } : {}),
-      },
-      deps.now(),
-      { expectedCategoryId: expectedCategoryId(category) },
-    );
-
-    if (listings.length === 0 && htmlExtract.listings.length > 0) {
-      listings.push(...htmlExtract.listings);
-      rawOfferCount = Math.max(rawOfferCount, htmlExtract.rawOfferCount);
-      extractSource = htmlExtract.source;
-      htmlInputKind = htmlExtract.diagnostics.htmlSource ?? "main_document";
-    } else if (listings.length === 0) {
-      rejections.push(...htmlExtract.rejections);
-      htmlInputKind = htmlExtract.diagnostics.htmlSource ?? (mainDocumentHtml ? "main_document" : "rendered_dom");
-    }
 
     if (classified.success && capturedPayloads.length === 0) {
       rejections.push({
@@ -428,8 +529,7 @@ async function extractCategory(
 
     let capturePaths: OlxCategoryCapturePaths | undefined;
     if (deps.captureDir) {
-      const captureBudget = remainingMs(categoryDeadlineAt, deps.clock());
-      if (captureBudget <= 0) {
+      if (remainingMs(categoryDeadlineAt, deps.clock()) <= 0) {
         markTimeout();
         capturePaths = writeOlxCategoryCapture({
           captureDir: deps.captureDir,
@@ -489,8 +589,51 @@ async function extractCategory(
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(capturePaths ? { capturePaths } : {}),
     };
+  } catch (error) {
+    if (error instanceof OlxDeadlineExceededError) {
+      markTimeout();
+      let capturePaths: OlxCategoryCapturePaths | undefined;
+      if (deps.captureDir) {
+        capturePaths = writeOlxCategoryCapture({
+          captureDir: deps.captureDir,
+          category,
+          commit: deps.commit,
+          startedAt: new Date(started).toISOString(),
+          requestedUrl: url,
+          finalUrl: url,
+          scripts: [],
+          cards: [],
+          networkMeta,
+          skippedReason: "deadline_before_capture",
+        });
+      }
+      const unique = dedupeListings(listings);
+      return {
+        category,
+        requestedUrl: url,
+        finalUrl: url,
+        accessibility: unique.length > 0 ? "browser_accessible" : "parser_failure",
+        accessibilityOk: unique.length > 0,
+        apiResponsesCaptured: capturedPayloads.length,
+        rawOfferCount,
+        validatedListingCount: unique.length,
+        listings: unique,
+        rejections: [
+          ...rejections,
+          { reason: "category_budget_exhausted", detail: "deadline cancelled in-flight work" },
+        ],
+        elapsedMs: deps.clock() - started,
+        extractSource,
+        htmlDiagnostics: htmlExtract.diagnostics,
+        networkJsonProbes,
+        htmlInputKind: mainDocumentHtml ? "main_document" : htmlInputKind,
+        timedOut: true,
+        ...(capturePaths ? { capturePaths } : {}),
+      };
+    }
+    throw error;
   } finally {
-    await context.close();
+    await context.close().catch(() => undefined);
   }
 }
 
@@ -500,10 +643,10 @@ async function extractCategory(
 export async function extractOlxListingsViaBrowser(
   deps: OlxBrowserExtractDeps,
 ): Promise<OlxBrowserExtractResult> {
-  const navigationTimeoutMs = Math.max(5_000, deps.timeoutMs);
-  const categoryBudgetMs = Math.max(5_000, deps.categoryBudgetMs ?? navigationTimeoutMs);
+  const navigationTimeoutMs = Math.max(1, deps.timeoutMs);
+  const categoryBudgetMs = Math.max(1, deps.categoryBudgetMs ?? navigationTimeoutMs);
   const totalBudgetMs = Math.max(
-    categoryBudgetMs + 5_000,
+    categoryBudgetMs,
     deps.totalBudgetMs ?? categoryBudgetMs * 2 + 5_000,
   );
   const maxPages = Math.max(1, Math.min(deps.maxPagesPerCategory ?? 1, 2));
@@ -545,7 +688,7 @@ export async function extractOlxListingsViaBrowser(
       ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
     });
     const remainingForHouses = remainingMs(runDeadlineAt, clock());
-    if (remainingForHouses < MIN_CATEGORY_START_MS) {
+    if (remainingForHouses < MIN_CATEGORY_START_MS || clock() >= runDeadlineAt) {
       notes.push("houses_skipped_total_budget");
       houses = emptyCategory(
         "houses",

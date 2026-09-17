@@ -102,6 +102,7 @@ describe("OLX browser capture helpers", () => {
         url: () => "about:blank",
         title: async () => "",
         content: async () => "",
+        close: vi.fn(async () => undefined),
       } as unknown as Page;
       const context = {
         newPage: async () => page,
@@ -139,12 +140,13 @@ describe("OLX browser extract budgets + capture wiring", () => {
           responseHandler = handler;
         }
       },
-      goto: vi.fn(async () => {
+      goto: vi.fn(async (navUrl: string) => {
         responseHandler?.({
           url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
           status: () => 200,
           headers: () => ({ "content-type": "text/html" }),
           text: async () => html,
+          body: async () => Buffer.from(html, "utf8"),
           json: async () => {
             throw new Error("not json");
           },
@@ -157,9 +159,11 @@ describe("OLX browser extract budgets + capture wiring", () => {
           json: async () => ({}),
         } as unknown as Response);
         return {
+          url: () => navUrl,
           status: () => 200,
           headers: () => ({ "content-type": "text/html" }),
           text: async () => html,
+          body: async () => Buffer.from(html, "utf8"),
         };
       }),
       waitForLoadState: vi.fn(async () => undefined),
@@ -172,6 +176,7 @@ describe("OLX browser extract budgets + capture wiring", () => {
       url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
       title: async () => "OLX",
       content: async () => html,
+      close: vi.fn(async () => undefined),
     } as unknown as Page;
 
     const context = {
@@ -248,14 +253,19 @@ describe("OLX browser extract budgets + capture wiring", () => {
     const contextClose = vi.fn(async () => undefined);
     const page = {
       on: vi.fn(),
-      goto: vi.fn(async () => {
+      goto: vi.fn(async (navUrl: string) => {
         nowMs += 6_000;
         return {
+          url: () => navUrl,
           status: () => 200,
           headers: () => ({ "content-type": "text/html" }),
           text: async () => {
             nowMs += 1_000;
             return olxCatalogHtmlCardsOnly();
+          },
+          body: async () => {
+            nowMs += 1_000;
+            return Buffer.from(olxCatalogHtmlCardsOnly(), "utf8");
           },
         };
       }),
@@ -269,6 +279,7 @@ describe("OLX browser extract budgets + capture wiring", () => {
       url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
       title: async () => "OLX",
       content: async () => olxCatalogHtmlCardsOnly(),
+      close: vi.fn(async () => undefined),
     } as unknown as Page;
     const browser = {
       newContext: async () =>

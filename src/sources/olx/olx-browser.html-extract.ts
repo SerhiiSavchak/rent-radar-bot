@@ -812,19 +812,7 @@ export function extractListingsFromOlxBrowserDocuments(
       ...options,
       htmlSource: "main_document",
     });
-    if (fromMain.listings.length > 0 || fromMain.source !== "none") {
-      return fromMain;
-    }
-    if (fromMain.rejections.some((item) => item.reason === "prerendered_state_truncated")) {
-      const fromRendered = input.renderedHtml
-        ? extractListingsFromOlxCatalogHtml(input.renderedHtml, discoveredAt, {
-            ...options,
-            htmlSource: "rendered_dom",
-          })
-        : undefined;
-      if (fromRendered && fromRendered.listings.length > 0) {
-        return fromRendered;
-      }
+    if (fromMain.listings.length > 0 || fromMain.diagnostics.hasPrerenderedState) {
       return fromMain;
     }
   }

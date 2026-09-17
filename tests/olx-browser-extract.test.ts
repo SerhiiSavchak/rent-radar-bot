@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, Page, Response } from "playwright";
-import { extractOlxListingsViaBrowser } from "../src/sources/olx/olx-browser.extract.ts";
+import { extractOlxListingsViaBrowser, isOlxCategoryHtmlResponse } from "../src/sources/olx/olx-browser.extract.ts";
+import { OLX_BROWSER_APARTMENTS_URL } from "../src/probe/olx-browser-classify.ts";
 import {
   collectOfferLikeObjects,
   extractListingsFromOlxBrowserDocuments,
@@ -123,13 +124,16 @@ describe("OLX browser extract integration", () => {
   ): Browser {
     let responseHandler: ((response: Response) => void) | undefined;
     const mainHtml = options?.mainDocumentHtml ?? renderedHtml;
+    let lastUrl =
+      "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
     const page = {
       on: (event: string, handler: (response: Response) => void) => {
         if (event === "response") {
           responseHandler = handler;
         }
       },
-      goto: vi.fn(async () => {
+      goto: vi.fn(async (navUrl: string) => {
+        lastUrl = navUrl;
         if (options?.networkOffers) {
           responseHandler?.({
             url: () => "https://www.olx.ua/api/v1/offers/?category_id=1760",
@@ -137,6 +141,7 @@ describe("OLX browser extract integration", () => {
             headers: () => ({ "content-type": "application/json" }),
             json: async () => options.networkOffers,
             text: async () => JSON.stringify(options.networkOffers),
+            body: async () => Buffer.from(JSON.stringify(options.networkOffers), "utf8"),
           } as unknown as Response);
         }
         responseHandler?.({
@@ -145,11 +150,14 @@ describe("OLX browser extract integration", () => {
           headers: () => ({ "content-type": "application/json" }),
           json: async () => ({ ok: true }),
           text: async () => "{\"ok\":true}",
+          body: async () => Buffer.from("{\"ok\":true}", "utf8"),
         } as unknown as Response);
         return {
+          url: () => navUrl,
           status: () => 200,
-          headers: () => ({ "content-type": "text/html" }),
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
           text: async () => mainHtml,
+          body: async () => Buffer.from(mainHtml, "utf8"),
         };
       }),
       waitForLoadState: vi.fn(async () => undefined),
@@ -159,9 +167,10 @@ describe("OLX browser extract integration", () => {
           click: async () => undefined,
         }),
       }),
-      url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
+      url: () => lastUrl,
       title: async () => "OLX",
       content: async () => renderedHtml,
+      close: vi.fn(async () => undefined),
     } as unknown as Page;
 
     const context = {
@@ -251,6 +260,69 @@ describe("OLX browser extract integration", () => {
     expect(result.listings[0]?.sourceId).toBe("935081899");
     expect(result.listings[0]?.price?.amount).toBe(53650);
   });
+
+  it("fails if the extractor silently uses rendered DOM when goto() HTML body has the state", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    const rendered = derivedOracleRenderedHtmlWithoutState(ads);
+    let contentCalled = false;
+    let lastUrl = OLX_BROWSER_APARTMENTS_URL;
+    const pageClose = vi.fn(async () => undefined);
+    const contextClose = vi.fn(async () => undefined);
+    const browserClose = vi.fn(async () => undefined);
+    const page = {
+      on: vi.fn(),
+      goto: vi.fn(async (navUrl: string) => {
+        lastUrl = navUrl;
+        expect(
+          isOlxCategoryHtmlResponse({
+            requestedUrl: navUrl,
+            responseUrl: navUrl,
+            contentType: "text/html; charset=utf-8",
+          }),
+        ).toBe(true);
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => {
+            if (contentCalled) {
+              throw new Error("response.body() was read after page.content()");
+            }
+            return Buffer.from(main, "utf8");
+          },
+          text: async () => {
+            throw new Error("response.text() must not be the production parser input");
+          },
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content: async () => {
+        contentCalled = true;
+        return rendered;
+      },
+      url: () => lastUrl,
+      title: async () => "OLX",
+      close: pageClose,
+    } as unknown as Page;
+    const browser = {
+      newContext: async () => ({
+        newPage: async () => page,
+        close: contextClose,
+      }),
+      close: browserClose,
+    } as unknown as Browser;
+
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 5_000,
+      launch: async () => browser,
+    });
+    expect(result.apartments.htmlInputKind).toBe("main_document");
+    expect(result.apartments.extractSource).toBe("prerendered_state");
+    expect(result.extractionOk).toBe(true);
+    expect(result.listings[0]?.sourceId).toBe("935081899");
+    expect(result.browserClosed).toBe(true);
+  });
 });
 
 describe("OLX Oracle-derived prerendered catalog adapter", () => {
@@ -329,71 +401,51 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
 });
 
 describe("OLX browser extract deadlines", () => {
-  it("expires the total budget, skips the next category, and still closes the browser", async () => {
-    let nowMs = 1_000;
-    const close = vi.fn(async () => undefined);
+  it("cancels hanging navigation at the total deadline, skips houses, and closes the browser", async () => {
+    const pageClose = vi.fn(async () => {
+      hungReject?.(new Error("Target closed"));
+    });
     const contextClose = vi.fn(async () => undefined);
-    const ads = [derivedOracleApartmentPrivateAd()];
-    const rendered = derivedOracleRenderedHtmlWithoutState(ads);
-    const main = derivedOracleMainDocumentHtml(ads);
-    let responseHandler: ((response: Response) => void) | undefined;
+    const browserClose = vi.fn(async () => undefined);
+    let hungReject: ((error: Error) => void) | undefined;
     const page = {
-      on: (event: string, handler: (response: Response) => void) => {
-        if (event === "response") {
-          responseHandler = handler;
-        }
-      },
-      goto: vi.fn(async () => {
-        nowMs += 20_000;
-        responseHandler?.({
-          url: () => "https://www.olx.ua/api/v1/config/",
-          status: () => 200,
-          headers: () => ({ "content-type": "application/json" }),
-          json: async () => ({}),
-          text: async () => "{}",
-        } as unknown as Response);
-        return {
-          status: () => 200,
-          headers: () => ({ "content-type": "text/html" }),
-          text: async () => {
-            nowMs += 1_000;
-            return main;
-          },
-        };
-      }),
-      waitForLoadState: vi.fn(async () => {
-        nowMs += 1_000;
-      }),
-      locator: () => ({
-        first: () => ({
-          isVisible: async () => false,
-          click: async () => undefined,
-        }),
-      }),
-      url: () => "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
-      title: async () => "OLX",
-      content: async () => rendered,
+      on: vi.fn(),
+      goto: vi.fn(
+        () =>
+          new Promise((_, reject) => {
+            hungReject = reject;
+          }),
+      ),
+      waitForLoadState: vi.fn(async () => undefined),
+      content: vi.fn(async () => ""),
+      url: () => "about:blank",
+      title: async () => "",
+      close: pageClose,
     } as unknown as Page;
     const browser = {
       newContext: async () => ({
         newPage: async () => page,
         close: contextClose,
       }),
-      close,
+      close: browserClose,
     } as unknown as Browser;
 
+    const started = Date.now();
     const result = await extractOlxListingsViaBrowser({
-      timeoutMs: 5_000,
-      categoryBudgetMs: 5_000,
-      totalBudgetMs: 10_000,
+      timeoutMs: 80,
+      categoryBudgetMs: 80,
+      totalBudgetMs: 80,
       launch: async () => browser,
-      clockMs: () => nowMs,
     });
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(3_000);
+    expect(result.apartments.timedOut).toBe(true);
     expect(result.houses.rejections.some((item) => item.reason === "total_budget_exhausted")).toBe(true);
     expect(result.houses.timedOut).toBe(true);
     expect(result.browserClosed).toBe(true);
-    expect(close).toHaveBeenCalled();
+    expect(pageClose).toHaveBeenCalled();
     expect(contextClose).toHaveBeenCalled();
+    expect(browserClose).toHaveBeenCalled();
     expect(result.notes.some((item) => item.includes("houses_skipped_total_budget"))).toBe(true);
   });
 });
