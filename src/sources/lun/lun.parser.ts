@@ -249,11 +249,26 @@ export function parseLunCard(
       period: "month",
     };
   }
-  // insertTime is listing creation; downloadTime is observation — do not use downloadTime as publishedAt.
+  // insertTime is listing creation; downloadTime is platform ingest/observation — not publishedAt.
   if (card.insertTime) {
     const date = new Date(card.insertTime);
     if (!Number.isNaN(date.getTime())) {
       listing.publishedAt = date;
+      listing.metadata = {
+        ...listing.metadata,
+        publishedAtProvenance: "lun.insertTime",
+        publishedAtTimezone: "uncertain_naive_local",
+      };
+    }
+  }
+  if (card.downloadTime) {
+    const downloaded = new Date(card.downloadTime);
+    if (!Number.isNaN(downloaded.getTime())) {
+      // Keep as metadata only — not refreshedAt (semantics are ingest, not bump).
+      listing.metadata = {
+        ...listing.metadata,
+        downloadTime: card.downloadTime,
+      };
     }
   }
   const imageIds = (card.images ?? [])

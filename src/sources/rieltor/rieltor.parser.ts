@@ -268,6 +268,12 @@ export function parseRieltorCard(
   }
   if (publishedAt) {
     listing.publishedAt = publishedAt;
+    listing.metadata = {
+      ...listing.metadata,
+      publishedAtProvenance: "rieltor.jsonld.offers.availabilityStarts",
+      publishedAtTimezone: "uncertain_naive_local",
+      publishedAtSemantics: "unknown_created_vs_available_vs_refreshed",
+    };
   }
   const rooms = num(json?.numberOfRooms);
   if (rooms !== undefined) {

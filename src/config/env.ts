@@ -61,12 +61,14 @@ const envSchema = z.object({
   TELEGRAM_CHAT_ID: optionalString,
   ADMIN_TELEGRAM_CHAT_ID: optionalString,
   DATABASE_PATH: z.string().default("./data/rent-radar.sqlite"),
-  FIRST_RUN_MODE: z.enum(["seed", "send"]).default("seed"),
+  FIRST_RUN_MODE: z.enum(["seed", "preview", "send"]).default("seed"),
+  TELEGRAM_STRICT_NEW_PUBLICATIONS: booleanFromEnv(true),
+  TELEGRAM_INITIAL_PREVIEW_LIMIT: z.coerce.number().int().min(1).max(10).default(3),
   DRY_RUN: booleanFromEnv(false),
 });
 
 export type GeoUnknownPolicy = "exclude" | "include";
-export type FirstRunMode = "seed" | "send";
+export type FirstRunMode = "seed" | "preview" | "send";
 
 export type AppConfig = {
   nodeEnv: string;
@@ -97,6 +99,8 @@ export type AppConfig = {
   adminTelegramChatId?: string;
   databasePath: string;
   firstRunMode: FirstRunMode;
+  telegramStrictNewPublications: boolean;
+  telegramInitialPreviewLimit: number;
   dryRun: boolean;
 };
 
@@ -145,6 +149,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     domriaMaxInfoPerPoll: parsed.DOMRIA_MAX_INFO_PER_POLL,
     databasePath: parsed.DATABASE_PATH,
     firstRunMode: parsed.FIRST_RUN_MODE,
+    telegramStrictNewPublications: parsed.TELEGRAM_STRICT_NEW_PUBLICATIONS,
+    telegramInitialPreviewLimit: parsed.TELEGRAM_INITIAL_PREVIEW_LIMIT,
     dryRun: parsed.DRY_RUN,
   };
   if (parsed.MAX_LISTING_AGE_MINUTES) {

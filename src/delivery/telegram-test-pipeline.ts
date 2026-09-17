@@ -2,20 +2,27 @@ import type { Listing } from "../domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
 import type { AppConfig } from "../config/env.ts";
 import { applyListingFilters } from "../filters/listing-filter.ts";
+import {
+  classifyListingFreshness,
+  defaultMaxPublicationAgeMinutes,
+  withFirstSeenAt,
+} from "./listing-freshness.ts";
 import { InMemoryListingDedupe } from "./listing-dedupe-memory.ts";
+import { InMemorySourceBaseline } from "./source-baseline-memory.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
 
 export type TelegramSourceAttempt = {
   source: string;
   enabled: boolean;
   transport: string;
-  /** honest capability note for operators */
   capability: string;
   ok: boolean;
   listingCount: number;
   resultKind?: string;
   httpStatus?: number;
   errorSafe?: string;
+  baselineEstablished?: boolean;
+  baselineSkippedFailure?: boolean;
 };
 
 export type TelegramTestCycleReport = {
@@ -25,26 +32,26 @@ export type TelegramTestCycleReport = {
   collectedRaw: number;
   acceptedFiltered: number;
   newAfterDedupe: number;
-  /** First observation batch for this process (inventory), not "new since last cycle". */
   initialInventoryCount: number;
-  /** Listings actually offered for Telegram send this cycle. */
   newlyObservedCount: number;
   sentOk: number;
   sentFailed: number;
+  suppressedOld: number;
+  suppressedRefreshedOld: number;
+  suppressedUnknownStrict: number;
   dryRun: boolean;
   chatId: string;
-  deliveryMode: "inventory_seed" | "send_new" | "send_initial";
+  deliveryMode: "inventory_seed" | "initial_preview" | "send_new";
   sourceAttempts: TelegramSourceAttempt[];
   sourceErrors: Array<{ source: string; errorSafe: string }>;
   sendErrors: string[];
   zeroResult: boolean;
-  /** true when zero new listings AND no source hard-failures */
   zeroEligibleListings: boolean;
-  /** true when at least one enabled source failed */
   hasSourceFailures: boolean;
-  /** Enabled sources that did not contribute ok/valid_empty this cycle */
   partialCoverage: boolean;
   dedupeSurvivesRestart: false;
+  baselineSurvivesRestart: false;
+  restartRebaseline: true;
 };
 
 export type TelegramTestPipelineDeps = {
@@ -52,12 +59,18 @@ export type TelegramTestPipelineDeps = {
   config: AppConfig;
   sink: TelegramTestSink;
   dedupe: InMemoryListingDedupe;
+  baseline: InMemorySourceBaseline;
   now?: () => Date;
   /**
-   * When true (default first cycle of a poll process with FIRST_RUN_MODE=seed):
-   * mark accepted listings seen without sending — baseline inventory.
+   * first-run behaviour for sources that do not yet have a baseline:
+   * - seed (default): silent baseline, no listing sends
+   * - preview: send a small labeled sample ("Початкова добірка")
    */
-  seedInventory?: boolean;
+  firstRunMode?: "seed" | "preview";
+  /** Max listings to send in preview mode (default 3). */
+  initialPreviewLimit?: number;
+  /** Exclude unknown publishedAt (default true). */
+  strictNewPublications?: boolean;
 };
 
 function safeError(error: unknown): string {
@@ -118,11 +131,23 @@ function classifySourceAttempt(result: SourceFetchResult): {
   };
 }
 
+function resolveFirstRunMode(
+  config: AppConfig,
+  override?: "seed" | "preview",
+): "seed" | "preview" {
+  if (override) {
+    return override;
+  }
+  // Legacy FIRST_RUN_MODE=send is treated as preview (never flood unlabeled "new").
+  if (config.firstRunMode === "send" || config.firstRunMode === "preview") {
+    return "preview";
+  }
+  return "seed";
+}
+
 /**
- * One collection cycle: inspect enabled adapters → filters → in-memory dedupe → TEST Telegram.
- * Source/send failures are isolated; the cycle always completes a report.
- * Failed sends do not mark listings delivered.
- * OLX uses the HTTP adapter only when ENABLE_OLX=true — not the Playwright browser extract.
+ * One collection cycle with per-source silent baseline + freshness gating.
+ * Failed sends do not mark delivered. Failed sources do not establish baseline.
  */
 export async function runTelegramTestCycle(
   deps: TelegramTestPipelineDeps,
@@ -133,10 +158,21 @@ export async function runTelegramTestCycle(
   const sourceErrors: Array<{ source: string; errorSafe: string }> = [];
   const sourceAttempts: TelegramSourceAttempt[] = [];
   const sendErrors: string[] = [];
-  const rawListings: Listing[] = [];
+  const firstRunMode = resolveFirstRunMode(deps.config, deps.firstRunMode);
+  const previewLimit = Math.max(
+    1,
+    deps.initialPreviewLimit ?? deps.config.telegramInitialPreviewLimit ?? 3,
+  );
+  const strictNewPublications =
+    deps.strictNewPublications ?? deps.config.telegramStrictNewPublications ?? true;
+  const maxPublicationAgeMinutes = defaultMaxPublicationAgeMinutes(deps.config.maxListingAgeMinutes);
 
-  // Caller (poll script) must set seedInventory explicitly for cycle-1 baseline.
-  const seedInventory = deps.seedInventory === true;
+  type SourceBucket = {
+    source: string;
+    ok: boolean;
+    listings: Listing[];
+  };
+  const buckets: SourceBucket[] = [];
 
   for (const adapter of deps.adapters) {
     const enabled =
@@ -164,8 +200,18 @@ export async function runTelegramTestCycle(
         limit: 10,
         preferOwners: deps.config.ownerOnly,
       });
-      rawListings.push(...result.listings);
       const classified = classifySourceAttempt(result);
+      // Do not drop old publishedAt here — baseline must see current inventory.
+      // Freshness classifier (not MAX_LISTING_AGE filter) gates what is sent as new.
+      const { maxListingAgeMinutes: _ignoredAge, ...configWithoutAge } = deps.config;
+      const filtered = applyListingFilters(result.listings, configWithoutAge).filter(
+        (item) => item.accepted && item.locationMatched,
+      );
+      const accepted = filtered
+        .map((item) => item.listing)
+        .filter((listing) => !deps.config.ownerOnly || listing.sellerType === "owner");
+
+      buckets.push({ source: adapter.source, ok: classified.ok, listings: accepted });
       sourceAttempts.push({
         source: adapter.source,
         enabled: true,
@@ -183,6 +229,7 @@ export async function runTelegramTestCycle(
     } catch (error) {
       const errorSafe = safeError(error);
       sourceErrors.push({ source: adapter.source, errorSafe });
+      buckets.push({ source: adapter.source, ok: false, listings: [] });
       sourceAttempts.push({
         source: adapter.source,
         enabled: true,
@@ -196,42 +243,100 @@ export async function runTelegramTestCycle(
     }
   }
 
-  const filtered = applyListingFilters(rawListings, deps.config).filter(
-    (item) => item.accepted && item.locationMatched,
-  );
-  // Owner-only: never deliver unknown/agent/business as if they were verified owners.
-  const accepted = filtered
-    .map((item) => item.listing)
-    .filter((listing) => !deps.config.ownerOnly || listing.sellerType === "owner");
-  const fresh = deps.dedupe.filterUnseen(accepted);
-
   let sentOk = 0;
   let sentFailed = 0;
   let dryRun = false;
   let initialInventoryCount = 0;
   let newlyObservedCount = 0;
-  const deliveryMode: TelegramTestCycleReport["deliveryMode"] = seedInventory
-    ? "inventory_seed"
-    : cycle === 1
-      ? "send_initial"
-      : "send_new";
+  let suppressedOld = 0;
+  let suppressedRefreshedOld = 0;
+  let suppressedUnknownStrict = 0;
+  let newAfterDedupe = 0;
+  let collectedRaw = 0;
+  let acceptedFiltered = 0;
+  let usedPreview = false;
+  let usedSeed = false;
 
-  if (seedInventory) {
-    initialInventoryCount = fresh.length;
-    for (const listing of fresh) {
-      deps.dedupe.markSeen(listing);
+  for (const bucket of buckets) {
+    collectedRaw += bucket.listings.length;
+    acceptedFiltered += bucket.listings.length;
+    const attempt = sourceAttempts.find((s) => s.source === bucket.source && s.enabled);
+
+    if (!bucket.ok) {
+      // Failed fetch: do NOT establish baseline (prevents recovery flood).
+      if (attempt) {
+        attempt.baselineSkippedFailure = true;
+      }
+      continue;
     }
-  } else {
-    if (cycle === 1) {
-      initialInventoryCount = fresh.length;
-    } else {
-      newlyObservedCount = fresh.length;
+
+    if (!deps.baseline.hasBaseline(bucket.source)) {
+      const unseen = deps.dedupe.filterUnseen(bucket.listings).map((l) => withFirstSeenAt(l, now()));
+      initialInventoryCount += unseen.length;
+      if (firstRunMode === "preview") {
+        usedPreview = true;
+        const sample = unseen.slice(0, previewLimit);
+        for (const listing of sample) {
+          try {
+            const result: TelegramSendResult = await deps.sink.sendListing(listing, {
+              deliveryKind: "initial_preview",
+            });
+            dryRun = result.dryRun;
+            if (result.ok) {
+              sentOk += 1;
+            } else {
+              sentFailed += 1;
+              if (result.errorSafe) {
+                sendErrors.push(result.errorSafe);
+              }
+            }
+          } catch (error) {
+            sentFailed += 1;
+            sendErrors.push(safeError(error));
+          }
+        }
+        // Baseline the full successful fetch set even if a preview send failed.
+        deps.baseline.establishSilent(bucket.source, unseen, deps.dedupe);
+      } else {
+        usedSeed = true;
+        deps.baseline.establishSilent(bucket.source, unseen, deps.dedupe);
+      }
+      if (attempt) {
+        attempt.baselineEstablished = true;
+      }
+      continue;
     }
-    for (const listing of fresh) {
+
+    // Baseline already exists — only consider unseen + freshness.
+    const unseen = deps.dedupe.filterUnseen(bucket.listings).map((l) => withFirstSeenAt(l, now()));
+    newAfterDedupe += unseen.length;
+    newlyObservedCount += unseen.length;
+
+    for (const listing of unseen) {
+      const freshness = classifyListingFreshness(listing, {
+        maxPublicationAgeMinutes,
+        strictNewPublications,
+        now: now(),
+      });
+      if (!freshness.deliverable) {
+        if (freshness.kind === "old_publication") {
+          suppressedOld += 1;
+        } else if (freshness.kind === "refreshed_old") {
+          suppressedRefreshedOld += 1;
+        } else if (freshness.kind === "first_noticed") {
+          suppressedUnknownStrict += 1;
+        }
+        // Still mark seen so old inventory does not retry forever.
+        deps.dedupe.markSeen(listing);
+        continue;
+      }
+
+      const deliveryKind =
+        freshness.kind === "new_publication" || freshness.kind === "first_noticed"
+          ? freshness.kind
+          : "first_noticed";
       try {
-        const result: TelegramSendResult = await deps.sink.sendListing(listing, {
-          observationKind: cycle === 1 ? "initial_inventory" : "newly_observed",
-        });
+        const result: TelegramSendResult = await deps.sink.sendListing(listing, { deliveryKind });
         dryRun = result.dryRun;
         if (result.ok) {
           deps.dedupe.markSeen(listing);
@@ -249,6 +354,12 @@ export async function runTelegramTestCycle(
     }
   }
 
+  const deliveryMode: TelegramTestCycleReport["deliveryMode"] = usedPreview
+    ? "initial_preview"
+    : usedSeed && sentOk === 0 && newlyObservedCount === 0
+      ? "inventory_seed"
+      : "send_new";
+
   const endedAt = now();
   const enabledAttempts = sourceAttempts.filter((s) => s.enabled);
   const hasSourceFailures = enabledAttempts.some((s) => !s.ok);
@@ -259,24 +370,29 @@ export async function runTelegramTestCycle(
     cycle,
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
-    collectedRaw: rawListings.length,
-    acceptedFiltered: accepted.length,
-    newAfterDedupe: fresh.length,
+    collectedRaw,
+    acceptedFiltered,
+    newAfterDedupe,
     initialInventoryCount,
     newlyObservedCount,
     sentOk,
     sentFailed,
+    suppressedOld,
+    suppressedRefreshedOld,
+    suppressedUnknownStrict,
     dryRun,
     chatId: deps.sink.chatId,
     deliveryMode,
     sourceAttempts,
     sourceErrors,
     sendErrors,
-    zeroResult: fresh.length === 0,
-    zeroEligibleListings: fresh.length === 0 && !hasSourceFailures,
+    zeroResult: newlyObservedCount === 0 && sentOk === 0,
+    zeroEligibleListings: newlyObservedCount === 0 && sentOk === 0 && !hasSourceFailures,
     hasSourceFailures,
     partialCoverage,
     dedupeSurvivesRestart: false,
+    baselineSurvivesRestart: false,
+    restartRebaseline: true,
   };
 }
 
@@ -290,19 +406,20 @@ export function formatTelegramStartupMessage(input: {
   enableRieltor: boolean;
   enableOlx: boolean;
   ownerOnly: boolean;
-  firstRunMode: "seed" | "send";
+  firstRunMode: "seed" | "preview" | "send";
 }): string {
+  const mode = input.firstRunMode === "send" ? "preview" : input.firstRunMode;
   return [
     "🧪 <b>TEST Telegram poll starting</b>",
     `chat_id: ${input.chatId}`,
     `cycles: ${input.cycles} · interval_ms: ${input.intervalMs}`,
     `dry_run: ${input.dryRun}`,
     `owner_only: ${input.ownerOnly}`,
-    `first_run_mode: ${input.firstRunMode} (seed = cycle-1 inventory without listing sends)`,
+    `first_run_mode: ${mode} (seed = silent per-source baseline; preview = small «Початкова добірка»)`,
     `sources: domria=${input.enableDomria} lun=${input.enableLun} rieltor=${input.enableRieltor} olx_http=${input.enableOlx}`,
-    "OLX browser extract is NOT used for Telegram delivery until a live Oracle extraction check passes.",
-    "Dedupe is in-memory only — does not survive process restart.",
-    "Unknown sellers are never labeled as verified owners.",
+    "Old publishedAt listings are never labeled as new publications.",
+    "Dedupe + baseline are in-memory only — restart triggers silent re-baseline (no flood of historical inventory as «нове»).",
+    "Platform seller labels are not legal ownership proof.",
   ].join("\n");
 }
 
@@ -326,7 +443,7 @@ export function formatTelegramFinalSummary(input: {
     `cycles_with_zero_eligible_listings: ${input.zeroEligibleCycles}`,
     `dry_run: ${input.dryRun}`,
     "Partial coverage means some enabled sources failed while others returned ok/valid_empty.",
-    "disabled / transport_blocked / parser_failed / valid_empty are reported per source — not conflated.",
-    "Dedupe did not survive restart (in-memory).",
+    "Failed sources never establish an empty baseline — recovery re-baselines silently.",
+    "Dedupe/baseline did not survive restart (in-memory).",
   ].join("\n");
 }

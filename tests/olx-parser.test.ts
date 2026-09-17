@@ -53,6 +53,7 @@ describe("OLX parser", () => {
     expect(listings[0]?.metadata?.coordinatesRadiusKm).toBe(1);
     // publishedAt is the creation time; the refresh bump is preserved separately.
     expect(listings[0]?.publishedAt?.toISOString()).toBe(new Date("2026-09-14T18:19:11+03:00").toISOString());
+    expect(listings[0]?.refreshedAt?.toISOString()).toBe(new Date("2026-09-14T18:22:44+03:00").toISOString());
     expect(listings[0]?.metadata?.lastRefreshTime).toBe("2026-09-14T18:22:44+03:00");
     expect(listings[0]?.metadata?.urlToken).toBe("11gqaj");
     expect(listings[0]?.sellerType).toBe("business");

@@ -1,19 +1,19 @@
 /**
  * One-shot TEST Telegram delivery.
  *
+ * Default FIRST_RUN_MODE=seed → silent per-source baseline (no «нове» flood).
+ * FIRST_RUN_MODE=preview → small «Початкова добірка» sample only.
+ *
  * Requires:
  *   TELEGRAM_TEST_MODE=true
  *   TELEGRAM_BOT_TOKEN=...
  *   TELEGRAM_CHAT_ID=...
- * Optional:
- *   TELEGRAM_DRY_RUN=true
- *
- * Does not use production daemon/DB/scheduler. Does not alter Oracle soak.
  */
 
 import { config as loadDotenv } from "dotenv";
 import { getConfig } from "../config/env.ts";
 import { InMemoryListingDedupe } from "../delivery/listing-dedupe-memory.ts";
+import { InMemorySourceBaseline } from "../delivery/source-baseline-memory.ts";
 import { runTelegramTestCycle } from "../delivery/telegram-test-pipeline.ts";
 import {
   createTelegramTestSinkFromEnv,
@@ -41,11 +41,12 @@ try {
       chatId: sink.chatId,
       dryRun: process.env.TELEGRAM_DRY_RUN === "true",
       ownerOnly: config.ownerOnly,
+      firstRunMode: config.firstRunMode,
       enableDomria: config.enableDomria,
       enableLun: config.enableLun,
       enableRieltor: config.enableRieltor,
       enableOlx: config.enableOlx,
-      note: "TEST mode only. No always-on daemon. Token not logged.",
+      note: "TEST mode. Default silent baseline. Token not logged.",
     }),
   );
 
@@ -54,7 +55,7 @@ try {
     config,
     sink,
     dedupe: new InMemoryListingDedupe(),
-    seedInventory: false,
+    baseline: new InMemorySourceBaseline(),
   });
 
   console.log(JSON.stringify({ message: "live:test-telegram.done", ...report }));

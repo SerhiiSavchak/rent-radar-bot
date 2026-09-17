@@ -7,11 +7,13 @@
  *   TELEGRAM_POLL_CYCLES       default 6
  *   TELEGRAM_POLL_INTERVAL_MS  default 600000
  *   TELEGRAM_DRY_RUN=true      optional
+ *   FIRST_RUN_MODE=seed|preview  (send→preview; default seed = silent baseline)
  */
 
 import { config as loadDotenv } from "dotenv";
 import { getConfig } from "../config/env.ts";
 import { InMemoryListingDedupe } from "../delivery/listing-dedupe-memory.ts";
+import { InMemorySourceBaseline } from "../delivery/source-baseline-memory.ts";
 import {
   formatTelegramFinalSummary,
   formatTelegramStartupMessage,
@@ -47,6 +49,7 @@ try {
   });
   const adapters = [new DomriaSource(), new LunSource(), new RieltorSource(), new OlxSource()];
   const dedupe = new InMemoryListingDedupe();
+  const baseline = new InMemorySourceBaseline();
   const dryRun = process.env.TELEGRAM_DRY_RUN === "true";
 
   const startup = formatTelegramStartupMessage({
@@ -72,7 +75,9 @@ try {
       enableOlx: config.enableOlx,
       firstRunMode: config.firstRunMode,
       dedupeSurvivesRestart: false,
-      note: "Bounded poll only. OLX browser extract is opt-in and not a Telegram transport. Token not logged.",
+      baselineSurvivesRestart: false,
+      restartRebaseline: true,
+      note: "Bounded poll. Per-source silent baseline. Old publishedAt never sent as new. Token not logged.",
     }),
   );
 
@@ -94,27 +99,22 @@ try {
   let zeroEligibleCycles = 0;
   let partialCoverageCycles = 0;
   let cyclesAttempted = 0;
-  let inventorySeeded = false;
 
   for (let cycle = 1; cycle <= cycles; cycle += 1) {
     if (stop) {
       console.log(JSON.stringify({ message: "live:test-telegram:poll.aborted", cycle }));
       break;
     }
-    const seedInventory = !inventorySeeded && config.firstRunMode === "seed";
     const report = await runTelegramTestCycle(
       {
         adapters,
         config,
         sink,
         dedupe,
-        seedInventory,
+        baseline,
       },
       cycle,
     );
-    if (seedInventory) {
-      inventorySeeded = true;
-    }
     cyclesAttempted += 1;
     totalSentOk += report.sentOk;
     totalSentFailed += report.sentFailed;
@@ -178,6 +178,7 @@ try {
       zeroEligibleCycles,
       partialCoverageCycles,
       dedupeSurvivesRestart: false,
+      baselineSurvivesRestart: false,
       exitFail,
     }),
   );

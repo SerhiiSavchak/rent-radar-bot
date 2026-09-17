@@ -99,42 +99,88 @@ function formatPrice(listing: Listing): string {
 
 export function formatSellerLabel(listing: Listing): string {
   if (listing.sellerType === "owner") {
-    return "owner (platform-verified)";
+    return "Власник — за позначкою майданчика";
   }
   if (listing.sellerType === "agent") {
-    return "agent (not owner)";
+    return "Посередник / агент (не власник)";
   }
   if (listing.sellerType === "business") {
-    return "business (not owner)";
+    return "Бізнес / забудовник (не власник)";
   }
-  return "unknown (not verified ownership)";
+  return "Невідомо — право власності не підтверджено";
 }
 
-export type ListingObservationKind = "initial_inventory" | "newly_observed";
+export type ListingDeliveryKindOption =
+  | "initial_preview"
+  | "new_publication"
+  | "first_noticed"
+  | "initial_inventory"
+  | "newly_observed";
+
+/** @deprecated use ListingDeliveryKindOption */
+export type ListingObservationKind = ListingDeliveryKindOption;
+
+const KYIV_TZ = "Europe/Kyiv";
+
+export function formatKyivDateTime(date: Date | undefined): string {
+  if (!date || Number.isNaN(date.getTime())) {
+    return "невідомо";
+  }
+  return new Intl.DateTimeFormat("uk-UA", {
+    timeZone: KYIV_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function headlineFor(kind: ListingDeliveryKindOption | undefined): string {
+  switch (kind) {
+    case "initial_preview":
+      return "📋 <b>TEST · Початкова добірка</b>";
+    case "first_noticed":
+      return "👀 <b>TEST · Вперше помічено</b>";
+    case "new_publication":
+      return "🆕 <b>TEST · Нова публікація</b>";
+    case "initial_inventory":
+      return "📋 <b>TEST · Початкова добірка</b>";
+    case "newly_observed":
+    default:
+      return "👀 <b>TEST · Вперше помічено</b>";
+  }
+}
 
 export function formatListingTelegramHtml(
   listing: Listing,
-  options?: { observationKind?: ListingObservationKind },
+  options?: { deliveryKind?: ListingDeliveryKindOption; observationKind?: ListingDeliveryKindOption },
 ): string {
   const cityArea = [listing.location.city, listing.location.district, listing.location.raw]
     .filter((item): item is string => Boolean(item))
     .filter((item, index, arr) => arr.indexOf(item) === index)
     .join(" · ");
-  const published = listing.publishedAt?.toISOString() ?? "n/a";
-  const kind = options?.observationKind ?? "newly_observed";
-  const headline =
-    kind === "initial_inventory"
-      ? "🏠 <b>TEST · initial inventory (first observation)</b>"
-      : "🏠 <b>TEST · newly observed</b>";
+  const kind = options?.deliveryKind ?? options?.observationKind ?? "new_publication";
+  const publishedLine = listing.publishedAt
+    ? `Опубліковано: ${formatKyivDateTime(listing.publishedAt)} (Київ)`
+    : "Опубліковано: невідомо (майданчик не надав дату)";
+  const refreshedLine = listing.refreshedAt
+    ? `Оновлено на майданчику: ${formatKyivDateTime(listing.refreshedAt)} (Київ)`
+    : undefined;
+  const firstSeenLine = listing.firstSeenAt
+    ? `Вперше помічено ботом: ${formatKyivDateTime(listing.firstSeenAt)} (Київ)`
+    : undefined;
   return [
-    headline,
+    headlineFor(kind),
     "",
     escapeHtml(listing.title),
     "",
     `💰 ${escapeHtml(formatPrice(listing))}`,
     `📍 ${escapeHtml(cityArea || listing.location.raw)}`,
     `👤 ${escapeHtml(formatSellerLabel(listing))}`,
-    `🕒 publishedAt=${escapeHtml(published)} (not first-seen time)`,
+    `🕒 ${escapeHtml(publishedLine)}`,
+    ...(refreshedLine ? [`🔄 ${escapeHtml(refreshedLine)}`] : []),
+    ...(firstSeenLine ? [`👁 ${escapeHtml(firstSeenLine)}`] : []),
     `📦 ${escapeHtml(listing.source)} · ${escapeHtml(listing.propertyType)}`,
     "",
     escapeHtml(listing.url),
@@ -231,7 +277,10 @@ export class TelegramTestSink {
 
   async sendListing(
     listing: Listing,
-    options?: { observationKind?: ListingObservationKind },
+    options?: {
+      deliveryKind?: ListingDeliveryKindOption;
+      observationKind?: ListingDeliveryKindOption;
+    },
   ): Promise<TelegramSendResult> {
     return this.sendText(formatListingTelegramHtml(listing, options));
   }

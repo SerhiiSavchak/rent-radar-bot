@@ -35,7 +35,7 @@ chmod +x scripts/oracle-telegram-test/run-telegram-test-poll.sh
 
 Runtime artifacts (outside git): `~/rent-radar-runtime/telegram-test/{poll.log,poll.pid,poll.pgid,status.json}`
 
-Default: 6 cycles × 10 minutes ≈ 1 hour. `FIRST_RUN_MODE=seed` (default) marks cycle-1 inventory without listing sends.
+Default: 6 cycles × 10 minutes ≈ 1 hour. `FIRST_RUN_MODE=seed` (default) establishes a **silent per-source baseline** (no listing sends). `preview` sends a small «Початкова добірка» only.
 
 ## Lifecycle smoke (local, no network)
 

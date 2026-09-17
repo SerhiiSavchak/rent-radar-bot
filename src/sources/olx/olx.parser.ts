@@ -69,9 +69,15 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
   // not in `location`. Keep `location.lat/lon` as a fallback for older shapes.
   const lat = offer.map?.lat ?? offer.location?.lat;
   const lon = offer.map?.lon ?? offer.location?.lon;
-  // publishedAt means creation time only; last_refresh_time is a bump/renewal kept in metadata.
-  // Do not fall back to refresh time — missing created_time leaves publishedAt unset (uncertain).
+  // publishedAt means creation time only; last_refresh_time is refreshedAt, never publishedAt.
   const published = offer.created_time;
+  let refreshedAt: Date | undefined;
+  if (offer.last_refresh_time) {
+    const refreshed = new Date(offer.last_refresh_time);
+    if (!Number.isNaN(refreshed.getTime())) {
+      refreshedAt = refreshed;
+    }
+  }
   const urlToken = extractOlxUrlToken(url);
   const listing: Listing = {
     source: "olx",
@@ -89,9 +95,11 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
     sellerType: owner.sellerType,
     sellerEvidence: owner.sellerEvidence,
     discoveredAt,
+    ...(refreshedAt ? { refreshedAt } : {}),
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
       transportCandidate: "public JSON API api/v1/offers",
+      publishedAtProvenance: offer.created_time ? "olx.created_time" : "missing",
       ...(urlToken ? { urlToken } : {}),
       ...(offer.map?.radius !== undefined ? { coordinatesRadiusKm: offer.map.radius } : {}),
       ...(offer.last_refresh_time ? { lastRefreshTime: offer.last_refresh_time } : {}),

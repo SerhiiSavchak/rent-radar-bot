@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
-import { InMemoryListingDedupe } from "../src/delivery/listing-dedupe-memory.ts";
-import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
+import { InMemoryListingDedupe } from "../src/delivery/listing-dedupe-memory.ts";
+import { InMemorySourceBaseline } from "../src/delivery/source-baseline-memory.ts";
+import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import {
   createTelegramTestSinkFromEnv,
+  formatKyivDateTime,
   formatListingTelegramHtml,
   redactTelegramSecrets,
   resolveTelegramTestConfig,
@@ -101,18 +103,21 @@ describe("Telegram token redaction", () => {
 });
 
 describe("Telegram formatting and splitting", () => {
-  it("includes source, title, price, city, seller, published time, url", () => {
-    const text = formatListingTelegramHtml(sampleListing());
+  it("includes source, title, price, city, seller, Kyiv published time, url", () => {
+    const listing = sampleListing();
+    const text = formatListingTelegramHtml(listing, { deliveryKind: "new_publication" });
     expect(text).toContain("Квартира");
     expect(text).toContain("12000");
     expect(text).toContain("Львів");
-    expect(text).toContain("owner (platform-verified)");
+    expect(text).toContain("Власник — за позначкою майданчика");
     expect(formatListingTelegramHtml(sampleListing({ sellerType: "unknown" }))).toContain(
-      "unknown (not verified ownership)",
+      "не підтверджено",
     );
-    expect(text).toContain("2026-09-16T12:00:00.000Z");
+    expect(text).toContain(formatKyivDateTime(listing.publishedAt));
+    expect(text).not.toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
     expect(text).toContain("https://rieltor.ua/flats-rent/100/");
     expect(text).toContain("rieltor");
+    expect(text).toContain("Нова публікація");
   });
 
   it("splits long messages under the Telegram limit", () => {
@@ -260,6 +265,7 @@ describe("in-memory dedupe + pipeline", () => {
       config,
       sink,
       dedupe: new InMemoryListingDedupe(),
+      baseline: new InMemorySourceBaseline(),
     });
     expect(report.zeroResult).toBe(true);
     expect(report.newAfterDedupe).toBe(0);
@@ -268,7 +274,7 @@ describe("in-memory dedupe + pipeline", () => {
     resetConfigCache();
   });
 
-  it("isolates source and send failures", async () => {
+  it("isolates source failures while silently baselining healthy sources", async () => {
     resetConfigCache();
     const config = loadConfig({
       OWNER_ONLY: "true",
@@ -281,6 +287,7 @@ describe("in-memory dedupe + pipeline", () => {
       TARGET_LNG: "24.0297",
       TARGET_RADIUS_KM: "15",
       GEO_UNKNOWN_POLICY: "include",
+      FIRST_RUN_MODE: "seed",
     });
 
     const good = sampleListing({
@@ -289,6 +296,7 @@ describe("in-memory dedupe + pipeline", () => {
       url: "https://lun.ua/uk/realty/22",
       sellerType: "owner",
       propertyType: "apartment",
+      publishedAt: new Date("2026-09-16T12:00:00Z"),
     });
     const failingAdapter: ListingSourceAdapter = {
       source: "domria",
@@ -299,28 +307,24 @@ describe("in-memory dedupe + pipeline", () => {
       healthCheck: async () => ({ source: "domria", healthy: false, checkedAt: new Date() }),
     };
 
-    const sink = new TelegramTestSink({
-      botToken: "1:token",
-      chatId: "55",
-      testMode: true,
-      dryRun: false,
-      timeoutMs: 1000,
-      maxRetries: 0,
-      fetchImpl: (async () => new Response("nope", { status: 400 })) as unknown as typeof fetch,
-    });
+    const sendListing = vi.fn();
+    const sink = { chatId: "55", sendListing } as unknown as TelegramTestSink;
+    const baseline = new InMemorySourceBaseline();
 
     const report = await runTelegramTestCycle({
       adapters: [failingAdapter, adapter("lun", [good])],
       config,
       sink,
       dedupe: new InMemoryListingDedupe(),
-      seedInventory: false,
+      baseline,
+      firstRunMode: "seed",
     });
 
     expect(report.sourceErrors.some((e) => e.source === "domria")).toBe(true);
-    expect(report.newAfterDedupe).toBe(1);
-    expect(report.sentFailed).toBe(1);
     expect(report.partialCoverage).toBe(true);
+    expect(baseline.hasBaseline("lun")).toBe(true);
+    expect(baseline.hasBaseline("domria")).toBe(false);
+    expect(sendListing).not.toHaveBeenCalled();
     expect(report.chatId).toBe("55");
     resetConfigCache();
   });
@@ -338,7 +342,15 @@ describe("in-memory dedupe + pipeline", () => {
       TARGET_LNG: "24.0297",
       TARGET_RADIUS_KM: "15",
       GEO_UNKNOWN_POLICY: "include",
-      FIRST_RUN_MODE: "send",
+      FIRST_RUN_MODE: "seed",
+    });
+    const seed = sampleListing({
+      source: "lun",
+      sourceId: "seed",
+      url: "https://lun.ua/uk/realty/seed",
+      sellerType: "owner",
+      propertyType: "apartment",
+      publishedAt: new Date("2026-09-10T12:00:00Z"),
     });
     const good = sampleListing({
       source: "lun",
@@ -346,8 +358,25 @@ describe("in-memory dedupe + pipeline", () => {
       url: "https://lun.ua/uk/realty/77",
       sellerType: "owner",
       propertyType: "apartment",
+      publishedAt: new Date("2026-09-16T12:00:00Z"),
     });
-    const sink = new TelegramTestSink({
+    const dedupe = new InMemoryListingDedupe();
+    const baseline = new InMemorySourceBaseline();
+    const now = () => new Date("2026-09-17T12:00:00Z");
+
+    await runTelegramTestCycle(
+      {
+        adapters: [adapter("lun", [seed])],
+        config,
+        sink: { chatId: "55", sendListing: vi.fn() } as unknown as TelegramTestSink,
+        dedupe,
+        baseline,
+        now,
+      },
+      1,
+    );
+
+    const sinkFail = new TelegramTestSink({
       botToken: "1:token",
       chatId: "55",
       testMode: true,
@@ -356,10 +385,9 @@ describe("in-memory dedupe + pipeline", () => {
       maxRetries: 0,
       fetchImpl: (async () => new Response("nope", { status: 400 })) as unknown as typeof fetch,
     });
-    const dedupe = new InMemoryListingDedupe();
     const report1 = await runTelegramTestCycle(
-      { adapters: [adapter("lun", [good])], config, sink, dedupe, seedInventory: false },
-      1,
+      { adapters: [adapter("lun", [seed, good])], config, sink: sinkFail, dedupe, baseline, now },
+      2,
     );
     expect(report1.sentFailed).toBe(1);
     expect(dedupe.hasSeen(good)).toBe(false);
@@ -373,8 +401,8 @@ describe("in-memory dedupe + pipeline", () => {
       maxRetries: 0,
     });
     const report2 = await runTelegramTestCycle(
-      { adapters: [adapter("lun", [good])], config, sink: sinkOk, dedupe, seedInventory: false },
-      2,
+      { adapters: [adapter("lun", [seed, good])], config, sink: sinkOk, dedupe, baseline, now },
+      3,
     );
     expect(report2.newlyObservedCount).toBe(1);
     expect(report2.sentOk).toBe(1);
@@ -382,7 +410,7 @@ describe("in-memory dedupe + pipeline", () => {
     resetConfigCache();
   });
 
-  it("seeds initial inventory without sending when seedInventory=true", async () => {
+  it("seeds initial inventory without sending when firstRunMode=seed", async () => {
     resetConfigCache();
     const config = loadConfig({
       OWNER_ONLY: "true",
@@ -395,6 +423,7 @@ describe("in-memory dedupe + pipeline", () => {
       TARGET_LNG: "24.0297",
       TARGET_RADIUS_KM: "15",
       GEO_UNKNOWN_POLICY: "include",
+      FIRST_RUN_MODE: "seed",
     });
     const good = sampleListing({
       source: "lun",
@@ -402,12 +431,14 @@ describe("in-memory dedupe + pipeline", () => {
       url: "https://lun.ua/uk/realty/88",
       sellerType: "owner",
       propertyType: "apartment",
+      publishedAt: new Date("2025-12-31T15:03:31.000Z"),
     });
     const sendListing = vi.fn();
     const sink = { chatId: "1", sendListing } as unknown as TelegramTestSink;
     const dedupe = new InMemoryListingDedupe();
+    const baseline = new InMemorySourceBaseline();
     const report = await runTelegramTestCycle(
-      { adapters: [adapter("lun", [good])], config, sink, dedupe, seedInventory: true },
+      { adapters: [adapter("lun", [good])], config, sink, dedupe, baseline, firstRunMode: "seed" },
       1,
     );
     expect(report.deliveryMode).toBe("inventory_seed");

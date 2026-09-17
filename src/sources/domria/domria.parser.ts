@@ -115,9 +115,16 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
     };
   }
   if (publishedRaw) {
+    // DIM.RIA publishing_date is the platform publication stamp (naive local clock, TZ uncertain).
+    // Never replace an old stamp with "now" — Dec 2025 stays Dec 2025.
     const publishedAt = new Date(publishedRaw.replace(" ", "T"));
     if (!Number.isNaN(publishedAt.getTime())) {
       listing.publishedAt = publishedAt;
+      listing.metadata = {
+        ...listing.metadata,
+        publishedAtProvenance: "domria.publishing_date",
+        publishedAtTimezone: "uncertain_naive_local",
+      };
     }
   }
   if (info.main_photo) {

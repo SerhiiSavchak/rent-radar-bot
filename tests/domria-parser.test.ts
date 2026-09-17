@@ -71,4 +71,18 @@ describe("DIM.RIA parser", () => {
     });
     expect(listing?.sellerType).toBe("owner");
   });
+
+  it("preserves old publishing_date and never substitutes now", () => {
+    const listing = parseDomriaInfo({
+      realty_id: 99,
+      beautiful_url: "realty-99.html",
+      city_name_uk: "Львів",
+      publishing_date: "2025-12-31 17:03:31",
+      realty_type_id: 2,
+      characteristics_values: { "1437": 1436 },
+    });
+    expect(listing?.publishedAt?.toISOString()).toBe(new Date("2025-12-31T17:03:31").toISOString());
+    expect(listing?.metadata?.publishedAtProvenance).toBe("domria.publishing_date");
+    expect(listing?.discoveredAt.getTime()).toBeGreaterThan(listing!.publishedAt!.getTime());
+  });
 });
