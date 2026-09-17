@@ -25,10 +25,15 @@ export type TelegramTestCycleReport = {
   collectedRaw: number;
   acceptedFiltered: number;
   newAfterDedupe: number;
+  /** First observation batch for this process (inventory), not "new since last cycle". */
+  initialInventoryCount: number;
+  /** Listings actually offered for Telegram send this cycle. */
+  newlyObservedCount: number;
   sentOk: number;
   sentFailed: number;
   dryRun: boolean;
   chatId: string;
+  deliveryMode: "inventory_seed" | "send_new" | "send_initial";
   sourceAttempts: TelegramSourceAttempt[];
   sourceErrors: Array<{ source: string; errorSafe: string }>;
   sendErrors: string[];
@@ -37,6 +42,9 @@ export type TelegramTestCycleReport = {
   zeroEligibleListings: boolean;
   /** true when at least one enabled source failed */
   hasSourceFailures: boolean;
+  /** Enabled sources that did not contribute ok/valid_empty this cycle */
+  partialCoverage: boolean;
+  dedupeSurvivesRestart: false;
 };
 
 export type TelegramTestPipelineDeps = {
@@ -45,6 +53,11 @@ export type TelegramTestPipelineDeps = {
   sink: TelegramTestSink;
   dedupe: InMemoryListingDedupe;
   now?: () => Date;
+  /**
+   * When true (default first cycle of a poll process with FIRST_RUN_MODE=seed):
+   * mark accepted listings seen without sending — baseline inventory.
+   */
+  seedInventory?: boolean;
 };
 
 function safeError(error: unknown): string {
@@ -57,8 +70,8 @@ function capabilityFor(source: string, enabled: boolean, config: AppConfig): str
   }
   if (source === "olx") {
     return config.enableOlx
-      ? "http_adapter_only — on Oracle this is typically CloudFront 403; browser_accessible≠deliverable listings"
-      : "disabled — OLX HTTP blocked on Oracle; browser probe is soak-only and does not feed Telegram";
+      ? "http_adapter_only — on Oracle this is typically CloudFront 403; browser extract is opt-in and separate"
+      : "disabled — OLX HTTP blocked on Oracle; browser extract is opt-in and does not feed Telegram until proven";
   }
   if (source === "domria") {
     return "http_html_or_official_api";
@@ -69,10 +82,47 @@ function capabilityFor(source: string, enabled: boolean, config: AppConfig): str
   return "http";
 }
 
+function classifySourceAttempt(result: SourceFetchResult): {
+  ok: boolean;
+  resultKind: string;
+  errorSafe?: string;
+} {
+  const kind = result.resultKind ?? "unknown";
+  if (kind === "ok" && result.listings.length > 0) {
+    return { ok: true, resultKind: kind };
+  }
+  if (kind === "valid_empty") {
+    return { ok: true, resultKind: kind };
+  }
+  if (result.httpStatus === 403 || result.httpStatus === 429) {
+    return {
+      ok: false,
+      resultKind: kind === "http_error" ? "transport_blocked" : kind,
+      errorSafe: `transport_blocked HTTP ${result.httpStatus} via ${result.transport}`,
+    };
+  }
+  if (kind === "parser_failure") {
+    return {
+      ok: false,
+      resultKind: kind,
+      errorSafe: result.health.message ?? "parser_failure",
+    };
+  }
+  if (kind === "disabled") {
+    return { ok: false, resultKind: kind, errorSafe: "disabled" };
+  }
+  return {
+    ok: false,
+    resultKind: kind,
+    ...(result.health.message ? { errorSafe: safeError(result.health.message) } : {}),
+  };
+}
+
 /**
  * One collection cycle: inspect enabled adapters → filters → in-memory dedupe → TEST Telegram.
  * Source/send failures are isolated; the cycle always completes a report.
- * OLX uses the HTTP adapter only when ENABLE_OLX=true — not the Playwright browser probe.
+ * Failed sends do not mark listings delivered.
+ * OLX uses the HTTP adapter only when ENABLE_OLX=true — not the Playwright browser extract.
  */
 export async function runTelegramTestCycle(
   deps: TelegramTestPipelineDeps,
@@ -84,6 +134,9 @@ export async function runTelegramTestCycle(
   const sourceAttempts: TelegramSourceAttempt[] = [];
   const sendErrors: string[] = [];
   const rawListings: Listing[] = [];
+
+  // Caller (poll script) must set seedInventory explicitly for cycle-1 baseline.
+  const seedInventory = deps.seedInventory === true;
 
   for (const adapter of deps.adapters) {
     const enabled =
@@ -101,6 +154,7 @@ export async function runTelegramTestCycle(
         capability,
         ok: false,
         listingCount: 0,
+        resultKind: "disabled",
       });
       continue;
     }
@@ -111,26 +165,20 @@ export async function runTelegramTestCycle(
         preferOwners: deps.config.ownerOnly,
       });
       rawListings.push(...result.listings);
-      const ok =
-        (result.resultKind === "ok" && result.listings.length > 0) || result.resultKind === "valid_empty";
+      const classified = classifySourceAttempt(result);
       sourceAttempts.push({
         source: adapter.source,
         enabled: true,
         transport: result.transport,
         capability,
-        ok,
+        ok: classified.ok,
         listingCount: result.listings.length,
-        ...(result.resultKind !== undefined ? { resultKind: result.resultKind } : {}),
+        resultKind: classified.resultKind,
         ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
-        ...(!ok && result.health.message ? { errorSafe: safeError(result.health.message) } : {}),
+        ...(classified.errorSafe ? { errorSafe: classified.errorSafe } : {}),
       });
-      if (!ok && result.httpStatus === 403) {
-        sourceErrors.push({
-          source: adapter.source,
-          errorSafe: `transport_blocked HTTP 403 via ${result.transport}`,
-        });
-      } else if (!ok && result.health.message) {
-        sourceErrors.push({ source: adapter.source, errorSafe: safeError(result.health.message) });
+      if (!classified.ok && classified.errorSafe) {
+        sourceErrors.push({ source: adapter.source, errorSafe: classified.errorSafe });
       }
     } catch (error) {
       const errorSafe = safeError(error);
@@ -142,6 +190,7 @@ export async function runTelegramTestCycle(
         capability,
         ok: false,
         listingCount: 0,
+        resultKind: "parser_failed",
         errorSafe,
       });
     }
@@ -154,32 +203,58 @@ export async function runTelegramTestCycle(
   const accepted = filtered
     .map((item) => item.listing)
     .filter((listing) => !deps.config.ownerOnly || listing.sellerType === "owner");
-  const fresh = deps.dedupe.takeNew(accepted);
+  const fresh = deps.dedupe.filterUnseen(accepted);
 
   let sentOk = 0;
   let sentFailed = 0;
   let dryRun = false;
+  let initialInventoryCount = 0;
+  let newlyObservedCount = 0;
+  const deliveryMode: TelegramTestCycleReport["deliveryMode"] = seedInventory
+    ? "inventory_seed"
+    : cycle === 1
+      ? "send_initial"
+      : "send_new";
 
-  for (const listing of fresh) {
-    try {
-      const result: TelegramSendResult = await deps.sink.sendListing(listing);
-      dryRun = result.dryRun;
-      if (result.ok) {
-        sentOk += 1;
-      } else {
-        sentFailed += 1;
-        if (result.errorSafe) {
-          sendErrors.push(result.errorSafe);
+  if (seedInventory) {
+    initialInventoryCount = fresh.length;
+    for (const listing of fresh) {
+      deps.dedupe.markSeen(listing);
+    }
+  } else {
+    if (cycle === 1) {
+      initialInventoryCount = fresh.length;
+    } else {
+      newlyObservedCount = fresh.length;
+    }
+    for (const listing of fresh) {
+      try {
+        const result: TelegramSendResult = await deps.sink.sendListing(listing, {
+          observationKind: cycle === 1 ? "initial_inventory" : "newly_observed",
+        });
+        dryRun = result.dryRun;
+        if (result.ok) {
+          deps.dedupe.markSeen(listing);
+          sentOk += 1;
+        } else {
+          sentFailed += 1;
+          if (result.errorSafe) {
+            sendErrors.push(result.errorSafe);
+          }
         }
+      } catch (error) {
+        sentFailed += 1;
+        sendErrors.push(safeError(error));
       }
-    } catch (error) {
-      sentFailed += 1;
-      sendErrors.push(safeError(error));
     }
   }
 
   const endedAt = now();
-  const hasSourceFailures = sourceAttempts.some((s) => s.enabled && !s.ok);
+  const enabledAttempts = sourceAttempts.filter((s) => s.enabled);
+  const hasSourceFailures = enabledAttempts.some((s) => !s.ok);
+  const partialCoverage =
+    enabledAttempts.length > 0 && enabledAttempts.some((s) => s.ok) && hasSourceFailures;
+
   return {
     cycle,
     startedAt: startedAt.toISOString(),
@@ -187,16 +262,21 @@ export async function runTelegramTestCycle(
     collectedRaw: rawListings.length,
     acceptedFiltered: accepted.length,
     newAfterDedupe: fresh.length,
+    initialInventoryCount,
+    newlyObservedCount,
     sentOk,
     sentFailed,
     dryRun,
     chatId: deps.sink.chatId,
+    deliveryMode,
     sourceAttempts,
     sourceErrors,
     sendErrors,
     zeroResult: fresh.length === 0,
     zeroEligibleListings: fresh.length === 0 && !hasSourceFailures,
     hasSourceFailures,
+    partialCoverage,
+    dedupeSurvivesRestart: false,
   };
 }
 
@@ -210,6 +290,7 @@ export function formatTelegramStartupMessage(input: {
   enableRieltor: boolean;
   enableOlx: boolean;
   ownerOnly: boolean;
+  firstRunMode: "seed" | "send";
 }): string {
   return [
     "🧪 <b>TEST Telegram poll starting</b>",
@@ -217,8 +298,10 @@ export function formatTelegramStartupMessage(input: {
     `cycles: ${input.cycles} · interval_ms: ${input.intervalMs}`,
     `dry_run: ${input.dryRun}`,
     `owner_only: ${input.ownerOnly}`,
+    `first_run_mode: ${input.firstRunMode} (seed = cycle-1 inventory without listing sends)`,
     `sources: domria=${input.enableDomria} lun=${input.enableLun} rieltor=${input.enableRieltor} olx_http=${input.enableOlx}`,
-    "OLX browser probe is NOT used for Telegram delivery.",
+    "OLX browser extract is NOT used for Telegram delivery until a live Oracle extraction check passes.",
+    "Dedupe is in-memory only — does not survive process restart.",
     "Unknown sellers are never labeled as verified owners.",
   ].join("\n");
 }
@@ -230,6 +313,7 @@ export function formatTelegramFinalSummary(input: {
   totalNewAfterDedupe: number;
   sourceFailureCycles: number;
   zeroEligibleCycles: number;
+  partialCoverageCycles: number;
   dryRun: boolean;
 }): string {
   return [
@@ -238,8 +322,11 @@ export function formatTelegramFinalSummary(input: {
     `new_eligible_listings: ${input.totalNewAfterDedupe}`,
     `sent_ok: ${input.totalSentOk} · sent_failed: ${input.totalSentFailed}`,
     `cycles_with_source_failures: ${input.sourceFailureCycles}`,
+    `cycles_with_partial_source_coverage: ${input.partialCoverageCycles}`,
     `cycles_with_zero_eligible_listings: ${input.zeroEligibleCycles}`,
     `dry_run: ${input.dryRun}`,
-    "Source failures are distinct from zero new listings.",
+    "Partial coverage means some enabled sources failed while others returned ok/valid_empty.",
+    "disabled / transport_blocked / parser_failed / valid_empty are reported per source — not conflated.",
+    "Dedupe did not survive restart (in-memory).",
   ].join("\n");
 }

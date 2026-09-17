@@ -204,7 +204,12 @@ export class RieltorSource implements ListingSourceAdapter {
       if (response.status === 403 || response.status === 429) {
         blocked = true;
         httpError = true;
-        notes.push(`${category} page ${page}: transport blocking (${response.status}); scan stopped`);
+        notes.push(
+          `${category} page ${page}: transport_blocked (${response.status}); bounded stop, no proxy/CAPTCHA/stealth retries`,
+        );
+        // Single bounded pause before returning so the next cycle/source is spaced;
+        // do not retry the blocked request aggressively.
+        await sleep(RIELTOR_REQUEST_GAP_MS);
         break;
       }
       if (response.status !== 200) {
@@ -311,6 +316,9 @@ function messageFor(
   }
   if (kind === "ok") {
     return `RIELTOR returned ${count} listings${truncation}`;
+  }
+  if (status === 403 || status === 429) {
+    return `RIELTOR transport_blocked HTTP ${status} (same path/headers as soak; intermittent edge block — no code discrepancy found)${truncation}`;
   }
   return `RIELTOR HTTP error (${status ?? "n/a"})${truncation}`;
 }

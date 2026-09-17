@@ -59,6 +59,7 @@ try {
     enableRieltor: config.enableRieltor,
     enableOlx: config.enableOlx,
     ownerOnly: config.ownerOnly,
+    firstRunMode: config.firstRunMode,
   });
 
   console.log(
@@ -69,7 +70,9 @@ try {
       chatId: sink.chatId,
       dryRun,
       enableOlx: config.enableOlx,
-      note: "Bounded poll only. OLX browser probe is not a delivery transport. Token not logged.",
+      firstRunMode: config.firstRunMode,
+      dedupeSurvivesRestart: false,
+      note: "Bounded poll only. OLX browser extract is opt-in and not a Telegram transport. Token not logged.",
     }),
   );
 
@@ -89,28 +92,38 @@ try {
   let totalNewAfterDedupe = 0;
   let sourceFailureCycles = 0;
   let zeroEligibleCycles = 0;
+  let partialCoverageCycles = 0;
   let cyclesAttempted = 0;
+  let inventorySeeded = false;
 
   for (let cycle = 1; cycle <= cycles; cycle += 1) {
     if (stop) {
       console.log(JSON.stringify({ message: "live:test-telegram:poll.aborted", cycle }));
       break;
     }
+    const seedInventory = !inventorySeeded && config.firstRunMode === "seed";
     const report = await runTelegramTestCycle(
       {
         adapters,
         config,
         sink,
         dedupe,
+        seedInventory,
       },
       cycle,
     );
+    if (seedInventory) {
+      inventorySeeded = true;
+    }
     cyclesAttempted += 1;
     totalSentOk += report.sentOk;
     totalSentFailed += report.sentFailed;
     totalNewAfterDedupe += report.newAfterDedupe;
     if (report.hasSourceFailures) {
       sourceFailureCycles += 1;
+    }
+    if (report.partialCoverage) {
+      partialCoverageCycles += 1;
     }
     if (report.zeroEligibleListings) {
       zeroEligibleCycles += 1;
@@ -139,6 +152,7 @@ try {
     totalNewAfterDedupe,
     sourceFailureCycles,
     zeroEligibleCycles,
+    partialCoverageCycles,
     dryRun,
   });
   const summarySend = await sink.sendText(summaryText);
@@ -162,6 +176,8 @@ try {
       totalNewAfterDedupe,
       sourceFailureCycles,
       zeroEligibleCycles,
+      partialCoverageCycles,
+      dedupeSurvivesRestart: false,
       exitFail,
     }),
   );

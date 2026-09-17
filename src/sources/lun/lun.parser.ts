@@ -5,45 +5,132 @@ import { normalizeLatLng } from "../../utils/geo.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import { lunCardSchema, type LunCard } from "./lun.types.ts";
 
-function extractNextFlightPayload(html: string): string | undefined {
-  const match = html.match(/self\.__next_f\.push\(\[1,"([\s\S]*)"\]\)/);
-  if (!match?.[1]) {
-    return undefined;
+const NEXT_FLIGHT_PREFIX = 'self.__next_f.push([1,"';
+
+/**
+ * Extract each Next.js flight string payload separately.
+ * A greedy regex across multiple push() calls concatenates later RSC records into one
+ * string and causes JSON.parse: "Unexpected non-whitespace character after JSON".
+ */
+export function extractNextFlightPayloads(html: string): string[] {
+  const payloads: string[] = [];
+  let from = 0;
+  while (from < html.length) {
+    const start = html.indexOf(NEXT_FLIGHT_PREFIX, from);
+    if (start === -1) {
+      break;
+    }
+    let i = start + NEXT_FLIGHT_PREFIX.length;
+    let raw = "";
+    let closed = false;
+    while (i < html.length) {
+      const ch = html[i]!;
+      if (ch === "\\") {
+        raw += ch;
+        if (i + 1 < html.length) {
+          raw += html[i + 1]!;
+          i += 2;
+          continue;
+        }
+        i += 1;
+        continue;
+      }
+      if (ch === '"') {
+        try {
+          payloads.push(JSON.parse(`"${raw}"`) as string);
+        } catch {
+          // Malformed/truncated string literal — skip this chunk only.
+        }
+        from = i + 1;
+        closed = true;
+        break;
+      }
+      raw += ch;
+      i += 1;
+    }
+    if (!closed) {
+      break;
+    }
   }
-  return JSON.parse(`"${match[1]}"`) as string;
+  return payloads;
+}
+
+/** @deprecated use extractNextFlightPayloads — kept for call-site clarity in markers */
+export function extractNextFlightPayload(html: string): string | undefined {
+  return extractNextFlightPayloads(html).find((payload) => payload.includes('"realties":{"cards":['));
+}
+
+export type LunCardsExtraction = {
+  cards: LunCard[];
+  rawCardCount: number;
+  /** true when cards marker existed but JSON array could not be parsed */
+  cardsParseFailed: boolean;
+  payloadCount: number;
+};
+
+export function extractLunCardsDetailed(html: string): LunCardsExtraction {
+  const payloads = extractNextFlightPayloads(html);
+  const marker = '"realties":{"cards":[';
+  let cardsParseFailed = false;
+  let rawCardCount = 0;
+  const cards: LunCard[] = [];
+
+  for (const payload of payloads) {
+    const index = payload.indexOf(marker);
+    if (index === -1) {
+      continue;
+    }
+    const arrStart = payload.indexOf("[", index + marker.length - 1);
+    if (arrStart < 0) {
+      cardsParseFailed = true;
+      continue;
+    }
+    let depth = 0;
+    let end = -1;
+    for (let i = arrStart; i < payload.length; i += 1) {
+      const char = payload[i];
+      if (char === "[") {
+        depth += 1;
+      } else if (char === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end < 0) {
+      cardsParseFailed = true;
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(payload.slice(arrStart, end + 1)) as unknown;
+      if (!Array.isArray(parsed)) {
+        cardsParseFailed = true;
+        continue;
+      }
+      rawCardCount += parsed.length;
+      for (const item of parsed) {
+        const safe = lunCardSchema.safeParse(item);
+        if (safe.success) {
+          cards.push(safe.data);
+        }
+      }
+    } catch {
+      cardsParseFailed = true;
+    }
+  }
+
+  return {
+    cards,
+    rawCardCount,
+    cardsParseFailed,
+    payloadCount: payloads.length,
+  };
 }
 
 export function extractLunCards(html: string): LunCard[] {
-  const payload = extractNextFlightPayload(html);
-  if (!payload) {
-    return [];
-  }
-  const marker = '"realties":{"cards":[';
-  const index = payload.indexOf(marker);
-  if (index === -1) {
-    return [];
-  }
-  const arrStart = payload.indexOf("[", index + marker.length - 1);
-  let depth = 0;
-  for (let i = arrStart; i < payload.length; i += 1) {
-    const char = payload[i];
-    if (char === "[") {
-      depth += 1;
-    } else if (char === "]") {
-      depth -= 1;
-      if (depth === 0) {
-        const parsed = JSON.parse(payload.slice(arrStart, i + 1)) as unknown;
-        if (!Array.isArray(parsed)) {
-          return [];
-        }
-        return parsed
-          .map((item) => lunCardSchema.safeParse(item))
-          .filter((item) => item.success)
-          .map((item) => item.data);
-      }
-    }
-  }
-  return [];
+  return extractLunCardsDetailed(html).cards;
 }
 
 export function parseLunJsonLdItems(html: string): Array<Record<string, unknown>> {
@@ -162,9 +249,9 @@ export function parseLunCard(
       period: "month",
     };
   }
-  const published = card.insertTime ?? card.downloadTime;
-  if (published) {
-    const date = new Date(published);
+  // insertTime is listing creation; downloadTime is observation — do not use downloadTime as publishedAt.
+  if (card.insertTime) {
+    const date = new Date(card.insertTime);
     if (!Number.isNaN(date.getTime())) {
       listing.publishedAt = date;
     }
@@ -194,51 +281,36 @@ export type LunHtmlInspection = {
   validatedCardCount: number;
   validationRatio: number;
   resultKind: "ok" | "valid_empty" | "parser_failure";
+  cardsParseFailed: boolean;
 };
 
 export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtmlInspection {
-  const payload = extractNextFlightPayload(html);
-  const hasNextFlight = Boolean(payload);
-  const hasRscCardsMarker = Boolean(payload?.includes('"realties":{"cards":['));
+  const payloads = extractNextFlightPayloads(html);
+  const hasNextFlight = payloads.length > 0;
+  const hasRscCardsMarker = payloads.some((payload) => payload.includes('"realties":{"cards":['));
   const jsonLd = parseLunJsonLdItems(html);
   const hasJsonLdList = jsonLd.length > 0;
-  const cards = extractLunCards(html);
-  const rawMatch = payload?.match(/"realties":\{"cards":\[/);
-  let rawCardCount = 0;
-  if (payload && rawMatch) {
-    const start = payload.indexOf("[", payload.indexOf('"realties":{"cards":['));
-    if (start >= 0) {
-      try {
-        let depth = 0;
-        for (let i = start; i < payload.length; i += 1) {
-          if (payload[i] === "[") depth += 1;
-          else if (payload[i] === "]") {
-            depth -= 1;
-            if (depth === 0) {
-              const parsed = JSON.parse(payload.slice(start, i + 1)) as unknown;
-              rawCardCount = Array.isArray(parsed) ? parsed.length : 0;
-              break;
-            }
-          }
-        }
-      } catch {
-        rawCardCount = 0;
-      }
-    }
-  }
+  const extracted = extractLunCardsDetailed(html);
+  const cards = extracted.cards;
   const listings = cards
     .map((card, index) => parseLunCard(card, jsonLd[index], discoveredAt))
     .filter((item): item is Listing => Boolean(item));
   const validatedCardCount = cards.length;
+  const rawCardCount = extracted.rawCardCount;
   const validationRatio = rawCardCount > 0 ? validatedCardCount / rawCardCount : 0;
+
   let resultKind: LunHtmlInspection["resultKind"];
-  if (!hasRscCardsMarker) {
+  if (extracted.cardsParseFailed) {
+    // Marker/framing present but payload unreadable — not a healthy empty market.
+    resultKind = "parser_failure";
+  } else if (!hasRscCardsMarker) {
     resultKind = "parser_failure";
   } else if (rawCardCount === 0) {
     resultKind = "valid_empty";
   } else {
     resultKind = "ok";
   }
+
   return {
     listings,
     hasNextFlight,
@@ -248,6 +320,7 @@ export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtml
     validatedCardCount,
     validationRatio,
     resultKind,
+    cardsParseFailed: extracted.cardsParseFailed,
   };
 }
 

@@ -314,12 +314,107 @@ describe("in-memory dedupe + pipeline", () => {
       config,
       sink,
       dedupe: new InMemoryListingDedupe(),
+      seedInventory: false,
     });
 
     expect(report.sourceErrors.some((e) => e.source === "domria")).toBe(true);
     expect(report.newAfterDedupe).toBe(1);
     expect(report.sentFailed).toBe(1);
+    expect(report.partialCoverage).toBe(true);
     expect(report.chatId).toBe("55");
+    resetConfigCache();
+  });
+
+  it("does not permanently mark a listing delivered after a failed send", async () => {
+    resetConfigCache();
+    const config = loadConfig({
+      OWNER_ONLY: "true",
+      ENABLE_DOMRIA: "false",
+      ENABLE_LUN: "true",
+      ENABLE_OLX: "false",
+      ENABLE_RIELTOR: "false",
+      PROPERTY_TYPES: "apartment,house",
+      TARGET_LAT: "49.8397",
+      TARGET_LNG: "24.0297",
+      TARGET_RADIUS_KM: "15",
+      GEO_UNKNOWN_POLICY: "include",
+      FIRST_RUN_MODE: "send",
+    });
+    const good = sampleListing({
+      source: "lun",
+      sourceId: "77",
+      url: "https://lun.ua/uk/realty/77",
+      sellerType: "owner",
+      propertyType: "apartment",
+    });
+    const sink = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "55",
+      testMode: true,
+      dryRun: false,
+      timeoutMs: 1000,
+      maxRetries: 0,
+      fetchImpl: (async () => new Response("nope", { status: 400 })) as unknown as typeof fetch,
+    });
+    const dedupe = new InMemoryListingDedupe();
+    const report1 = await runTelegramTestCycle(
+      { adapters: [adapter("lun", [good])], config, sink, dedupe, seedInventory: false },
+      1,
+    );
+    expect(report1.sentFailed).toBe(1);
+    expect(dedupe.hasSeen(good)).toBe(false);
+
+    const sinkOk = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "55",
+      testMode: true,
+      dryRun: true,
+      timeoutMs: 1000,
+      maxRetries: 0,
+    });
+    const report2 = await runTelegramTestCycle(
+      { adapters: [adapter("lun", [good])], config, sink: sinkOk, dedupe, seedInventory: false },
+      2,
+    );
+    expect(report2.newlyObservedCount).toBe(1);
+    expect(report2.sentOk).toBe(1);
+    expect(dedupe.hasSeen(good)).toBe(true);
+    resetConfigCache();
+  });
+
+  it("seeds initial inventory without sending when seedInventory=true", async () => {
+    resetConfigCache();
+    const config = loadConfig({
+      OWNER_ONLY: "true",
+      ENABLE_DOMRIA: "false",
+      ENABLE_LUN: "true",
+      ENABLE_OLX: "false",
+      ENABLE_RIELTOR: "false",
+      PROPERTY_TYPES: "apartment,house",
+      TARGET_LAT: "49.8397",
+      TARGET_LNG: "24.0297",
+      TARGET_RADIUS_KM: "15",
+      GEO_UNKNOWN_POLICY: "include",
+    });
+    const good = sampleListing({
+      source: "lun",
+      sourceId: "88",
+      url: "https://lun.ua/uk/realty/88",
+      sellerType: "owner",
+      propertyType: "apartment",
+    });
+    const sendListing = vi.fn();
+    const sink = { chatId: "1", sendListing } as unknown as TelegramTestSink;
+    const dedupe = new InMemoryListingDedupe();
+    const report = await runTelegramTestCycle(
+      { adapters: [adapter("lun", [good])], config, sink, dedupe, seedInventory: true },
+      1,
+    );
+    expect(report.deliveryMode).toBe("inventory_seed");
+    expect(report.initialInventoryCount).toBe(1);
+    expect(report.sentOk).toBe(0);
+    expect(sendListing).not.toHaveBeenCalled();
+    expect(dedupe.hasSeen(good)).toBe(true);
     resetConfigCache();
   });
 });

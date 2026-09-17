@@ -110,21 +110,31 @@ export function formatSellerLabel(listing: Listing): string {
   return "unknown (not verified ownership)";
 }
 
-export function formatListingTelegramHtml(listing: Listing): string {
+export type ListingObservationKind = "initial_inventory" | "newly_observed";
+
+export function formatListingTelegramHtml(
+  listing: Listing,
+  options?: { observationKind?: ListingObservationKind },
+): string {
   const cityArea = [listing.location.city, listing.location.district, listing.location.raw]
     .filter((item): item is string => Boolean(item))
     .filter((item, index, arr) => arr.indexOf(item) === index)
     .join(" · ");
   const published = listing.publishedAt?.toISOString() ?? "n/a";
+  const kind = options?.observationKind ?? "newly_observed";
+  const headline =
+    kind === "initial_inventory"
+      ? "🏠 <b>TEST · initial inventory (first observation)</b>"
+      : "🏠 <b>TEST · newly observed</b>";
   return [
-    "🏠 <b>TEST · нове оголошення</b>",
+    headline,
     "",
     escapeHtml(listing.title),
     "",
     `💰 ${escapeHtml(formatPrice(listing))}`,
     `📍 ${escapeHtml(cityArea || listing.location.raw)}`,
     `👤 ${escapeHtml(formatSellerLabel(listing))}`,
-    `🕒 ${escapeHtml(published)}`,
+    `🕒 publishedAt=${escapeHtml(published)} (not first-seen time)`,
     `📦 ${escapeHtml(listing.source)} · ${escapeHtml(listing.propertyType)}`,
     "",
     escapeHtml(listing.url),
@@ -219,8 +229,11 @@ export class TelegramTestSink {
     };
   }
 
-  async sendListing(listing: Listing): Promise<TelegramSendResult> {
-    return this.sendText(formatListingTelegramHtml(listing));
+  async sendListing(
+    listing: Listing,
+    options?: { observationKind?: ListingObservationKind },
+  ): Promise<TelegramSendResult> {
+    return this.sendText(formatListingTelegramHtml(listing, options));
   }
 
   private async sendChunk(text: string): Promise<{ ok: boolean; attempts: number; status?: number; errorSafe?: string }> {

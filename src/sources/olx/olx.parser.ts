@@ -69,9 +69,9 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
   // not in `location`. Keep `location.lat/lon` as a fallback for older shapes.
   const lat = offer.map?.lat ?? offer.location?.lat;
   const lon = offer.map?.lon ?? offer.location?.lon;
-  // publishedAt means creation time; last_refresh_time is a bump/renewal and is kept separately
-  // so refreshed old listings are not mistaken for new ones.
-  const published = offer.created_time ?? offer.last_refresh_time;
+  // publishedAt means creation time only; last_refresh_time is a bump/renewal kept in metadata.
+  // Do not fall back to refresh time — missing created_time leaves publishedAt unset (uncertain).
+  const published = offer.created_time;
   const urlToken = extractOlxUrlToken(url);
   const listing: Listing = {
     source: "olx",

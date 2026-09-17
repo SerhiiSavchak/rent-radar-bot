@@ -54,6 +54,7 @@ try {
     config,
     sink,
     dedupe: new InMemoryListingDedupe(),
+    seedInventory: false,
   });
 
   console.log(JSON.stringify({ message: "live:test-telegram.done", ...report }));
