@@ -1,46 +1,45 @@
 # Oracle OLX browser extract — status
 
-## Live Oracle result (2026-09-17) — NOT SUCCESS
+## Live Oracle after `4dab997` — still FAILED extraction
 
-Source: `evidence/phase-1/oracle-olx-browser-extract/cycle-1.json` (and matching runtime under `~/rent-radar-runtime/olx-browser-extract`).
+Both apartments and houses reported:
 
 | Field | Value |
 |---|---|
-| accessibilityOk | **true** |
 | HTTP | 200 |
-| apiResponsesCaptured | **0** |
+| accessibilityOk | true |
+| apiResponsesCaptured | 0 |
 | rawOfferCount | 0 |
 | validatedListingCount | **0** |
-| extractionOk | **false** |
-| rejections | `no_offers_api_payload_captured`, `dom_fallback_insufficient` |
+| extractSource | **none** |
+| hasPrerenderedState | **false** |
+| hasNextData | **false** |
+| hasOffersApiShapeInHtml | **false** |
+| markerHits | `data_cy_l_card`, `offer_id_html_link` |
+| browserClosed | true |
 
-**Verdict:** browser can open the public catalog and see card markers; that is **not** validated Listing extraction. **Do not** claim OLX success. **Do not** wire OLX into Telegram.
+Fixtures with `__PRERENDERED_STATE__` / `__NEXT_DATA__` are **not** representative of this Oracle HTML.
+**Do not claim OLX success. Do not wire OLX into Telegram.**
 
-## Root cause (code + evidence)
+## What the extractor reads
 
-1. Extractor listened only for `/api/v1/offers` XHR/fetch.
-2. On Oracle, stock Chromium loaded SSR HTML with listing card signals, but **no** `/api/v1/offers` response was intercepted (`apiResponsesCaptured=0`).
-3. Likely SSR embeds offer data in page hydration (`window.__PRERENDERED_STATE__` / similar) so the client never calls the JSON API — or the API remains blocked while HTML is allowed.
-4. Card-marker DOM alone was correctly rejected (no fabricated Listings).
+- **Parser input:** rendered DOM via `page.content()` after readiness (`htmlInputKind=rendered_dom`).
+- **Main-document body:** optional diagnostic capture of the navigation response text (not the sole parser input).
+- **timeoutMs:** `page.goto` navigation timeout only.
+- **categoryBudgetMs / totalBudgetMs:** wall-clock budgets (explains runs that exceeded 45s when only goto was capped).
 
-## Code follow-up (this revision)
+## Diagnostic capture (next Oracle step)
 
-- Parse structured public HTML payloads: `__PRERENDERED_STATE__`, `__NEXT_DATA__`, embedded `{data:[…]}` offers shape.
-- Keep network intercept as primary when present.
-- Add bounded `networkJsonProbes` + `htmlDiagnostics` to the extract report.
-- Still refuse weak DOM-only cards.
-- OLX remains `ENABLE_OLX=false` for Telegram until a live run reports `validatedListingCount > 0`.
+Set `OLX_BROWSER_CAPTURE=true` on the existing `live:olx:browser-extract` command.
+Artifacts go under a unique dir outside the repo, e.g.
+`$HOME/rent-radar-runtime/olx-browser-extract/capture-<ts>/`:
 
-## Re-run (bounded, no Telegram)
+- `apartments|houses/main-document.html`
+- `apartments|houses/rendered.html`
+- `apartments|houses/scripts.json`
+- `apartments|houses/cards.json`
+- `apartments|houses/network-meta.json` (no analytics bodies; cookies/auth redacted)
+- `apartments|houses/manifest.json`
+- `run-summary.json`
 
-```bash
-set -euo pipefail
-cd ~/rent-radar-bot
-# ensure no Telegram/soak pollers are running first
-export OLX_BROWSER_EXTRACT=true
-export OLX_BROWSER_OUT_DIR="$HOME/rent-radar-runtime/olx-browser-extract"
-export OLX_BROWSER_TIMEOUT_MS=45000
-export OLX_BROWSER_MAX_PAGES=1
-npm run live:olx:browser-extract
-# Inspect outPath JSON: validatedListingCount, extractSource, htmlDiagnostics, networkJsonProbes, rejections
-```
+Parser fix still **requires** these Oracle artifacts. No additional speculative payload parser was added.
