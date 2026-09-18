@@ -16,7 +16,7 @@ Created: 2026-09-15 on branch `cursor/phase-1-source-layer-closure-8797`.
 | `oracle-olx/` | Cycle JSON / review from `npm run live:olx:experiment` |
 | `oracle-olx-browser/` | Cycle JSON from `npm run live:olx:browser-experiment` (stock Chromium) |
 | `oracle-soak/` | Unattended multi-source soak + `REVIEW.md` |
-| `oracle-olx-browser/` | Stock Chromium page-access cycles (not deliverable parse) |
+| `oracle-olx-browser-extract/` | Live 75f7384 catalog extract vs baab323 capture ownership audit (do not merge) |
 | `../docs/PHASE_1_DECISION.md` | Decision and remaining blockers |
 
 Commands used for quality:

@@ -62,6 +62,7 @@ npm run live:test-telegram:poll
   `OWNER_ACCEPT_SELF_DECLARED=true` is an explicit opt-in for clean self-declared text (private account + «від власника» / «без посередників», no agency). Telegram labels those as a self-declaration, never «за позначкою майданчика».
 - Failed source fetches **do not** establish a baseline; recovery re-baselines silently.
 - Persistence: dedupe and baseline are **in-memory**. A restart forgets keys and silent-rebaselines current inventory, including listings that would have been new during downtime. There is no approved durable store for TEST delivery.
+- **Production acceptance** still requires durable baseline, dedupe, outbox, and restart recovery. This TEST sink is not that store.
 - `disabled`, `transport_blocked`, `parser_failed`, and `valid_empty` are reported per source.
 - Final summary includes `cycles_with_partial_source_coverage`.
 

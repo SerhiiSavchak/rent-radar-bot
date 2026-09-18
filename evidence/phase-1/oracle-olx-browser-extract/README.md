@@ -1,37 +1,77 @@
 # Oracle OLX browser extract — status
 
-## Live extraction (`75f7384`) — not delivery-ready
+OLX is **not delivery-ready**. `ENABLE_OLX` stays false. Browser extract is not wired to Telegram.
 
-Live `live:olx:browser-extract` on `75f738457d386173b9c554e0a3d069f04e681ddc` (2026-09-18T20:27:56Z):
+These two results are **different snapshots**. Do not copy the ownership table onto the live 75f7384 run.
 
-- `extractionOk=true`, 51 apartments + 38 houses, `prerendered_state` / `main_document`
-- **not wired to Telegram**; `ENABLE_OLX` stays false
-- Timing fix in `1446347` (skip rendered capture after success) is **live-unverified**
+## A. Live catalog extract (`75f7384`) — 2026-09-18
 
-Details: `cycle-75f7384.json`.
+| field | value |
+| --- | --- |
+| generating commit | `75f738457d386173b9c554e0a3d069f04e681ddc` |
+| recorded from | Oracle `live:olx:browser-extract` 2026-09-18T20:27:56.395Z |
+| capture on disk | none (houses `captureSkipped`; no full ads dump in git) |
+| apartments raw / unique / validated | **52 / 51 / 51** (`duplicate_id`: 1) |
+| houses raw / unique / validated | **39 / 38 / 38** (`duplicate_id`: 1) |
+| `ownerEligibleCount` | 0 |
+| sampleListings | 5, all `sellerType=business` |
 
-## Ownership audit (full captured ads, not sampleListings)
+Source file: `cycle-75f7384.json` (preserved). Timing fix `1446347` (skip rendered capture after success) is **live-unverified**.
 
-Source: baab323 diagnostic capture `listing.listing.ads` salvaged from truncated main-document HTML (apartments 52, houses 37). Re-classified with the current evidence levels. `user.sellerType` was **null on every ad**. `isBusiness`: 85 true / 4 false.
+This run does **not** include an ownership distribution. There is no salvaged ads array from 75f7384.
+
+## B. Diagnostic capture + offline ownership audit (`baab323`) — 2026-09-17
+
+| field | value |
+| --- | --- |
+| generating commit | `baab3230824bc4e976cae50c6ad2c9ded2e91467` |
+| live extract then | `extractionOk=false`, `validatedListingCount=0` (parser not yet adapted) |
+| capture id | `capture-1789666022490` |
+| apartments capture startedAt | 2026-09-17T17:27:05.353Z |
+| houses capture startedAt | 2026-09-17T17:28:22.151Z |
+| live extract JSON | `startedAt` 2026-09-17T17:27:02.490Z |
+| apartments prerendered | `totalElements=1000`, `totalPages=25`; **52** complete first-page ads salvaged |
+| houses prerendered | `totalElements=37`, `visibleElements=37`, `totalPages=1`; **37** complete ads salvaged |
+| unique IDs in salvage | 52 apartments + 37 houses (89) |
+| validated listings at capture time | **0** |
+| later offline reclassify (8620ab1 classifier) | 89 parsed listings (not a live extract) |
+
+Houses 37 vs live-75f7384 houses 39 is a **different day's catalog**, not a truncated copy of the 75f7384 payload.
+
+### Ownership counts (baab323 salvage only)
+
+`user.sellerType` was **null on every salvaged ad**. `isBusiness`: 85 true / 4 false.
 
 | evidence level | count | what it is |
 | --- | --- | --- |
-| platform-confirmed owner | **0** | OLX catalog has no owner flag |
-| explicit self-declared owner | **3** | private account + «від власника» / «без посередників» |
-| private account, unknown ownership | **1** | `isBusiness=false`, no owner claim (`934070005` «приватного будинку» is the building, not the seller) |
-| intermediary / business | **85** | `isBusiness=true`; includes «без комісії» / «без рієлтора» copy |
-| conflict | **0** | no business ad combined with «від власника» / «без посередників» |
+| platform-confirmed owner | **0** | catalog has no owner flag |
+| explicit self-declared owner | **3** | private + «від власника» / «без посередників» |
+| private account, unknown ownership | **1** | `934070005` «приватного будинку» is the building |
+| intermediary / business | **85** | `isBusiness=true` |
+| conflict | **0** | no business ad + «від власника» |
 
-Representative self-declared ids: `924128798`, `933587870` (title «від власника»); `935081899` (description «без посередник»). Business ads `934939054` and `934659823` say «без комісії»; `934405532` says «без рієлтора» — those stay intermediary.
+Self-declared ids: `924128798`, `933587870` (title); `935081899` (description). Default `OWNER_ONLY` still ignores these.
 
-**Missing for platform-confirmed owners:** OLX `user.sellerType` is always null in this catalog payload. Next bounded check (not this task): a single offer detail page / `api/v1/offers/{id}` for whether a non-null seller role exists off-catalog. Until then the default `OWNER_ONLY` gate cannot accept OLX listings.
+## C. Bounded owner-detail diagnostic (implemented, live-untested)
 
-Self-declared delivery is **opt-in** (`OWNER_ACCEPT_SELF_DECLARED=true`) and labeled «Самозаява … не позначка майданчика». Private account alone never establishes ownership. Agency + owner phrasing is `conflict`. Misleading copy such as «looking for an owner» / «owners, contact us» is not a self-declaration.
+One private self-declared candidate from capture **B**, not from run **A**:
 
-## Freshness
+- id `924128798`
+- URL `https://www.olx.ua/d/uk/obyavlenie/zdatsya-v-orendu-budinok-vd-vlasnika-ID10xy7c.html`
+- catalog: `isBusiness=false`, `user.sellerType=null`, evidence `self_declared`
 
-Extract `freshnessEligibleCount` / `withinAgeWindowCount` is the 7-day **age window**, not Telegram send eligibility. Delivery also requires a per-source silent baseline, unseen dedupe keys, and `publishedAt` **after monitoring started**. A listing first seen after baseline with `publishedAt` before that baseline is `late_discovered`. Restart state is in-memory only: downtime publications are swallowed on silent re-baseline. There is no approved durable TEST store.
+Diagnostic: one stock Playwright navigation of that URL, original `response.body()` only, no `/api/v1/offers` intercept, no pagination/retry. Telegram gate unchanged.
 
-## Runtime
+**Live Oracle result: not run from the development environment.** Untested assumption: the detail page may still have `sellerType=null`. If the operator JSON shows `strongerThanCatalogSelfDeclared=false`, this ownership investigation is **closed** — no further speculative OLX owner probes.
 
-`1446347` stops rendered-DOM capture after a successful main-document parse. Not re-checked live in this task.
+Operator sequence: `scripts/oracle-olx-verify/README.md`.
+
+## Freshness / persistence (unchanged)
+
+7-day age window is not a new publication. Delivery needs silent baseline + unseen + `publishedAt` after monitoring start. In-memory baseline/dedupe do not survive restart.
+
+**Before production acceptance:** durable baseline, dedupe, outbox, and restart recovery are required. TEST in-memory state is not enough.
+
+## Next source task
+
+RIELTOR access (see `evidence/phase-1/rieltor.md`). Not another OLX catalog experiment.

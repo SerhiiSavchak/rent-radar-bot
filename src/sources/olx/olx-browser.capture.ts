@@ -255,6 +255,15 @@ export type OlxCategoryCapturePaths = {
   };
 };
 
+export type OlxDetailCapturePaths = {
+  detailDir: string;
+  manifestPath: string;
+  mainDocumentPath?: string;
+  truncation?: {
+    mainDocument: OlxByteClipRecord;
+  };
+};
+
 function clipRecord(text: string | undefined, maxBytes: number): {
   text?: string;
   record: OlxByteClipRecord;
@@ -352,6 +361,53 @@ export function writeOlxCategoryCapture(
       note: "maxHtmlBytes is the diagnostic dump cap; parserMaxHtmlBytes is production parser input.",
     },
     note: "Diagnostic capture only. Card fragments are not validated Listing objects.",
+  };
+  writeFileSync(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  return paths;
+}
+
+export type OlxDetailCaptureWriteInput = {
+  captureDir: string;
+  commit: string;
+  startedAt: string;
+  requestedUrl: string;
+  finalUrl: string;
+  httpStatus?: number;
+  sourceId: string;
+  mainDocumentHtml?: string;
+  skippedReason?: string;
+};
+
+export function writeOlxDetailCapture(input: OlxDetailCaptureWriteInput): OlxDetailCapturePaths {
+  const limits = DEFAULT_OLX_CAPTURE_LIMITS;
+  const detailDir = join(input.captureDir, "offer-detail");
+  mkdirSync(detailDir, { recursive: true, mode: 0o700 });
+  const mainClip = clipRecord(input.mainDocumentHtml, limits.maxHtmlBytes);
+  const paths: OlxDetailCapturePaths = {
+    detailDir,
+    manifestPath: join(detailDir, "manifest.json"),
+  };
+  if (mainClip.text !== undefined) {
+    const path = join(detailDir, "main-document.html");
+    writeFileSync(path, mainClip.text, { mode: 0o600 });
+    paths.mainDocumentPath = path;
+  }
+  paths.truncation = { mainDocument: mainClip.record };
+  const manifest = {
+    kind: "olx_offer_detail",
+    sourceId: input.sourceId,
+    commit: input.commit,
+    startedAt: input.startedAt,
+    finishedAt: new Date().toISOString(),
+    requestedUrl: sanitizeUrlForLog(input.requestedUrl),
+    finalUrl: sanitizeUrlForLog(input.finalUrl),
+    ...(input.httpStatus !== undefined ? { httpStatus: input.httpStatus } : {}),
+    ...(input.skippedReason ? { skippedReason: input.skippedReason } : {}),
+    artifactPaths: {
+      mainDocument: paths.mainDocumentPath ?? null,
+    },
+    truncation: paths.truncation,
+    note: "One offer-detail navigation. No cookies/auth persisted. Not a Telegram/delivery artifact.",
   };
   writeFileSync(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   return paths;

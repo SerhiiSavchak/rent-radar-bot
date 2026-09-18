@@ -26,4 +26,6 @@ Guarded sink (`TELEGRAM_TEST_MODE=true` only). HTTP sources only; OLX browser is
 
 ## Recommended next action
 
-On Oracle, after `git pull` + Domria fix: run the **6-cycle TEST Telegram poll** (not another soak) via `scripts/oracle-telegram-test/run-telegram-test-poll.sh start`.
+**RIELTOR access** is the next source task (`evidence/phase-1/rieltor.md`). OLX browser extract produced listings; ownership is still not platform-confirmed. The remaining OLX owner check is one offer-detail diagnostic on Oracle (`scripts/oracle-olx-verify/`). If that page has no stronger seller-role field, the OLX owner investigation is closed.
+
+Durable baseline / dedupe / outbox and restart recovery remain **required before production Telegram acceptance**. In-memory TEST state is not enough.
