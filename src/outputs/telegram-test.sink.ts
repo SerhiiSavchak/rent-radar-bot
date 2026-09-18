@@ -98,6 +98,9 @@ function formatPrice(listing: Listing): string {
 }
 
 export function formatSellerLabel(listing: Listing): string {
+  if (listing.metadata?.ownerEvidenceLevel === "self_declared") {
+    return "Самозаява «від власника» в тексті — не позначка майданчика";
+  }
   if (listing.sellerType === "owner") {
     return "Власник — за позначкою майданчика";
   }
@@ -106,6 +109,9 @@ export function formatSellerLabel(listing: Listing): string {
   }
   if (listing.sellerType === "business") {
     return "Бізнес / забудовник (не власник)";
+  }
+  if (listing.metadata?.ownerEvidenceLevel === "private_unknown") {
+    return "Приватний акаунт — право власності не підтверджено";
   }
   return "Невідомо — право власності не підтверджено";
 }

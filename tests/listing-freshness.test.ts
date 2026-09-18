@@ -95,6 +95,7 @@ describe("listing freshness classification", () => {
     );
     expect(result.kind).toBe("new_publication");
     expect(result.deliverable).toBe(true);
+    expect(result.withinAgeWindow).toBe(true);
   });
 
   it("classifies refreshed old listing without treating it as new", () => {
@@ -106,6 +107,29 @@ describe("listing freshness classification", () => {
       { maxPublicationAgeMinutes: 7 * 24 * 60, strictNewPublications: true, now },
     );
     expect(result.kind).toBe("refreshed_old");
+    expect(result.deliverable).toBe(false);
+    expect(result.withinAgeWindow).toBe(false);
+  });
+
+  it("does not treat a within-window listing published before monitoring as a new publication", () => {
+    const probeAt = new Date("2026-09-18T20:27:56.395Z");
+    const monitoringStartedAt = new Date("2026-09-18T20:00:00.000Z");
+    const result = classifyListingFreshness(
+      sampleListing({
+        source: "olx",
+        sourceId: "934623975",
+        publishedAt: new Date("2026-09-12T17:55:42.000Z"),
+        refreshedAt: new Date("2026-09-12T17:59:30.000Z"),
+      }),
+      {
+        maxPublicationAgeMinutes: 7 * 24 * 60,
+        strictNewPublications: true,
+        now: probeAt,
+        monitoringStartedAt,
+      },
+    );
+    expect(result.withinAgeWindow).toBe(true);
+    expect(result.kind).toBe("late_discovered");
     expect(result.deliverable).toBe(false);
   });
 
@@ -204,8 +228,10 @@ describe("Telegram freshness pipeline", () => {
     resetConfigCache();
   });
 
-  it("after baseline, delivers a genuinely new publication", async () => {
+  it("after baseline, delivers a genuine publication created after monitoring started", async () => {
     const config = baseConfig();
+    const t0 = new Date("2026-09-17T12:00:00Z");
+    const t1 = new Date("2026-09-17T13:00:00Z");
     const old = sampleListing({
       sourceId: "old-1",
       url: "https://dom.ria.com/uk/realty-old-1.html",
@@ -214,7 +240,7 @@ describe("Telegram freshness pipeline", () => {
     const neu = sampleListing({
       sourceId: "new-1",
       url: "https://dom.ria.com/uk/realty-new-1.html",
-      publishedAt: new Date("2026-09-17T09:00:00Z"),
+      publishedAt: new Date("2026-09-17T12:30:00Z"),
     });
     const sink = new TelegramTestSink({
       botToken: "1:token",
@@ -226,18 +252,53 @@ describe("Telegram freshness pipeline", () => {
     });
     const dedupe = new InMemoryListingDedupe();
     const baseline = new InMemorySourceBaseline();
-    const now = () => new Date("2026-09-17T12:00:00Z");
 
     await runTelegramTestCycle(
-      { adapters: [adapter("domria", [old])], config, sink, dedupe, baseline, now },
+      { adapters: [adapter("domria", [old])], config, sink, dedupe, baseline, now: () => t0 },
       1,
     );
     const report2 = await runTelegramTestCycle(
-      { adapters: [adapter("domria", [old, neu])], config, sink, dedupe, baseline, now },
+      { adapters: [adapter("domria", [old, neu])], config, sink, dedupe, baseline, now: () => t1 },
       2,
     );
     expect(report2.sentOk).toBe(1);
     expect(report2.suppressedOld).toBe(0);
+    expect(report2.suppressedLateDiscovered).toBe(0);
+    expect(report2.newlyObservedCount).toBe(1);
+    resetConfigCache();
+  });
+
+  it("suppresses an old listing first encountered in a later cycle even if it is within the age window", async () => {
+    const config = baseConfig();
+    const t0 = new Date("2026-09-18T20:00:00.000Z");
+    const t1 = new Date("2026-09-18T20:27:56.395Z");
+    const seed = sampleListing({
+      sourceId: "seed-1",
+      url: "https://dom.ria.com/uk/realty-seed-1.html",
+      publishedAt: new Date("2026-09-18T19:00:00.000Z"),
+    });
+    const late = sampleListing({
+      sourceId: "934623975",
+      url: "https://www.olx.ua/d/uk/obyavlenie/late-ID11fAof.html",
+      source: "domria",
+      publishedAt: new Date("2026-09-12T17:55:42.000Z"),
+    });
+    const sendListing = vi.fn();
+    const sink = { chatId: "1", sendListing } as unknown as TelegramTestSink;
+    const dedupe = new InMemoryListingDedupe();
+    const baseline = new InMemorySourceBaseline();
+
+    await runTelegramTestCycle(
+      { adapters: [adapter("domria", [seed])], config, sink, dedupe, baseline, now: () => t0 },
+      1,
+    );
+    const report2 = await runTelegramTestCycle(
+      { adapters: [adapter("domria", [seed, late])], config, sink, dedupe, baseline, now: () => t1 },
+      2,
+    );
+    expect(sendListing).not.toHaveBeenCalled();
+    expect(report2.sentOk).toBe(0);
+    expect(report2.suppressedLateDiscovered).toBe(1);
     expect(report2.newlyObservedCount).toBe(1);
     resetConfigCache();
   });
@@ -370,6 +431,33 @@ describe("Telegram freshness pipeline", () => {
     resetConfigCache();
   });
 
+  it("restart silently swallows a listing that would have been new during downtime", async () => {
+    const config = baseConfig();
+    const sendListing = vi.fn();
+    const downtimeNew = sampleListing({
+      sourceId: "downtime-1",
+      url: "https://dom.ria.com/uk/realty-downtime-1.html",
+      publishedAt: new Date("2026-09-17T12:30:00Z"),
+    });
+    const report = await runTelegramTestCycle(
+      {
+        adapters: [adapter("domria", [downtimeNew])],
+        config,
+        sink: { chatId: "1", sendListing } as unknown as TelegramTestSink,
+        dedupe: new InMemoryListingDedupe(),
+        baseline: new InMemorySourceBaseline(),
+        now: () => new Date("2026-09-17T13:00:00Z"),
+      },
+      1,
+    );
+    expect(sendListing).not.toHaveBeenCalled();
+    expect(report.sentOk).toBe(0);
+    expect(report.deliveryMode).toBe("inventory_seed");
+    expect(report.restartRebaseline).toBe(true);
+    expect(report.baselineSurvivesRestart).toBe(false);
+    resetConfigCache();
+  });
+
   it("preview mode sends a small sample labeled Початкова добірка", async () => {
     const config = baseConfig({ FIRST_RUN_MODE: "preview" });
     const listings = [
@@ -420,6 +508,13 @@ describe("Telegram copy", () => {
     expect(text).toContain(formatKyivDateTime(listing.publishedAt));
     expect(formatSellerLabel(listing)).toBe("Власник — за позначкою майданчика");
     expect(formatSellerLabel(listing)).not.toContain("platform-verified");
+    expect(
+      formatSellerLabel({
+        ...listing,
+        sellerType: "unknown",
+        metadata: { ownerEvidenceLevel: "self_declared" },
+      }),
+    ).toBe("Самозаява «від власника» в тексті — не позначка майданчика");
     expect(formatListingTelegramHtml(listing, { deliveryKind: "initial_preview" })).toContain(
       "Початкова добірка",
     );

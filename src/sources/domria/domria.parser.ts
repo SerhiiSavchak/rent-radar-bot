@@ -98,6 +98,7 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
     discoveredAt,
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
+      ownerEvidenceLevel: owner.ownerEvidenceLevel,
       sellerConfidence: owner.confidence,
       advertType: info.advert_type_name_uk ?? info.advert_type_name,
       userId: info.user_id,

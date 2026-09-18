@@ -52,6 +52,7 @@ const envSchema = z.object({
   ENABLE_OLX: booleanFromEnv(false),
   ENABLE_RIELTOR: booleanFromEnv(true),
   OWNER_ONLY: booleanFromEnv(true),
+  OWNER_ACCEPT_SELF_DECLARED: booleanFromEnv(false),
   PROPERTY_TYPES: z.string().default("apartment,house"),
   MAX_LISTING_AGE_MINUTES: optionalPositiveInt,
   DOMRIA_API_KEY: optionalString,
@@ -89,6 +90,8 @@ export type AppConfig = {
   enableOlx: boolean;
   enableRieltor: boolean;
   ownerOnly: boolean;
+  /** Opt-in: treat clean OLX/text self-declarations as owner-eligible. Default false. */
+  ownerAcceptSelfDeclared: boolean;
   propertyTypes: PropertyType[];
   maxListingAgeMinutes?: number;
   domriaApiKey?: string;
@@ -144,6 +147,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     enableOlx: parsed.ENABLE_OLX,
     enableRieltor: parsed.ENABLE_RIELTOR,
     ownerOnly: parsed.OWNER_ONLY,
+    ownerAcceptSelfDeclared: parsed.OWNER_ACCEPT_SELF_DECLARED,
     propertyTypes: parsePropertyTypes(parsed.PROPERTY_TYPES),
     domriaUsePublicHtmlFallback: parsed.DOMRIA_USE_PUBLIC_HTML_FALLBACK,
     domriaMaxInfoPerPoll: parsed.DOMRIA_MAX_INFO_PER_POLL,

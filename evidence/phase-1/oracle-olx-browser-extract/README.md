@@ -1,46 +1,37 @@
 # Oracle OLX browser extract — status
 
-## Live Oracle after `75f7384` — extraction succeeded, not delivery-ready
+## Live extraction (`75f7384`) — not delivery-ready
 
 Live `live:olx:browser-extract` on `75f738457d386173b9c554e0a3d069f04e681ddc` (2026-09-18T20:27:56Z):
 
-- `extractionOk=true`, `accessibilityOk=true`, `browserClosed=true`
-- apartments `51` validated (`rawOfferCount=52`, one `duplicate_id`)
-- houses `38` validated (`rawOfferCount=39`, one `duplicate_id`)
-- `extractSource=prerendered_state`, `htmlInputKind=main_document` for both categories
-- schema failures gone
-- **not wired to Telegram**; `ENABLE_OLX` stays false; this is extraction evidence only
+- `extractionOk=true`, 51 apartments + 38 houses, `prerendered_state` / `main_document`
+- **not wired to Telegram**; `ENABLE_OLX` stays false
+- Timing fix in `1446347` (skip rendered capture after success) is **live-unverified**
 
 Details: `cycle-75f7384.json`.
 
-## Owner: `ownerEligibleCount=0` is correct, not a parser miss
+## Ownership audit (full captured ads, not sampleListings)
 
-OLX catalog ads never set a platform owner flag. Captured ads have:
+Source: baab323 diagnostic capture `listing.listing.ads` salvaged from truncated main-document HTML (apartments 52, houses 37). Re-classified with the current evidence levels. `user.sellerType` was **null on every ad**. `isBusiness`: 85 true / 4 false.
 
-- `isBusiness=false` + `user.sellerType=null` → private **account**
-- `isBusiness=true` → business account
-- title/description phrases such as «від власника» / «без комісії» are text evidence only
-
-`classifyOwner` requires `platformOwner=true` for `sellerType=owner`. Private-account evidence is recorded separately and does **not** set `filterConsidersPrivateOwner`. Live samples in this run were all `sellerType=business`.
-
-## Freshness: a timestamp is not a new Telegram publication
-
-The `75f7384` diagnostic counted every listing with a `createdTime`/`publishedAt` Date (`freshnessEligibleCount=51/38`). Telegram policy is different (`listing-freshness.ts`, default 7 days, `TELEGRAM_STRICT_NEW_PUBLICATIONS=true`):
-
-| sample `publishedAt` | `refreshedAt` | kind at probe time |
+| evidence level | count | what it is |
 | --- | --- | --- |
-| 2026-08-28 | 2026-09-18 | `refreshed_old` — not a new publication |
-| 2026-09-08 | same-day refresh | `old_publication` |
-| 2026-09-10 | 2026-09-18 | `old_publication` |
-| 2026-09-12 | same-day refresh | `new_publication` (within 7 days) |
-| 2026-09-17 | same-day refresh | `new_publication` |
+| platform-confirmed owner | **0** | OLX catalog has no owner flag |
+| explicit self-declared owner | **3** | private account + «від власника» / «без посередників» |
+| private account, unknown ownership | **1** | `isBusiness=false`, no owner claim (`934070005` «приватного будинку» is the building, not the seller) |
+| intermediary / business | **85** | `isBusiness=true`; includes «без комісії» / «без рієлтора» copy |
+| conflict | **0** | no business ad combined with «від власника» / «без посередників» |
 
-Refresh/push-up must not relabel an old `createdTime` as «Нова публікація».
+Representative self-declared ids: `924128798`, `933587870` (title «від власника»); `935081899` (description «без посередник»). Business ads `934939054` and `934659823` say «без комісії»; `934405532` says «без рієлтора» — those stay intermediary.
 
-## Runtime 254.773s vs `totalBudgetMs=210000`
+**Missing for platform-confirmed owners:** OLX `user.sellerType` is always null in this catalog payload. Next bounded check (not this task): a single offer detail page / `api/v1/offers/{id}` for whether a non-null seller role exists off-catalog. Until then the default `OWNER_ONLY` gate cannot accept OLX listings.
 
-- apartments `elapsedMs=87478`, `timedOut=false`, full diagnostic capture written
-- houses `elapsedMs=146207`, `timedOut=true`, extract still succeeded, rendered capture skipped (`originalBytes=0`)
-- notes included `timeout_after_successful_extract=true`
+Self-declared delivery is **opt-in** (`OWNER_ACCEPT_SELF_DECLARED=true`) and labeled «Самозаява … не позначка майданчика». Private account alone never establishes ownership. Agency + owner phrasing is `conflict`. Misleading copy such as «looking for an owner» / «owners, contact us» is not a self-declaration.
 
-Houses overran the 90s category budget because post-extract `page.content()` / cleanup was not aborted after listings were already parsed. Successful listings must be kept; the timeout must still be reported; capture after a successful main-document parse must not wait on rendered DOM.
+## Freshness
+
+Extract `freshnessEligibleCount` / `withinAgeWindowCount` is the 7-day **age window**, not Telegram send eligibility. Delivery also requires a per-source silent baseline, unseen dedupe keys, and `publishedAt` **after monitoring started**. A listing first seen after baseline with `publishedAt` before that baseline is `late_discovered`. Restart state is in-memory only: downtime publications are swallowed on silent re-baseline. There is no approved durable TEST store.
+
+## Runtime
+
+`1446347` stops rendered-DOM capture after a successful main-document parse. Not re-checked live in this task.

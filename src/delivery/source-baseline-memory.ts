@@ -10,10 +10,14 @@ import { InMemoryListingDedupe } from "./listing-dedupe-memory.ts";
  * Does not use SQLite (TEST mode stays free of unapproved DB coupling).
  */
 export class InMemorySourceBaseline {
-  private readonly ready = new Set<string>();
+  private readonly ready = new Map<string, Date>();
 
   hasBaseline(source: ListingSource | string): boolean {
     return this.ready.has(source);
+  }
+
+  establishedAt(source: ListingSource | string): Date | undefined {
+    return this.ready.get(source);
   }
 
   /**
@@ -24,17 +28,18 @@ export class InMemorySourceBaseline {
     source: ListingSource | string,
     listings: Listing[],
     dedupe: InMemoryListingDedupe,
+    at = new Date(),
   ): number {
     for (const listing of listings) {
       dedupe.markSeen(listing);
     }
-    this.ready.add(source);
+    this.ready.set(source, at);
     return listings.length;
   }
 
   /** Sources that already completed a successful baseline this process. */
   baselinedSources(): string[] {
-    return [...this.ready].sort();
+    return [...this.ready.keys()].sort();
   }
 
   get survivesRestart(): false {

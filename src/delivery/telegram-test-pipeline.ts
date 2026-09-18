@@ -2,6 +2,7 @@ import type { Listing } from "../domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
 import type { AppConfig } from "../config/env.ts";
 import { applyListingFilters } from "../filters/listing-filter.ts";
+import { isOwnerEligible } from "../filters/owner-filter.ts";
 import {
   classifyListingFreshness,
   defaultMaxPublicationAgeMinutes,
@@ -39,6 +40,7 @@ export type TelegramTestCycleReport = {
   suppressedOld: number;
   suppressedRefreshedOld: number;
   suppressedUnknownStrict: number;
+  suppressedLateDiscovered: number;
   dryRun: boolean;
   chatId: string;
   deliveryMode: "inventory_seed" | "initial_preview" | "send_new";
@@ -209,7 +211,11 @@ export async function runTelegramTestCycle(
       );
       const accepted = filtered
         .map((item) => item.listing)
-        .filter((listing) => !deps.config.ownerOnly || listing.sellerType === "owner");
+        .filter(
+          (listing) =>
+            !deps.config.ownerOnly ||
+            isOwnerEligible(listing, { acceptSelfDeclared: deps.config.ownerAcceptSelfDeclared === true }),
+        );
 
       buckets.push({ source: adapter.source, ok: classified.ok, listings: accepted });
       sourceAttempts.push({
@@ -251,6 +257,7 @@ export async function runTelegramTestCycle(
   let suppressedOld = 0;
   let suppressedRefreshedOld = 0;
   let suppressedUnknownStrict = 0;
+  let suppressedLateDiscovered = 0;
   let newAfterDedupe = 0;
   let collectedRaw = 0;
   let acceptedFiltered = 0;
@@ -296,10 +303,10 @@ export async function runTelegramTestCycle(
           }
         }
         // Baseline the full successful fetch set even if a preview send failed.
-        deps.baseline.establishSilent(bucket.source, unseen, deps.dedupe);
+        deps.baseline.establishSilent(bucket.source, unseen, deps.dedupe, now());
       } else {
         usedSeed = true;
-        deps.baseline.establishSilent(bucket.source, unseen, deps.dedupe);
+        deps.baseline.establishSilent(bucket.source, unseen, deps.dedupe, now());
       }
       if (attempt) {
         attempt.baselineEstablished = true;
@@ -317,6 +324,9 @@ export async function runTelegramTestCycle(
         maxPublicationAgeMinutes,
         strictNewPublications,
         now: now(),
+        ...(deps.baseline.establishedAt(bucket.source)
+          ? { monitoringStartedAt: deps.baseline.establishedAt(bucket.source) }
+          : {}),
       });
       if (!freshness.deliverable) {
         if (freshness.kind === "old_publication") {
@@ -325,6 +335,8 @@ export async function runTelegramTestCycle(
           suppressedRefreshedOld += 1;
         } else if (freshness.kind === "first_noticed") {
           suppressedUnknownStrict += 1;
+        } else if (freshness.kind === "late_discovered") {
+          suppressedLateDiscovered += 1;
         }
         // Still mark seen so old inventory does not retry forever.
         deps.dedupe.markSeen(listing);
@@ -380,6 +392,7 @@ export async function runTelegramTestCycle(
     suppressedOld,
     suppressedRefreshedOld,
     suppressedUnknownStrict,
+    suppressedLateDiscovered,
     dryRun,
     chatId: deps.sink.chatId,
     deliveryMode,
@@ -406,6 +419,7 @@ export function formatTelegramStartupMessage(input: {
   enableRieltor: boolean;
   enableOlx: boolean;
   ownerOnly: boolean;
+  ownerAcceptSelfDeclared: boolean;
   firstRunMode: "seed" | "preview" | "send";
 }): string {
   const mode = input.firstRunMode === "send" ? "preview" : input.firstRunMode;
@@ -415,11 +429,12 @@ export function formatTelegramStartupMessage(input: {
     `cycles: ${input.cycles} · interval_ms: ${input.intervalMs}`,
     `dry_run: ${input.dryRun}`,
     `owner_only: ${input.ownerOnly}`,
+    `owner_accept_self_declared: ${input.ownerAcceptSelfDeclared}`,
     `first_run_mode: ${mode} (seed = silent per-source baseline; preview = small «Початкова добірка»)`,
     `sources: domria=${input.enableDomria} lun=${input.enableLun} rieltor=${input.enableRieltor} olx_http=${input.enableOlx}`,
-    "Old publishedAt listings are never labeled as new publications.",
+    "Age window is necessary but not sufficient: listings published before the silent baseline are not «Нова публікація».",
     "Dedupe + baseline are in-memory only — restart triggers silent re-baseline (no flood of historical inventory as «нове»).",
-    "Platform seller labels are not legal ownership proof.",
+    "Platform seller labels are not legal ownership proof. Self-declared text is labeled separately and off by default.",
   ].join("\n");
 }
 

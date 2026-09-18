@@ -252,6 +252,7 @@ export function parseRieltorCard(
     discoveredAt: options.discoveredAt,
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
+      ownerEvidenceLevel: owner.ownerEvidenceLevel,
       platformRoleLabel: roleLabel ?? null,
       coordinatePrecision: lat !== undefined && lng !== undefined ? "unspecified_point" : "missing",
       timestampPrecision: publishedAt ? "jsonld_availabilityStarts_seconds_unknown_semantics" : "relative_or_missing",

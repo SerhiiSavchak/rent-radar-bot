@@ -426,9 +426,13 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(result.diagnostics.ownerEligibleCount).toBe(0);
     expect(result.diagnostics.privateAccountCount).toBe(1);
     expect(result.diagnostics.businessAccountCount).toBe(1);
+    expect(result.diagnostics.selfDeclaredOwnerCount).toBe(0);
+    expect(result.diagnostics.ownerEvidenceLevelCounts?.private_unknown).toBe(1);
+    expect(result.diagnostics.ownerEvidenceLevelCounts?.intermediary).toBe(1);
     expect(result.diagnostics.ownerRejectionReasonCounts?.private_account_not_ownership).toBe(1);
     expect(result.diagnostics.ownerRejectionReasonCounts?.business_account).toBe(1);
     expect(result.diagnostics.publishedAtPresentCount).toBe(2);
+    expect(result.diagnostics.withinAgeWindowCount).toBe(1);
     expect(result.diagnostics.freshnessEligibleCount).toBe(1);
     expect(result.diagnostics.telegramFreshnessKindCounts?.new_publication).toBe(1);
     expect(result.diagnostics.telegramFreshnessKindCounts?.refreshed_old).toBe(1);
@@ -454,9 +458,11 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(result.listings).toHaveLength(1);
     expect(result.listings[0]?.propertyType).toBe("house");
     expect(result.listings[0]?.sellerType).toBe("unknown");
+    expect(result.listings[0]?.metadata?.ownerEvidenceLevel).toBe("self_declared");
     expect(result.diagnostics.ownerEligibleCount).toBe(0);
     expect(result.diagnostics.privateAccountCount).toBe(1);
-    expect(result.diagnostics.ownerRejectionReasonCounts?.private_account_not_ownership).toBe(1);
+    expect(result.diagnostics.selfDeclaredOwnerCount).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.self_declared_not_in_default_owner_gate).toBe(1);
     expect(result.listings[0]?.sellerEvidence?.some((item) => item.includes("від власника"))).toBe(true);
   });
 

@@ -358,11 +358,12 @@ describe("in-memory dedupe + pipeline", () => {
       url: "https://lun.ua/uk/realty/77",
       sellerType: "owner",
       propertyType: "apartment",
-      publishedAt: new Date("2026-09-16T12:00:00Z"),
+      publishedAt: new Date("2026-09-17T12:30:00Z"),
     });
     const dedupe = new InMemoryListingDedupe();
     const baseline = new InMemorySourceBaseline();
-    const now = () => new Date("2026-09-17T12:00:00Z");
+    const t0 = new Date("2026-09-17T12:00:00Z");
+    const t1 = new Date("2026-09-17T13:00:00Z");
 
     await runTelegramTestCycle(
       {
@@ -371,7 +372,7 @@ describe("in-memory dedupe + pipeline", () => {
         sink: { chatId: "55", sendListing: vi.fn() } as unknown as TelegramTestSink,
         dedupe,
         baseline,
-        now,
+        now: () => t0,
       },
       1,
     );
@@ -386,7 +387,7 @@ describe("in-memory dedupe + pipeline", () => {
       fetchImpl: (async () => new Response("nope", { status: 400 })) as unknown as typeof fetch,
     });
     const report1 = await runTelegramTestCycle(
-      { adapters: [adapter("lun", [seed, good])], config, sink: sinkFail, dedupe, baseline, now },
+      { adapters: [adapter("lun", [seed, good])], config, sink: sinkFail, dedupe, baseline, now: () => t1 },
       2,
     );
     expect(report1.sentFailed).toBe(1);
@@ -401,7 +402,7 @@ describe("in-memory dedupe + pipeline", () => {
       maxRetries: 0,
     });
     const report2 = await runTelegramTestCycle(
-      { adapters: [adapter("lun", [seed, good])], config, sink: sinkOk, dedupe, baseline, now },
+      { adapters: [adapter("lun", [seed, good])], config, sink: sinkOk, dedupe, baseline, now: () => t1 },
       3,
     );
     expect(report2.newlyObservedCount).toBe(1);

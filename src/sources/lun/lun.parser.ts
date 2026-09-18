@@ -231,6 +231,7 @@ export function parseLunCard(
     discoveredAt,
     metadata: {
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
+      ownerEvidenceLevel: owner.ownerEvidenceLevel,
       originalUrl: card.urlRaw,
       originalHost: originalListingHost(card.urlRaw),
       withoutCommission: card.withoutCommission,

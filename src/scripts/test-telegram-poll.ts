@@ -62,6 +62,7 @@ try {
     enableRieltor: config.enableRieltor,
     enableOlx: config.enableOlx,
     ownerOnly: config.ownerOnly,
+    ownerAcceptSelfDeclared: config.ownerAcceptSelfDeclared,
     firstRunMode: config.firstRunMode,
   });
 

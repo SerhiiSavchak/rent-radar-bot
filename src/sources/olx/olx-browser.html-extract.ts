@@ -38,8 +38,13 @@ export type OlxHtmlExtractDiagnostics = {
   ownerEligibleCount?: number;
   privateAccountCount?: number;
   businessAccountCount?: number;
+  selfDeclaredOwnerCount?: number;
+  ownerEvidenceLevelCounts?: Record<string, number>;
   ownerRejectionReasonCounts?: Record<string, number>;
   publishedAtPresentCount?: number;
+  /** publishedAt within 7 days. Not Telegram send eligibility. */
+  withinAgeWindowCount?: number;
+  /** Age-window `new_publication` only — extract has no monitoring baseline. */
   freshnessEligibleCount?: number;
   telegramFreshnessKindCounts?: Record<string, number>;
   htmlSource?: "main_document" | "rendered_dom";
@@ -631,12 +636,16 @@ function eligibilityCounts(
   ownerEligibleCount: number;
   privateAccountCount: number;
   businessAccountCount: number;
+  selfDeclaredOwnerCount: number;
+  ownerEvidenceLevelCounts: Record<string, number>;
   ownerRejectionReasonCounts: Record<string, number>;
   publishedAtPresentCount: number;
+  withinAgeWindowCount: number;
   freshnessEligibleCount: number;
   telegramFreshnessKindCounts: Record<string, number>;
 } {
   const ownerRejectionReasonCounts: Record<string, number> = {};
+  const ownerEvidenceLevelCounts: Record<string, number> = {};
   const telegramFreshnessKindCounts: Record<string, number> = {};
   const bump = (counts: Record<string, number>, reason: string) => {
     counts[reason] = (counts[reason] ?? 0) + 1;
@@ -644,7 +653,9 @@ function eligibilityCounts(
   let ownerEligibleCount = 0;
   let privateAccountCount = 0;
   let businessAccountCount = 0;
+  let selfDeclaredOwnerCount = 0;
   let publishedAtPresentCount = 0;
+  let withinAgeWindowCount = 0;
   let freshnessEligibleCount = 0;
   const freshnessPolicy = {
     maxPublicationAgeMinutes: defaultMaxPublicationAgeMinutes(undefined),
@@ -653,6 +664,11 @@ function eligibilityCounts(
   };
 
   for (const listing of listings) {
+    const level =
+      typeof listing.metadata?.ownerEvidenceLevel === "string"
+        ? listing.metadata.ownerEvidenceLevel
+        : "unknown";
+    bump(ownerEvidenceLevelCounts, level);
     const isBusiness = listing.metadata?.olxIsBusiness === true;
     const isPrivateAccount = listing.metadata?.olxIsBusiness === false;
     if (isPrivateAccount) {
@@ -661,10 +677,15 @@ function eligibilityCounts(
     if (isBusiness || listing.sellerType === "business") {
       businessAccountCount += 1;
     }
+    if (level === "self_declared") {
+      selfDeclaredOwnerCount += 1;
+    }
     if (listing.sellerType === "owner") {
       ownerEligibleCount += 1;
     } else if (isBusiness || listing.sellerType === "business") {
       bump(ownerRejectionReasonCounts, "business_account");
+    } else if (level === "self_declared") {
+      bump(ownerRejectionReasonCounts, "self_declared_not_in_default_owner_gate");
     } else if (isPrivateAccount) {
       bump(ownerRejectionReasonCounts, "private_account_not_ownership");
     } else {
@@ -676,6 +697,10 @@ function eligibilityCounts(
     }
     const freshness = classifyListingFreshness(listing, freshnessPolicy);
     bump(telegramFreshnessKindCounts, freshness.kind);
+    if (freshness.withinAgeWindow) {
+      withinAgeWindowCount += 1;
+    }
+    // Extract has no per-source baseline / monitoringStartedAt.
     if (freshness.deliverable && freshness.kind === "new_publication") {
       freshnessEligibleCount += 1;
     }
@@ -685,8 +710,11 @@ function eligibilityCounts(
     ownerEligibleCount,
     privateAccountCount,
     businessAccountCount,
+    selfDeclaredOwnerCount,
+    ownerEvidenceLevelCounts,
     ownerRejectionReasonCounts,
     publishedAtPresentCount,
+    withinAgeWindowCount,
     freshnessEligibleCount,
     telegramFreshnessKindCounts,
   };

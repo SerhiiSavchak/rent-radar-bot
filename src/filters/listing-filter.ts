@@ -1,6 +1,7 @@
 import type { Listing, PropertyType } from "../domain/listing.ts";
 import type { AppConfig } from "../config/env.ts";
 import { filterByLocation } from "./location-filter.ts";
+import { isOwnerEligible } from "./owner-filter.ts";
 import { detectPropertyType } from "./property-type.ts";
 
 export type ListingFilterOptions = {
@@ -44,7 +45,9 @@ export function applyListingFilters(
         unknownPolicy,
       },
     );
-    const ownerMatched = listing.sellerType === "owner";
+    const ownerMatched = isOwnerEligible(listing, {
+      acceptSelfDeclared: config.ownerAcceptSelfDeclared === true,
+    });
     const propertyMatched = propertyTypes.includes(listing.propertyType);
     const tooOld = isTooOld(listing, config.maxListingAgeMinutes);
     const accepted =
