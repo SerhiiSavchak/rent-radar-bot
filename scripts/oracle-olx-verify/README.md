@@ -13,8 +13,9 @@ cd ~/rent-radar-bot
 # 1) Refuse concurrent project pollers
 pgrep -af 'live:test-telegram|live:oracle:soak|olx-browser-extract|olx-owner-detail' && echo 'STOP: poller running' && exit 1
 
-# 2) Intended commit = the SHA that added the owner-detail diagnostic on this branch
-export INTENDED_COMMIT=<full-sha>
+# 2) Intended commit = origin tip of this branch after the owner-detail push
+git fetch origin
+export INTENDED_COMMIT=$(git rev-parse origin/cursor/phase-1-source-layer-closure-8797)
 chmod +x scripts/oracle-olx-verify/run-olx-verify.sh
 ./scripts/oracle-olx-verify/run-olx-verify.sh
 ```
