@@ -5,10 +5,17 @@
 
 import type { Listing } from "../../domain/listing.ts";
 import { parseOlxOffer } from "./olx.parser.ts";
+import { olxOfferSchema } from "./olx.types.ts";
 
 export type OlxHtmlExtractRejection = {
   reason: string;
   detail?: string;
+};
+
+export type OlxCandidateRejection = {
+  reason: string;
+  detail?: string;
+  id?: string;
 };
 
 export type OlxHtmlExtractDiagnostics = {
@@ -21,6 +28,7 @@ export type OlxHtmlExtractDiagnostics = {
   markerHits: string[];
   rawCandidateCount: number;
   rawObjectCount?: number;
+  uniqueRawIdCount?: number;
   uniqueIdCount?: number;
   normalizedListingCount?: number;
   ownerEligibleCount?: number;
@@ -28,6 +36,9 @@ export type OlxHtmlExtractDiagnostics = {
   htmlSource?: "main_document" | "rendered_dom";
   rejectedWrongCategory?: number;
   rejectedMissingLocation?: number;
+  rejectedMalformed?: number;
+  rejectionReasonCounts?: Record<string, number>;
+  candidateRejections?: OlxCandidateRejection[];
 };
 
 export type OlxHtmlStructuredExtract = {
@@ -286,6 +297,52 @@ function categoryIdOf(raw: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function normalizeCatalogPhotos(raw: unknown): Array<{ link: string }> | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const photos: Array<{ link: string }> = [];
+  for (const item of raw) {
+    if (typeof item === "string" && /^https?:\/\//i.test(item)) {
+      photos.push({ link: item });
+      continue;
+    }
+    const rec = asRecord(item);
+    const link =
+      (typeof rec?.link === "string" && rec.link) ||
+      (typeof rec?.url === "string" && rec.url) ||
+      undefined;
+    if (link && /^https?:\/\//i.test(link)) {
+      photos.push({ link });
+    }
+  }
+  return photos.length > 0 ? photos : undefined;
+}
+
+function candidateId(raw: unknown): string | undefined {
+  const id = asRecord(raw)?.id;
+  if (typeof id === "number" && Number.isFinite(id)) {
+    return String(id);
+  }
+  if (typeof id === "string" && id.trim()) {
+    return id.trim();
+  }
+  return undefined;
+}
+
+function absoluteOlxUrl(url: string | undefined, urlPath: unknown): string | undefined {
+  if (typeof url === "string" && /^https?:\/\//i.test(url)) {
+    return url;
+  }
+  if (typeof urlPath === "string" && urlPath.startsWith("/")) {
+    return `https://www.olx.ua${urlPath}`;
+  }
+  if (typeof url === "string" && url.startsWith("/")) {
+    return `https://www.olx.ua${url}`;
+  }
+  return typeof url === "string" && url.trim() ? url : undefined;
+}
+
 /**
  * Explicit adapter for the Oracle catalog camelCase schema
  * (`createdTime`, `isBusiness`, `price.regularPrice`, `location.cityName`, …)
@@ -369,12 +426,14 @@ export function adaptOracleCatalogAd(raw: unknown): Record<string, unknown> | un
     typeof userIn?.company_name === "string" && userIn.company_name.trim()
       ? userIn.company_name.trim()
       : undefined;
+  const url = absoluteOlxUrl(typeof ad.url === "string" ? ad.url : undefined, ad.urlPath);
+  const photos = normalizeCatalogPhotos(ad.photos);
 
   return {
     id,
     title,
     ...(typeof ad.description === "string" ? { description: ad.description } : {}),
-    ...(typeof ad.url === "string" ? { url: ad.url } : {}),
+    ...(url ? { url } : {}),
     ...(created ? { created_time: created } : {}),
     ...(refreshed ? { last_refresh_time: refreshed } : {}),
     ...(pushup ? { pushup_time: pushup } : {}),
@@ -392,7 +451,7 @@ export function adaptOracleCatalogAd(raw: unknown): Record<string, unknown> | un
         }
       : {}),
     ...(asRecord(ad.category) ? { category: asRecord(ad.category) } : {}),
-    ...(Array.isArray(ad.photos) ? { photos: ad.photos } : {}),
+    ...(photos ? { photos } : {}),
   };
 }
 
@@ -418,40 +477,78 @@ function listingsFromCandidates(
   listings: Listing[];
   rawOfferCount: number;
   uniqueIdCount: number;
+  uniqueRawIdCount: number;
   rejectedMalformed: number;
   rejectedWrongCategory: number;
   rejectedMissingLocation: number;
+  rejectionReasonCounts: Record<string, number>;
+  candidateRejections: OlxCandidateRejection[];
 } {
   const listings: Listing[] = [];
   const seenIds = new Set<string>();
+  const rawIds = new Set<string>();
   let rejectedMalformed = 0;
   let rejectedWrongCategory = 0;
   let rejectedMissingLocation = 0;
+  const rejectionReasonCounts: Record<string, number> = {};
+  const candidateRejections: OlxCandidateRejection[] = [];
+
+  const bump = (reason: string, id: string | undefined, detail?: string) => {
+    rejectionReasonCounts[reason] = (rejectionReasonCounts[reason] ?? 0) + 1;
+    if (candidateRejections.length < 25) {
+      candidateRejections.push({
+        reason,
+        ...(id ? { id } : {}),
+        ...(detail ? { detail } : {}),
+      });
+    }
+  };
+
   for (const candidate of candidates) {
+    const id = candidateId(candidate);
+    if (id) {
+      rawIds.add(id);
+    }
     if (
       options?.expectedCategoryId !== undefined &&
       categoryIdOf(candidate) !== undefined &&
       categoryIdOf(candidate) !== options.expectedCategoryId
     ) {
       rejectedWrongCategory += 1;
+      bump("wrong_category", id, `expected=${options.expectedCategoryId}`);
       continue;
     }
     const normalized = adaptOracleCatalogAd(candidate);
     if (!normalized) {
       rejectedMalformed += 1;
+      bump("adapt_failed_missing_id_or_title", id);
       continue;
     }
     if (!hasCityLabel(normalized)) {
       rejectedMissingLocation += 1;
+      bump("missing_city_label", id);
+      continue;
+    }
+    const schema = olxOfferSchema.safeParse(normalized);
+    if (!schema.success) {
+      rejectedMalformed += 1;
+      const first = schema.error.issues[0];
+      bump(
+        "schema_validation",
+        id,
+        first ? `${first.path.join(".") || "(root)"}: ${first.message}` : undefined,
+      );
       continue;
     }
     const listing = parseOlxOffer(normalized, discoveredAt);
     if (!listing) {
       rejectedMalformed += 1;
+      bump("listing_required_field_missing", id);
       continue;
     }
     const key = `${listing.source}:${listing.sourceId}`;
     if (seenIds.has(key)) {
+      bump("duplicate_id", id);
       continue;
     }
     seenIds.add(key);
@@ -461,9 +558,43 @@ function listingsFromCandidates(
     listings,
     rawOfferCount: candidates.length,
     uniqueIdCount: seenIds.size,
+    uniqueRawIdCount: rawIds.size,
     rejectedMalformed,
     rejectedWrongCategory,
     rejectedMissingLocation,
+    rejectionReasonCounts,
+    candidateRejections,
+  };
+}
+
+function parsedRejectionDiagnostics(parsed: {
+  uniqueRawIdCount: number;
+  uniqueIdCount: number;
+  rejectedMalformed: number;
+  rejectedWrongCategory: number;
+  rejectedMissingLocation: number;
+  rejectionReasonCounts: Record<string, number>;
+  candidateRejections: OlxCandidateRejection[];
+}): Pick<
+  OlxHtmlExtractDiagnostics,
+  | "uniqueRawIdCount"
+  | "uniqueIdCount"
+  | "rejectedMalformed"
+  | "rejectedWrongCategory"
+  | "rejectedMissingLocation"
+  | "rejectionReasonCounts"
+  | "candidateRejections"
+> {
+  return {
+    uniqueRawIdCount: parsed.uniqueRawIdCount,
+    uniqueIdCount: parsed.uniqueIdCount,
+    rejectedMalformed: parsed.rejectedMalformed,
+    rejectedWrongCategory: parsed.rejectedWrongCategory,
+    rejectedMissingLocation: parsed.rejectedMissingLocation,
+    rejectionReasonCounts: parsed.rejectionReasonCounts,
+    ...(parsed.candidateRejections.length > 0
+      ? { candidateRejections: parsed.candidateRejections }
+      : {}),
   };
 }
 
@@ -550,8 +681,7 @@ function extractFromPrerenderedHtml(
           normalizedListingCount: parsed.listings.length,
           ...eligibility,
           ...htmlSourceField(options?.htmlSource),
-          rejectedWrongCategory: parsed.rejectedWrongCategory,
-          rejectedMissingLocation: parsed.rejectedMissingLocation,
+          ...parsedRejectionDiagnostics(parsed),
         },
       };
     }
@@ -581,8 +711,7 @@ function extractFromPrerenderedHtml(
         uniqueIdCount: parsed.uniqueIdCount,
         normalizedListingCount: 0,
         ...htmlSourceField(options?.htmlSource),
-        rejectedWrongCategory: parsed.rejectedWrongCategory,
-        rejectedMissingLocation: parsed.rejectedMissingLocation,
+        ...parsedRejectionDiagnostics(parsed),
       },
     };
   }
@@ -716,6 +845,7 @@ export function extractListingsFromOlxCatalogHtml(
           normalizedListingCount: parsed.listings.length,
           ...eligibility,
           ...htmlSourceField(options?.htmlSource),
+          ...parsedRejectionDiagnostics(parsed),
         },
       };
     }
@@ -749,6 +879,7 @@ export function extractListingsFromOlxCatalogHtml(
             normalizedListingCount: parsed.listings.length,
             ...eligibility,
             ...htmlSourceField(options?.htmlSource),
+            ...parsedRejectionDiagnostics(parsed),
           },
         };
       }

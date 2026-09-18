@@ -504,11 +504,32 @@ async function extractCategory(
         htmlInputKind = "rendered_dom";
       }
     } else if (deps.captureDir && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
-      renderedHtml = await raceDeadline(page.content(), categoryDeadlineAt, deps.clock, cancelOwnedWork);
+      try {
+        renderedHtml = await raceDeadline(page.content(), categoryDeadlineAt, deps.clock, async () => {
+          markTimeout();
+        });
+      } catch (error) {
+        if (!(error instanceof OlxDeadlineExceededError)) {
+          throw error;
+        }
+        markTimeout();
+        if (listings.length > 0) {
+          rejections.push({
+            reason: "post_extract_deadline",
+            detail: "category budget hit after listings were parsed; capture skipped",
+          });
+        }
+      }
     }
 
-    const finalUrl = page.url();
-    const title = await page.title().catch(() => "");
+    let finalUrl = url;
+    let title = "";
+    try {
+      finalUrl = page.url();
+      title = await page.title().catch(() => "");
+    } catch {
+      markTimeout();
+    }
     const httpStatus = response?.status();
     const contentType = response?.headers()["content-type"];
     const classified = classifyOlxBrowserProbe({
@@ -569,12 +590,13 @@ async function extractCategory(
     }
 
     const unique = dedupeListings(listings);
+    const extractedOk = unique.length > 0;
     return {
       category,
       requestedUrl: url,
       finalUrl,
-      accessibility: classified.outcome,
-      accessibilityOk: classified.success,
+      accessibility: extractedOk ? "browser_accessible" : classified.outcome,
+      accessibilityOk: extractedOk || classified.success,
       apiResponsesCaptured: capturedPayloads.length,
       rawOfferCount,
       validatedListingCount: unique.length,
@@ -608,19 +630,25 @@ async function extractCategory(
         });
       }
       const unique = dedupeListings(listings);
+      const extractedOk = unique.length > 0;
       return {
         category,
         requestedUrl: url,
         finalUrl: url,
-        accessibility: unique.length > 0 ? "browser_accessible" : "parser_failure",
-        accessibilityOk: unique.length > 0,
+        accessibility: extractedOk ? "browser_accessible" : "parser_failure",
+        accessibilityOk: extractedOk,
         apiResponsesCaptured: capturedPayloads.length,
         rawOfferCount,
         validatedListingCount: unique.length,
         listings: unique,
         rejections: [
           ...rejections,
-          { reason: "category_budget_exhausted", detail: "deadline cancelled in-flight work" },
+          extractedOk
+            ? {
+                reason: "post_extract_deadline",
+                detail: "category budget hit after listings were parsed",
+              }
+            : { reason: "category_budget_exhausted", detail: "deadline cancelled in-flight work" },
         ],
         elapsedMs: deps.clock() - started,
         extractSource,
@@ -746,7 +774,9 @@ export async function extractOlxListingsViaBrowser(
   }
 
   const listings = dedupeListings([...apartments.listings, ...houses.listings]);
-  const accessibilityOk = apartments.accessibilityOk && houses.accessibilityOk;
+  const housesSkippedBudget = houses.rejections.some((item) => item.reason === "total_budget_exhausted");
+  const accessibilityOk =
+    apartments.accessibilityOk && (houses.accessibilityOk || housesSkippedBudget);
   const extractionOk = listings.length > 0;
   if (accessibilityOk && !extractionOk) {
     notes.push("accessibility_without_extraction=true");
@@ -755,6 +785,9 @@ export async function extractOlxListingsViaBrowser(
   notes.push(`houses_extractSource=${houses.extractSource ?? "none"}`);
   if (apartments.timedOut || houses.timedOut) {
     notes.push("category_or_total_budget_hit=true");
+  }
+  if (extractionOk && (apartments.timedOut || houses.timedOut)) {
+    notes.push("timeout_after_successful_extract=true");
   }
   return {
     apartments,

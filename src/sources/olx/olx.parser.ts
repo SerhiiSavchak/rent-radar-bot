@@ -1,4 +1,4 @@
-import type { Listing, PropertyType } from "../../domain/listing.ts";
+import { listingSchema, type Listing, type PropertyType } from "../../domain/listing.ts";
 import { detectPropertyType } from "../../filters/listing-filter.ts";
 import { classifyOwner } from "../../filters/owner-filter.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
@@ -71,6 +71,26 @@ function propertyTypeFromOlx(offer: OlxOffer): PropertyType {
 export function extractOlxUrlToken(url: string): string | undefined {
   const match = /ID([A-Za-z0-9]+)\.html/i.exec(url);
   return match?.[1];
+}
+
+function photoLinks(photos: OlxOffer["photos"] | undefined): string[] {
+  if (!Array.isArray(photos)) {
+    return [];
+  }
+  const links: string[] = [];
+  for (const photo of photos) {
+    if (typeof photo === "string" && /^https?:\/\//i.test(photo)) {
+      links.push(photo);
+      continue;
+    }
+    if (photo && typeof photo === "object") {
+      const link = photo.link ?? photo.url;
+      if (typeof link === "string" && /^https?:\/\//i.test(link)) {
+        links.push(link);
+      }
+    }
+  }
+  return links;
 }
 
 export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Listing | undefined {
@@ -148,13 +168,12 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
       listing.publishedAt = date;
     }
   }
-  const images = (offer.photos ?? [])
-    .map((photo) => photo.link)
-    .filter((link): link is string => Boolean(link));
+  const images = photoLinks(offer.photos);
   if (images.length > 0) {
     listing.images = images;
   }
-  return listing;
+  const validated = listingSchema.safeParse(listing);
+  return validated.success ? validated.data : undefined;
 }
 
 export function parseOlxOffersPayload(payload: unknown, discoveredAt = new Date()): Listing[] {

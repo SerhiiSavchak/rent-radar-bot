@@ -1,30 +1,28 @@
 # Oracle OLX browser extract — status
 
-## Live Oracle after `4dab997` / capture `baab323` — extraction still unproven live
+## Live Oracle after `219316f` — original document available, adapter rejected ads
 
-Capture `capture-1789666022490` (commit `baab323`) showed:
+Live probe on `219316f` showed the original navigation HTML and listing state are present:
 
-- `apartments/houses/main-document.html` contain quoted `window.__PRERENDERED_STATE__ = "<JSON-encoded string>"`
-- matching `rendered.html` files **do not**
-- evidenced path: `decodedState.listing.listing.ads` (apartments 52/49 unique, houses 37/37)
-- camelCase catalog fields (`createdTime`, `isBusiness`, `price.regularPrice`, `location.cityName`, `map.show_detailed=false`)
-- diagnostic HTML dumps were clipped at 2,000,000 bytes (original 3,879,053 / 4,308,077); ads arrays survived, the outer state did not
-- run wall clock 239,458 ms vs `totalBudgetMs=125000`; categories 73,596 / 154,115 vs 60,000 with `timedOut=false` because capture/sanitization ran after the check
+- `htmlInputKind=main_document`
+- `hasPrerenderedState=true`, `prerenderedStateComplete=true`, `prerenderedAdsPathFound=true`
+- apartments `rawObjectCount=51`, houses `rawObjectCount=38`
+- `uniqueIdCount=0`, `normalizedListingCount=0`
+- every candidate lumped as `embedded_offers_partial_schema_failure`
+- accessibility succeeded; extraction failed; `browserClosed=true`
+
+Root cause (from the captured `listing.listing.ads` objects, not fixtures): catalog `photos` is a `string[]` of CDN URLs (`ireland.apollo.olxcdn.com:443/...`). The adapter copied that array as-is into a Zod schema that expected `{ link }` objects, so every offer failed `safeParse`.
 
 **Do not claim live OLX success. Do not wire OLX into Telegram** until a live Oracle extract reports `validatedListingCount > 0` after this parser change.
 
 ## What the extractor reads now
 
-- **Parser input:** original Playwright navigation body first (`htmlInputKind=main_document`), then rendered DOM, then `/api/v1/offers` if intercepted.
+- **Parser input:** original Playwright navigation body first (`htmlInputKind=main_document`). Rendered DOM is fallback only when that document has no structured state.
 - Quoted `__PRERENDERED_STATE__` is decoded with `JSON.parse` only (no `eval`).
-- Production parser cap (`parserMaxHtmlBytes=8_000_000`) is separate from diagnostic HTML dump cap (`maxHtmlBytes=2_000_000`). Complete `listing.listing.ads` is saved as `relevant-state.json` with `originalBytes` / `savedBytes` / `truncated`.
-- `timeoutMs` = `page.goto` only. `categoryBudgetMs` / `totalBudgetMs` cover parse, capture, and cleanup; expiry skips the next category and still closes the browser.
-
-## Seller / freshness honesty
-
+- Catalog camelCase ads are adapted: `id`, `title`, `url`/`urlPath`, `category`, `location.cityName`, `price.regularPrice`, `createdTime` → `publishedAt`, `lastRefreshTime` / `pushupTime` kept separate, `photos` string URLs normalized to `{ link }`.
 - `isBusiness=false` = private account, **not** verified property ownership (`sellerType=unknown`).
-- `user.sellerType` is null in the captured offers.
-- `createdTime` → `publishedAt` (`publishedAtProvenance=olx.createdTime`); `lastRefreshTime` / `pushupTime` stay separate.
 - `map.show_detailed=false` is recorded as approximate coordinates.
+- Evidence JSON keeps `uniqueRawIdCount`, `uniqueIdCount`, `rejectionReasonCounts`, and a sample of `candidateRejections`.
+- A category deadline after a successful parse is reported as `timedOut` / `post_extract_deadline` without flipping a validated extract to parser failure.
 
-Offline fixtures for this adapter are labeled **derived** from the Oracle capture; they are not a live probe.
+Offline fixtures for this adapter are labeled **derived** from the Oracle capture; they include sanitized `string[]` photos matching the live catalog shape.

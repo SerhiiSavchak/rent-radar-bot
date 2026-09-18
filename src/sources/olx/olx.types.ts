@@ -71,7 +71,19 @@ export const olxOfferSchema = z
     location: olxLocationSchema.optional(),
     map: olxMapSchema.optional(),
     user: olxUserSchema.optional(),
-    photos: z.array(z.object({ link: z.string().optional() }).passthrough()).optional(),
+    photos: z
+      .array(
+        z.union([
+          z.string(),
+          z
+            .object({
+              link: z.string().nullable().optional(),
+              url: z.string().nullable().optional(),
+            })
+            .passthrough(),
+        ]),
+      )
+      .optional(),
     category: z
       .object({
         id: z.union([z.number(), z.string()]).optional(),

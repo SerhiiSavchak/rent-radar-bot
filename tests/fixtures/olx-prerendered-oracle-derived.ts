@@ -3,7 +3,8 @@
  * baab3230824bc4e976cae50c6ad2c9ded2e91467 (capture-1789666022490).
  *
  * Not a dump of the live page. Field names/shapes match decodedState.listing.listing.ads.
- * Descriptions, photos, and user avatars are omitted.
+ * Descriptions and user avatars are omitted. `photos` keeps the live catalog
+ * shape (`string[]` CDN URLs), which previously failed Zod `{ link }` validation.
  */
 
 export type DerivedOlxCatalogAd = {
@@ -33,6 +34,8 @@ export type DerivedOlxCatalogAd = {
     sellerType: string | null;
   };
   params: Array<{ key: string; name?: string; value?: unknown; normalizedValue?: string }>;
+  urlPath: string;
+  photos: string[];
 };
 
 export function derivedOracleApartmentPrivateAd(): DerivedOlxCatalogAd {
@@ -56,6 +59,8 @@ export function derivedOracleApartmentPrivateAd(): DerivedOlxCatalogAd {
     map: { lat: 49.839, lon: 23.995, radius: 1, show_detailed: false, zoom: 13 },
     user: { id: 2018417314, name: "Мар'яна", company_name: "", sellerType: null },
     params: [{ key: "commission", name: "Без комісії", value: null, normalizedValue: "1" }],
+    urlPath: "/d/uk/obyavlenie/orenda-2x-kmnatno-kvartiri-ID11hwv7.html",
+    photos: ["https://ireland.apollo.olxcdn.com:443/v1/files/derived-private-apt-UA/image;s=1000x750"],
   };
 }
 
@@ -80,6 +85,8 @@ export function derivedOracleApartmentBusinessAd(): DerivedOlxCatalogAd {
     map: { lat: 49.839, lon: 23.995, radius: 1, show_detailed: false, zoom: 13 },
     user: { id: 6223479, name: "Дмитро", company_name: "", sellerType: null },
     params: [{ key: "cooperate", name: "Готовий співпрацювати з ріелторами", normalizedValue: "1" }],
+    urlPath: "/d/uk/obyavlenie/orenda-stilno-1-kmnatno-kvartiri-po-pr-v-chornovola-ID114yVC.html",
+    photos: ["https://ireland.apollo.olxcdn.com:443/v1/files/derived-business-apt-UA/image;s=1000x750"],
   };
 }
 
@@ -104,6 +111,8 @@ export function derivedOracleHousePrivateAd(): DerivedOlxCatalogAd {
     map: { lat: 49.839, lon: 23.996, radius: 1, show_detailed: false, zoom: 13 },
     user: { id: 108193232, name: "Андрій", company_name: "", sellerType: null },
     params: [{ key: "commission", name: "Без комісії", normalizedValue: "1" }],
+    urlPath: "/d/uk/obyavlenie/zdatsya-v-orendu-budinok-vd-vlasnika-ID10xy7c.html",
+    photos: ["https://ireland.apollo.olxcdn.com:443/v1/files/derived-private-house-UA/image;s=1000x750"],
   };
 }
 

@@ -59,6 +59,29 @@ describe("OLX parser", () => {
     expect(listings[0]?.sellerType).toBe("business");
   });
 
+  it("accepts catalog photos as URL strings without requiring { link } objects", () => {
+    const listings = parseOlxOffersPayload({
+      data: [
+        {
+          id: 935081899,
+          title: "Оренда 2x кімнатної квартири",
+          url: "https://www.olx.ua/d/uk/obyavlenie/orenda-2x-kmnatno-kvartiri-ID11hwv7.html",
+          created_time: "2026-09-17T08:34:26+03:00",
+          last_refresh_time: "2026-09-17T08:40:09+03:00",
+          business: false,
+          params: [{ key: "price", value: { value: 53650, currency: "UAH" } }],
+          location: { city: { name: "Львів" } },
+          photos: ["https://ireland.apollo.olxcdn.com:443/v1/files/derived-private-apt-UA/image;s=1000x750"],
+          category: { id: 1760 },
+        },
+      ],
+    });
+    expect(listings).toHaveLength(1);
+    expect(listings[0]?.images).toEqual([
+      "https://ireland.apollo.olxcdn.com:443/v1/files/derived-private-apt-UA/image;s=1000x750",
+    ]);
+  });
+
   it("extracts URL tokens for exact identity matching", () => {
     expect(
       extractOlxUrlToken("https://www.olx.ua/d/uk/obyavlenie/zdam-1-kmnatnu-kvartiru-ID11gWHG.html"),

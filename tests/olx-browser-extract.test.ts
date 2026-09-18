@@ -321,6 +321,68 @@ describe("OLX browser extract integration", () => {
     expect(result.apartments.extractSource).toBe("prerendered_state");
     expect(result.extractionOk).toBe(true);
     expect(result.listings[0]?.sourceId).toBe("935081899");
+    expect(result.apartments.htmlDiagnostics?.uniqueIdCount).toBeGreaterThan(0);
+    expect(result.apartments.htmlDiagnostics?.htmlSource).toBe("main_document");
+    expect(result.browserClosed).toBe(true);
+  });
+
+  it("does not report a successful main-document parse as failed after a post-extract deadline", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    const rendered = derivedOracleRenderedHtmlWithoutState(ads);
+    let nowMs = 0;
+    let lastUrl = OLX_BROWSER_APARTMENTS_URL;
+    const page = {
+      on: vi.fn(),
+      goto: vi.fn(async (navUrl: string) => {
+        lastUrl = navUrl;
+        nowMs += 20;
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => Buffer.from(main, "utf8"),
+          text: async () => {
+            throw new Error("response.text() must not be the production parser input");
+          },
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content: () =>
+        new Promise<string>((resolve) => {
+          setTimeout(() => {
+            nowMs += 5_000;
+            resolve(rendered);
+          }, 50);
+        }),
+      url: () => lastUrl,
+      title: async () => "OLX",
+      close: vi.fn(async () => undefined),
+    } as unknown as Page;
+    const browser = {
+      newContext: async () => ({
+        newPage: async () => page,
+        close: vi.fn(async () => undefined),
+      }),
+      close: vi.fn(async () => undefined),
+    } as unknown as Browser;
+
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 80,
+      categoryBudgetMs: 80,
+      totalBudgetMs: 80,
+      launch: async () => browser,
+      clockMs: () => nowMs,
+    });
+    expect(result.extractionOk).toBe(true);
+    expect(result.apartments.validatedListingCount).toBeGreaterThan(0);
+    expect(result.apartments.extractSource).toBe("prerendered_state");
+    expect(result.apartments.htmlInputKind).toBe("main_document");
+    expect(result.apartments.accessibility).toBe("browser_accessible");
+    expect(result.apartments.rejections.some((item) => item.reason === "category_budget_exhausted")).toBe(
+      false,
+    );
+    expect(result.listings[0]?.sourceId).toBe("935081899");
     expect(result.browserClosed).toBe(true);
   });
 });
@@ -348,6 +410,13 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(priv?.metadata?.pushupTime).toBeUndefined();
     expect(priv?.location.city).toBe("Львів");
     expect(priv?.propertyType).toBe("apartment");
+    expect(priv?.images?.[0]).toBe(
+      "https://ireland.apollo.olxcdn.com:443/v1/files/derived-private-apt-UA/image;s=1000x750",
+    );
+    expect(priv?.url).toBe(derivedOracleApartmentPrivateAd().url);
+    expect(result.diagnostics.uniqueRawIdCount).toBe(2);
+    expect(result.diagnostics.uniqueIdCount).toBe(2);
+    expect(result.diagnostics.rejectedMalformed).toBe(0);
 
     const biz = result.listings.find((item) => item.sourceId === "931996810");
     expect(biz?.sellerType).toBe("business");
@@ -362,7 +431,9 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     const result = extractListingsFromOlxCatalogHtml(html, new Date(), { expectedCategoryId: 1760 });
     expect(result.listings).toHaveLength(2);
     expect(result.diagnostics.rawObjectCount).toBe(3);
+    expect(result.diagnostics.uniqueRawIdCount).toBe(2);
     expect(result.diagnostics.uniqueIdCount).toBe(2);
+    expect(result.diagnostics.rejectionReasonCounts?.duplicate_id).toBe(1);
     const biz = result.listings.find((item) => item.sourceId === "931996810");
     expect(biz?.publishedAt?.toISOString()).toBe(new Date("2026-08-17T01:13:35+03:00").toISOString());
     expect(biz?.refreshedAt?.toISOString()).toBe(new Date("2026-09-17T10:27:55+03:00").toISOString());
@@ -386,6 +457,30 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     });
     expect(result.listings).toHaveLength(0);
     expect(result.rejections.some((item) => item.reason === "prerendered_state_truncated")).toBe(true);
+  });
+
+  it("keeps per-candidate rejection reasons without fabricating listings from DOM cards", () => {
+    const incomplete = {
+      id: 1,
+      title: "Без міста",
+      url: "https://www.olx.ua/d/uk/obyavlenie/no-city-ID11zzzz.html",
+      category: { id: 1760, type: "real_estate" },
+      createdTime: "2026-09-17T08:34:26+03:00",
+      isBusiness: false,
+      photos: ["https://ireland.apollo.olxcdn.com:443/v1/files/no-city-UA/image;s=1000x750"],
+    };
+    const html = derivedOracleMainDocumentHtml([incomplete, derivedOracleApartmentPrivateAd()]);
+    const result = extractListingsFromOlxCatalogHtml(html, new Date(), { expectedCategoryId: 1760 });
+    expect(result.source).toBe("prerendered_state");
+    expect(result.listings).toHaveLength(1);
+    expect(result.listings[0]?.sourceId).toBe("935081899");
+    expect(result.diagnostics.uniqueRawIdCount).toBe(2);
+    expect(result.diagnostics.uniqueIdCount).toBe(1);
+    expect(result.diagnostics.rejectedMissingLocation).toBe(1);
+    expect(result.diagnostics.rejectionReasonCounts?.missing_city_label).toBe(1);
+    expect(result.diagnostics.candidateRejections?.some((item) => item.reason === "missing_city_label")).toBe(
+      true,
+    );
   });
 
   it("records malformed closed quoted state", () => {
