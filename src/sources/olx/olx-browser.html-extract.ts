@@ -3,6 +3,10 @@
  * Prefer embedded hydration state over fragile card-marker DOM scraping.
  */
 
+import {
+  classifyListingFreshness,
+  defaultMaxPublicationAgeMinutes,
+} from "../../delivery/listing-freshness.ts";
 import type { Listing } from "../../domain/listing.ts";
 import { parseOlxOffer } from "./olx.parser.ts";
 import { olxOfferSchema } from "./olx.types.ts";
@@ -32,7 +36,12 @@ export type OlxHtmlExtractDiagnostics = {
   uniqueIdCount?: number;
   normalizedListingCount?: number;
   ownerEligibleCount?: number;
+  privateAccountCount?: number;
+  businessAccountCount?: number;
+  ownerRejectionReasonCounts?: Record<string, number>;
+  publishedAtPresentCount?: number;
   freshnessEligibleCount?: number;
+  telegramFreshnessKindCounts?: Record<string, number>;
   htmlSource?: "main_document" | "rendered_dom";
   rejectedWrongCategory?: number;
   rejectedMissingLocation?: number;
@@ -615,13 +624,71 @@ function markerHitsFromHtml(html: string): string[] {
   return markerHits;
 }
 
-function eligibilityCounts(listings: Listing[]): {
+function eligibilityCounts(
+  listings: Listing[],
+  now: Date,
+): {
   ownerEligibleCount: number;
+  privateAccountCount: number;
+  businessAccountCount: number;
+  ownerRejectionReasonCounts: Record<string, number>;
+  publishedAtPresentCount: number;
   freshnessEligibleCount: number;
+  telegramFreshnessKindCounts: Record<string, number>;
 } {
+  const ownerRejectionReasonCounts: Record<string, number> = {};
+  const telegramFreshnessKindCounts: Record<string, number> = {};
+  const bump = (counts: Record<string, number>, reason: string) => {
+    counts[reason] = (counts[reason] ?? 0) + 1;
+  };
+  let ownerEligibleCount = 0;
+  let privateAccountCount = 0;
+  let businessAccountCount = 0;
+  let publishedAtPresentCount = 0;
+  let freshnessEligibleCount = 0;
+  const freshnessPolicy = {
+    maxPublicationAgeMinutes: defaultMaxPublicationAgeMinutes(undefined),
+    strictNewPublications: true,
+    now,
+  };
+
+  for (const listing of listings) {
+    const isBusiness = listing.metadata?.olxIsBusiness === true;
+    const isPrivateAccount = listing.metadata?.olxIsBusiness === false;
+    if (isPrivateAccount) {
+      privateAccountCount += 1;
+    }
+    if (isBusiness || listing.sellerType === "business") {
+      businessAccountCount += 1;
+    }
+    if (listing.sellerType === "owner") {
+      ownerEligibleCount += 1;
+    } else if (isBusiness || listing.sellerType === "business") {
+      bump(ownerRejectionReasonCounts, "business_account");
+    } else if (isPrivateAccount) {
+      bump(ownerRejectionReasonCounts, "private_account_not_ownership");
+    } else {
+      bump(ownerRejectionReasonCounts, "missing_platform_owner_signal");
+    }
+
+    if (listing.publishedAt instanceof Date) {
+      publishedAtPresentCount += 1;
+    }
+    const freshness = classifyListingFreshness(listing, freshnessPolicy);
+    bump(telegramFreshnessKindCounts, freshness.kind);
+    if (freshness.deliverable && freshness.kind === "new_publication") {
+      freshnessEligibleCount += 1;
+    }
+  }
+
   return {
-    ownerEligibleCount: listings.filter((item) => item.sellerType === "owner").length,
-    freshnessEligibleCount: listings.filter((item) => item.publishedAt instanceof Date).length,
+    ownerEligibleCount,
+    privateAccountCount,
+    businessAccountCount,
+    ownerRejectionReasonCounts,
+    publishedAtPresentCount,
+    freshnessEligibleCount,
+    telegramFreshnessKindCounts,
   };
 }
 
@@ -641,7 +708,7 @@ function extractFromPrerenderedHtml(
   ));
   if (inspection.decoded !== undefined && ads.length > 0) {
     const parsed = listingsFromCandidates(ads, discoveredAt, options);
-    const eligibility = eligibilityCounts(parsed.listings);
+    const eligibility = eligibilityCounts(parsed.listings, discoveredAt);
     const rejections: OlxHtmlExtractRejection[] = [];
     if (parsed.rejectedMalformed > 0) {
       rejections.push({
@@ -818,7 +885,7 @@ export function extractListingsFromOlxCatalogHtml(
     const candidates = collectOfferLikeObjects(nextData);
     const parsed = listingsFromCandidates(candidates, discoveredAt, options);
     if (parsed.listings.length > 0) {
-      const eligibility = eligibilityCounts(parsed.listings);
+      const eligibility = eligibilityCounts(parsed.listings, discoveredAt);
       return {
         listings: parsed.listings,
         rawOfferCount: parsed.rawOfferCount,
@@ -862,7 +929,7 @@ export function extractListingsFromOlxCatalogHtml(
       const raw = Array.isArray(data) ? data : [];
       const parsed = listingsFromCandidates(raw, discoveredAt, options);
       if (parsed.listings.length > 0) {
-        const eligibility = eligibilityCounts(parsed.listings);
+        const eligibility = eligibilityCounts(parsed.listings, discoveredAt);
         return {
           listings: parsed.listings,
           rawOfferCount: parsed.rawOfferCount,

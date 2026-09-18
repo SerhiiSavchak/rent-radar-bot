@@ -323,6 +323,7 @@ describe("OLX browser extract integration", () => {
     expect(result.listings[0]?.sourceId).toBe("935081899");
     expect(result.apartments.htmlDiagnostics?.uniqueIdCount).toBeGreaterThan(0);
     expect(result.apartments.htmlDiagnostics?.htmlSource).toBe("main_document");
+    expect(contentCalled).toBe(false);
     expect(result.browserClosed).toBe(true);
   });
 
@@ -393,7 +394,8 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
       derivedOracleApartmentPrivateAd(),
       derivedOracleApartmentBusinessAd(),
     ]);
-    const result = extractListingsFromOlxCatalogHtml(html, new Date(), { expectedCategoryId: 1760 });
+    const probeAt = new Date("2026-09-18T20:27:56.395Z");
+    const result = extractListingsFromOlxCatalogHtml(html, probeAt, { expectedCategoryId: 1760 });
     expect(result.source).toBe("prerendered_state");
     expect(result.listings).toHaveLength(2);
 
@@ -422,7 +424,14 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(biz?.sellerType).toBe("business");
     expect(biz?.metadata?.pushupTime).toBe("2026-09-17T10:27:55+03:00");
     expect(result.diagnostics.ownerEligibleCount).toBe(0);
-    expect(result.diagnostics.freshnessEligibleCount).toBe(2);
+    expect(result.diagnostics.privateAccountCount).toBe(1);
+    expect(result.diagnostics.businessAccountCount).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.private_account_not_ownership).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.business_account).toBe(1);
+    expect(result.diagnostics.publishedAtPresentCount).toBe(2);
+    expect(result.diagnostics.freshnessEligibleCount).toBe(1);
+    expect(result.diagnostics.telegramFreshnessKindCounts?.new_publication).toBe(1);
+    expect(result.diagnostics.telegramFreshnessKindCounts?.refreshed_old).toBe(1);
   });
 
   it("deduplicates by source + listing id and keeps old createdTime separate from refresh", () => {
@@ -445,6 +454,40 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(result.listings).toHaveLength(1);
     expect(result.listings[0]?.propertyType).toBe("house");
     expect(result.listings[0]?.sellerType).toBe("unknown");
+    expect(result.diagnostics.ownerEligibleCount).toBe(0);
+    expect(result.diagnostics.privateAccountCount).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.private_account_not_ownership).toBe(1);
+    expect(result.listings[0]?.sellerEvidence?.some((item) => item.includes("від власника"))).toBe(true);
+  });
+
+  it("does not treat valid old timestamps or refreshes as Telegram-fresh publications", () => {
+    const probeAt = new Date("2026-09-18T20:27:56.395Z");
+    const html = derivedOracleMainDocumentHtml([
+      {
+        ...derivedOracleApartmentPrivateAd(),
+        id: 933128280,
+        createdTime: "2026-08-28T16:34:45+03:00",
+        lastRefreshTime: "2026-09-18T15:44:42+03:00",
+      },
+      {
+        ...derivedOracleApartmentPrivateAd(),
+        id: 934256136,
+        createdTime: "2026-09-09T01:32:52+03:00",
+        lastRefreshTime: "2026-09-09T01:36:16+03:00",
+      },
+      {
+        ...derivedOracleApartmentPrivateAd(),
+        id: 934623975,
+        createdTime: "2026-09-12T20:55:42+03:00",
+        lastRefreshTime: "2026-09-12T20:59:30+03:00",
+      },
+    ]);
+    const result = extractListingsFromOlxCatalogHtml(html, probeAt, { expectedCategoryId: 1760 });
+    expect(result.diagnostics.publishedAtPresentCount).toBe(3);
+    expect(result.diagnostics.freshnessEligibleCount).toBe(1);
+    expect(result.diagnostics.telegramFreshnessKindCounts?.refreshed_old).toBe(1);
+    expect(result.diagnostics.telegramFreshnessKindCounts?.old_publication).toBe(1);
+    expect(result.diagnostics.telegramFreshnessKindCounts?.new_publication).toBe(1);
     expect(result.diagnostics.ownerEligibleCount).toBe(0);
   });
 

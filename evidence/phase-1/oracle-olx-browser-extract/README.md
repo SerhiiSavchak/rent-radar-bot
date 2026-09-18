@@ -1,28 +1,46 @@
 # Oracle OLX browser extract — status
 
-## Live Oracle after `219316f` — original document available, adapter rejected ads
+## Live Oracle after `75f7384` — extraction succeeded, not delivery-ready
 
-Live probe on `219316f` showed the original navigation HTML and listing state are present:
+Live `live:olx:browser-extract` on `75f738457d386173b9c554e0a3d069f04e681ddc` (2026-09-18T20:27:56Z):
 
-- `htmlInputKind=main_document`
-- `hasPrerenderedState=true`, `prerenderedStateComplete=true`, `prerenderedAdsPathFound=true`
-- apartments `rawObjectCount=51`, houses `rawObjectCount=38`
-- `uniqueIdCount=0`, `normalizedListingCount=0`
-- every candidate lumped as `embedded_offers_partial_schema_failure`
-- accessibility succeeded; extraction failed; `browserClosed=true`
+- `extractionOk=true`, `accessibilityOk=true`, `browserClosed=true`
+- apartments `51` validated (`rawOfferCount=52`, one `duplicate_id`)
+- houses `38` validated (`rawOfferCount=39`, one `duplicate_id`)
+- `extractSource=prerendered_state`, `htmlInputKind=main_document` for both categories
+- schema failures gone
+- **not wired to Telegram**; `ENABLE_OLX` stays false; this is extraction evidence only
 
-Root cause (from the captured `listing.listing.ads` objects, not fixtures): catalog `photos` is a `string[]` of CDN URLs (`ireland.apollo.olxcdn.com:443/...`). The adapter copied that array as-is into a Zod schema that expected `{ link }` objects, so every offer failed `safeParse`.
+Details: `cycle-75f7384.json`.
 
-**Do not claim live OLX success. Do not wire OLX into Telegram** until a live Oracle extract reports `validatedListingCount > 0` after this parser change.
+## Owner: `ownerEligibleCount=0` is correct, not a parser miss
 
-## What the extractor reads now
+OLX catalog ads never set a platform owner flag. Captured ads have:
 
-- **Parser input:** original Playwright navigation body first (`htmlInputKind=main_document`). Rendered DOM is fallback only when that document has no structured state.
-- Quoted `__PRERENDERED_STATE__` is decoded with `JSON.parse` only (no `eval`).
-- Catalog camelCase ads are adapted: `id`, `title`, `url`/`urlPath`, `category`, `location.cityName`, `price.regularPrice`, `createdTime` → `publishedAt`, `lastRefreshTime` / `pushupTime` kept separate, `photos` string URLs normalized to `{ link }`.
-- `isBusiness=false` = private account, **not** verified property ownership (`sellerType=unknown`).
-- `map.show_detailed=false` is recorded as approximate coordinates.
-- Evidence JSON keeps `uniqueRawIdCount`, `uniqueIdCount`, `rejectionReasonCounts`, and a sample of `candidateRejections`.
-- A category deadline after a successful parse is reported as `timedOut` / `post_extract_deadline` without flipping a validated extract to parser failure.
+- `isBusiness=false` + `user.sellerType=null` → private **account**
+- `isBusiness=true` → business account
+- title/description phrases such as «від власника» / «без комісії» are text evidence only
 
-Offline fixtures for this adapter are labeled **derived** from the Oracle capture; they include sanitized `string[]` photos matching the live catalog shape.
+`classifyOwner` requires `platformOwner=true` for `sellerType=owner`. Private-account evidence is recorded separately and does **not** set `filterConsidersPrivateOwner`. Live samples in this run were all `sellerType=business`.
+
+## Freshness: a timestamp is not a new Telegram publication
+
+The `75f7384` diagnostic counted every listing with a `createdTime`/`publishedAt` Date (`freshnessEligibleCount=51/38`). Telegram policy is different (`listing-freshness.ts`, default 7 days, `TELEGRAM_STRICT_NEW_PUBLICATIONS=true`):
+
+| sample `publishedAt` | `refreshedAt` | kind at probe time |
+| --- | --- | --- |
+| 2026-08-28 | 2026-09-18 | `refreshed_old` — not a new publication |
+| 2026-09-08 | same-day refresh | `old_publication` |
+| 2026-09-10 | 2026-09-18 | `old_publication` |
+| 2026-09-12 | same-day refresh | `new_publication` (within 7 days) |
+| 2026-09-17 | same-day refresh | `new_publication` |
+
+Refresh/push-up must not relabel an old `createdTime` as «Нова публікація».
+
+## Runtime 254.773s vs `totalBudgetMs=210000`
+
+- apartments `elapsedMs=87478`, `timedOut=false`, full diagnostic capture written
+- houses `elapsedMs=146207`, `timedOut=true`, extract still succeeded, rendered capture skipped (`originalBytes=0`)
+- notes included `timeout_after_successful_extract=true`
+
+Houses overran the 90s category budget because post-extract `page.content()` / cleanup was not aborted after listings were already parsed. Successful listings must be kept; the timeout must still be reported; capture after a successful main-document parse must not wait on rendered DOM.

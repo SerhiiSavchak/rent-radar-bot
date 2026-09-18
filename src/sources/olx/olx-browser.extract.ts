@@ -92,6 +92,8 @@ export type OlxBrowserExtractResult = {
     categoryBudgetMs: number;
     totalBudgetMs: number;
   };
+  wallClockMs: number;
+  budgetExceeded: boolean;
 };
 
 export type OlxBrowserExtractDeps = {
@@ -503,23 +505,6 @@ async function extractCategory(
         rejections.push(...fromRendered.rejections);
         htmlInputKind = "rendered_dom";
       }
-    } else if (deps.captureDir && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
-      try {
-        renderedHtml = await raceDeadline(page.content(), categoryDeadlineAt, deps.clock, async () => {
-          markTimeout();
-        });
-      } catch (error) {
-        if (!(error instanceof OlxDeadlineExceededError)) {
-          throw error;
-        }
-        markTimeout();
-        if (listings.length > 0) {
-          rejections.push({
-            reason: "post_extract_deadline",
-            detail: "category budget hit after listings were parsed; capture skipped",
-          });
-        }
-      }
     }
 
     let finalUrl = url;
@@ -548,10 +533,22 @@ async function extractCategory(
       });
     }
 
+    // Close the page before diagnostic capture so cleanup cannot wait on rendered DOM.
+    if (!pageClosed) {
+      pageClosed = true;
+      await page.close().catch(() => undefined);
+    }
+
     let capturePaths: OlxCategoryCapturePaths | undefined;
     if (deps.captureDir) {
       if (remainingMs(categoryDeadlineAt, deps.clock()) <= 0) {
         markTimeout();
+        if (listings.length > 0) {
+          rejections.push({
+            reason: "post_extract_deadline",
+            detail: "category budget hit after listings were parsed; diagnostic capture skipped",
+          });
+        }
         capturePaths = writeOlxCategoryCapture({
           captureDir: deps.captureDir,
           category,
@@ -576,10 +573,9 @@ async function extractCategory(
           finalUrl,
           ...(httpStatus !== undefined ? { httpStatus } : {}),
           ...(mainDocumentHtml !== undefined ? { mainDocumentHtml } : {}),
-          ...(renderedHtml ? { renderedHtml } : {}),
           ...(relevantStateJson !== undefined ? { relevantStateJson } : {}),
-          scripts: inventoryScriptsFromHtml(renderedHtml || mainDocumentHtml || ""),
-          cards: extractCardFragmentsFromHtml(renderedHtml || mainDocumentHtml || ""),
+          scripts: inventoryScriptsFromHtml(mainDocumentHtml || ""),
+          cards: extractCardFragmentsFromHtml(mainDocumentHtml || ""),
           networkMeta,
         });
       }
@@ -738,6 +734,7 @@ export async function extractOlxListingsViaBrowser(
   } finally {
     await browser.close();
   }
+  const wallClockMs = clock() - runStarted;
   if (!apartments || !houses) {
     throw new Error("OLX browser extract incomplete before browser.close()");
   }
@@ -789,6 +786,11 @@ export async function extractOlxListingsViaBrowser(
   if (extractionOk && (apartments.timedOut || houses.timedOut)) {
     notes.push("timeout_after_successful_extract=true");
   }
+  const budgetExceeded = wallClockMs > totalBudgetMs;
+  notes.push(`wallClockMs=${wallClockMs}`);
+  if (budgetExceeded) {
+    notes.push("total_budget_exceeded_including_cleanup=true");
+  }
   return {
     apartments,
     houses,
@@ -798,6 +800,8 @@ export async function extractOlxListingsViaBrowser(
     browserClosed: true,
     notes,
     budgets: { navigationTimeoutMs, categoryBudgetMs, totalBudgetMs },
+    wallClockMs,
+    budgetExceeded,
     ...(deps.captureDir ? { captureRootDir: deps.captureDir } : {}),
   };
 }

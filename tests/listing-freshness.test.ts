@@ -109,6 +109,48 @@ describe("listing freshness classification", () => {
     expect(result.deliverable).toBe(false);
   });
 
+  it("does not treat live OLX August/early-September createdTime as new publications", () => {
+    const probeAt = new Date("2026-09-18T20:27:56.395Z");
+    const policy = {
+      maxPublicationAgeMinutes: 7 * 24 * 60,
+      strictNewPublications: true,
+      now: probeAt,
+    };
+    expect(
+      classifyListingFreshness(
+        sampleListing({
+          source: "olx",
+          sourceId: "933128280",
+          publishedAt: new Date("2026-08-28T13:34:45.000Z"),
+          refreshedAt: new Date("2026-09-18T12:44:42.000Z"),
+        }),
+        policy,
+      ),
+    ).toMatchObject({ kind: "refreshed_old", deliverable: false });
+    expect(
+      classifyListingFreshness(
+        sampleListing({
+          source: "olx",
+          sourceId: "934256136",
+          publishedAt: new Date("2026-09-08T22:32:52.000Z"),
+          refreshedAt: new Date("2026-09-08T22:36:16.000Z"),
+        }),
+        policy,
+      ),
+    ).toMatchObject({ kind: "old_publication", deliverable: false });
+    expect(
+      classifyListingFreshness(
+        sampleListing({
+          source: "olx",
+          sourceId: "934623975",
+          publishedAt: new Date("2026-09-12T17:55:42.000Z"),
+          refreshedAt: new Date("2026-09-12T17:59:30.000Z"),
+        }),
+        policy,
+      ),
+    ).toMatchObject({ kind: "new_publication", deliverable: true });
+  });
+
   it("labels missing publishedAt as first_noticed and excludes in strict mode", () => {
     const listing = sampleListing();
     delete (listing as { publishedAt?: Date }).publishedAt;

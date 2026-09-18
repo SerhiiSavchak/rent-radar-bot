@@ -14,6 +14,11 @@ import {
 } from "../src/sources/olx/olx-browser.capture.ts";
 import { extractOlxListingsViaBrowser } from "../src/sources/olx/olx-browser.extract.ts";
 import { olxCatalogHtmlCardsOnly } from "./fixtures/olx-catalog-html.ts";
+import {
+  derivedOracleApartmentPrivateAd,
+  derivedOracleMainDocumentHtml,
+  derivedOracleRenderedHtmlWithoutState,
+} from "./fixtures/olx-prerendered-oracle-derived.ts";
 
 describe("OLX browser capture helpers", () => {
   it("sanitizes cookies/authorization and skips analytics hosts", () => {
@@ -307,6 +312,62 @@ describe("OLX browser extract budgets + capture wiring", () => {
         skippedReason?: string;
       };
       expect(manifest.skippedReason).toBe("deadline_before_capture");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps extracted listings without waiting on rendered DOM capture", async () => {
+    const root = mkdtempSync(join(tmpdir(), "olx-cap5-"));
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    const content = vi.fn(async () => {
+      throw new Error("page.content() must not run after a successful main-document extract");
+    });
+    let lastUrl =
+      "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
+    const page = {
+      on: vi.fn(),
+      goto: vi.fn(async (navUrl: string) => {
+        lastUrl = navUrl;
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => Buffer.from(main, "utf8"),
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content,
+      url: () => lastUrl,
+      title: async () => "OLX",
+      close: vi.fn(async () => undefined),
+    } as unknown as Page;
+    const browser = {
+      newContext: async () =>
+        ({
+          newPage: async () => page,
+          close: vi.fn(async () => undefined),
+        }) as unknown as BrowserContext,
+      close: vi.fn(async () => undefined),
+    } as unknown as Browser;
+    try {
+      const result = await extractOlxListingsViaBrowser({
+        timeoutMs: 5_000,
+        categoryBudgetMs: 5_000,
+        totalBudgetMs: 20_000,
+        launch: async () => browser,
+        captureDir: root,
+        commit: "75f7384",
+      });
+      expect(result.extractionOk).toBe(true);
+      expect(result.apartments.validatedListingCount).toBeGreaterThan(0);
+      expect(result.apartments.timedOut).toBeFalsy();
+      expect(content).not.toHaveBeenCalled();
+      expect(derivedOracleRenderedHtmlWithoutState(ads)).not.toContain("__PRERENDERED_STATE__");
+      const saved = readFileSync(result.apartments.capturePaths!.mainDocumentPath!, "utf8");
+      expect(saved).toContain("__PRERENDERED_STATE__");
+      expect(result.budgetExceeded).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -1,0 +1,92 @@
+{
+  "commit": "75f738457d386173b9c554e0a3d069f04e681ddc",
+  "recordedFrom": "Oracle live:olx:browser-extract 2026-09-18T20:27:56.395Z",
+  "deliveryReady": false,
+  "wiredToTelegram": false,
+  "enableOlx": false,
+  "accessibilityOk": true,
+  "extractionOk": true,
+  "validatedListingCount": 89,
+  "browserClosed": true,
+  "budgets": {
+    "navigationTimeoutMs": 45000,
+    "categoryBudgetMs": 90000,
+    "totalBudgetMs": 210000
+  },
+  "wallClockMs": 254773,
+  "budgetExceeded": true,
+  "apartments": {
+    "extractSource": "prerendered_state",
+    "htmlInputKind": "main_document",
+    "rawOfferCount": 52,
+    "validatedListingCount": 51,
+    "uniqueRawIdCount": 51,
+    "uniqueIdCount": 51,
+    "ownerEligibleCount": 0,
+    "freshnessEligibleCountReported": 51,
+    "freshnessEligibleCountNote": "This run counted any publishedAt Date, not Telegram 7-day new_publication policy.",
+    "rejectionReasonCounts": { "duplicate_id": 1 },
+    "elapsedMs": 87478,
+    "timedOut": false,
+    "httpStatus": 200
+  },
+  "houses": {
+    "extractSource": "prerendered_state",
+    "htmlInputKind": "main_document",
+    "rawOfferCount": 39,
+    "validatedListingCount": 38,
+    "uniqueRawIdCount": 38,
+    "uniqueIdCount": 38,
+    "ownerEligibleCount": 0,
+    "freshnessEligibleCountReported": 38,
+    "rejectionReasonCounts": { "duplicate_id": 1 },
+    "elapsedMs": 146207,
+    "timedOut": true,
+    "httpStatus": 200,
+    "captureSkipped": true
+  },
+  "sampleListings": [
+    {
+      "sourceId": "934256136",
+      "sellerType": "business",
+      "publishedAt": "2026-09-08T22:32:52.000Z",
+      "refreshedAt": "2026-09-08T22:36:16.000Z",
+      "telegramFreshnessAtProbe": "old_publication"
+    },
+    {
+      "sourceId": "934623975",
+      "sellerType": "business",
+      "publishedAt": "2026-09-12T17:55:42.000Z",
+      "refreshedAt": "2026-09-12T17:59:30.000Z",
+      "telegramFreshnessAtProbe": "new_publication"
+    },
+    {
+      "sourceId": "935163518",
+      "sellerType": "business",
+      "publishedAt": "2026-09-17T18:19:43.000Z",
+      "refreshedAt": "2026-09-17T18:22:57.000Z",
+      "telegramFreshnessAtProbe": "new_publication"
+    },
+    {
+      "sourceId": "934428501",
+      "sellerType": "business",
+      "publishedAt": "2026-09-10T16:44:40.000Z",
+      "refreshedAt": "2026-09-18T10:52:40.000Z",
+      "telegramFreshnessAtProbe": "old_publication"
+    },
+    {
+      "sourceId": "933128280",
+      "sellerType": "business",
+      "publishedAt": "2026-08-28T13:34:45.000Z",
+      "refreshedAt": "2026-09-18T12:44:42.000Z",
+      "telegramFreshnessAtProbe": "refreshed_old"
+    }
+  ],
+  "notes": [
+    "Schema failures gone; one duplicate removed per category.",
+    "ownerEligibleCount=0 is expected: OLX has no platformOwner signal; isBusiness=false is a private account, not ownership.",
+    "freshnessEligibleCount=51/38 overstated Telegram eligibility by treating any createdTime as fresh.",
+    "Wall clock 254.773s exceeded totalBudgetMs=210000. Houses timedOut after extract; rendered capture/cleanup continued past the category deadline.",
+    "Do not wire OLX into Telegram from this result."
+  ]
+}

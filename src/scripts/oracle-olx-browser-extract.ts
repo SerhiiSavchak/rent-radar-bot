@@ -104,6 +104,8 @@ try {
     extractionOk: result.extractionOk,
     validatedListingCount: result.listings.length,
     budgets: result.budgets,
+    wallClockMs: result.wallClockMs,
+    budgetExceeded: result.budgetExceeded,
     captureRootDir: result.captureRootDir ?? null,
     apartments: {
       accessibility: result.apartments.accessibility,
