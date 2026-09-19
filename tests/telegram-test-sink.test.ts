@@ -274,6 +274,62 @@ describe("in-memory dedupe + pipeline", () => {
     resetConfigCache();
   });
 
+  it("does not treat RIELTOR HTTP 403 as delivery success even if listings were already parsed", async () => {
+    resetConfigCache();
+    const config = loadConfig({
+      OWNER_ONLY: "true",
+      ENABLE_DOMRIA: "false",
+      ENABLE_LUN: "false",
+      ENABLE_OLX: "false",
+      ENABLE_RIELTOR: "true",
+      PROPERTY_TYPES: "apartment,house",
+      TARGET_LAT: "49.8397",
+      TARGET_LNG: "24.0297",
+      TARGET_RADIUS_KM: "15",
+      GEO_UNKNOWN_POLICY: "include",
+    });
+    const listings = [
+      sampleListing({
+        sellerType: "owner",
+        publishedAt: new Date("2026-09-17T12:00:00Z"),
+      }),
+    ];
+    const blocked: ListingSourceAdapter = {
+      source: "rieltor",
+      fetchLatest: async () => listings,
+      inspectLatest: async (): Promise<SourceFetchResult> => ({
+        listings,
+        transport: "public HTML catalog cards + optional JSON-LD",
+        dataKind: "LIVE DATA",
+        resultKind: "ok",
+        httpStatus: 403,
+        health: {
+          source: "rieltor",
+          healthy: true,
+          checkedAt: new Date(),
+          resultKind: "ok",
+          httpStatus: 403,
+          transport: "public HTML catalog cards + optional JSON-LD",
+        },
+      }),
+      healthCheck: async () => ({ source: "rieltor", healthy: true, checkedAt: new Date() }),
+    };
+    const sendListing = vi.fn();
+    const report = await runTelegramTestCycle({
+      adapters: [blocked],
+      config,
+      sink: { chatId: "55", sendListing } as unknown as TelegramTestSink,
+      dedupe: new InMemoryListingDedupe(),
+      baseline: new InMemorySourceBaseline(),
+    });
+    expect(report.sourceErrors.some((item) => item.errorSafe.includes("transport_blocked"))).toBe(
+      true,
+    );
+    expect(report.sourceAttempts.some((item) => item.resultKind === "transport_blocked")).toBe(true);
+    expect(sendListing).not.toHaveBeenCalled();
+    resetConfigCache();
+  });
+
   it("isolates source failures while silently baselining healthy sources", async () => {
     resetConfigCache();
     const config = loadConfig({

@@ -51,3 +51,18 @@ One-shot `npm run live:rieltor` and three scripted cycles, this workstation, ord
 Intervals: 10 min 0 s (cycle 1→2) and 10 min 3 s (cycle 2→3). Total cycle-script requests: **6**. No 403/429. The same 10 apartment ids appeared in all three cycles (first-page window did not move in 20 minutes). Houses were fetched each cycle (20 cards, declared 53) but sliced off by `limit=10`.
 
 This short run does **not** prove multi-day reliability.
+
+## Oracle 403 investigation (started after OLX `c783688`)
+
+Compliant public route (ordinary GET, no `/api/`, no `/ajax/`, no stealth):
+
+| URL | Role |
+|-----|------|
+| `https://rieltor.ua/lvov/flats-rent/?f-owners=1` | owner-filtered apartments |
+| `https://rieltor.ua/lvov/houses-rent/?f-owners=1` | owner-filtered houses (often valid empty) |
+
+`robots.txt` (`User-agent: *`) **disallows** `*/api/`, `*/ajax/`, `/cdn-cgi/`, `*?*sort=*`. There is **no official public search API** for this product. Do not call disallowed JSON/ajax endpoints to “work around” HTML 403.
+
+12-cycle soak (`3af328c`) recorded RIELTOR **200** on those owner URLs (12/12). Telegram TEST notes an **intermittent Cloudflare 403** on the same path/headers. That 403 was **not re-fetched from the development workstation**.
+
+Classification rule: HTTP 403/429, or HTTP 200 whose body is a Cloudflare challenge/block page, is `transport_blocked`. A later 403 must not be hidden behind an earlier catalog HTML 200 (`resultKind=ok` + `httpStatus=403` is a lie). No proxy/CAPTCHA/stealth retries.

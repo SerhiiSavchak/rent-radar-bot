@@ -103,18 +103,18 @@ function classifySourceAttempt(result: SourceFetchResult): {
   errorSafe?: string;
 } {
   const kind = result.resultKind ?? "unknown";
+  if (result.httpStatus === 403 || result.httpStatus === 429) {
+    return {
+      ok: false,
+      resultKind: "transport_blocked",
+      errorSafe: `transport_blocked HTTP ${result.httpStatus} via ${result.transport}`,
+    };
+  }
   if (kind === "ok" && result.listings.length > 0) {
     return { ok: true, resultKind: kind };
   }
   if (kind === "valid_empty") {
     return { ok: true, resultKind: kind };
-  }
-  if (result.httpStatus === 403 || result.httpStatus === 429) {
-    return {
-      ok: false,
-      resultKind: kind === "http_error" ? "transport_blocked" : kind,
-      errorSafe: `transport_blocked HTTP ${result.httpStatus} via ${result.transport}`,
-    };
   }
   if (kind === "parser_failure") {
     return {

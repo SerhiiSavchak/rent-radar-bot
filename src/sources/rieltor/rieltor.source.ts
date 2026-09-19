@@ -10,6 +10,7 @@ import { getConfig } from "../../config/env.ts";
 import { AppError } from "../../utils/errors.ts";
 import { headerBag, httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
+import { isRieltorTransportBlocked, resolveRieltorInspectKind } from "./rieltor-classify.ts";
 import { buildRieltorSearchUrl, inspectRieltorHtml } from "./rieltor.parser.ts";
 import {
   RIELTOR_MAX_PAGES_PER_CATEGORY,
@@ -106,7 +107,7 @@ export class RieltorSource implements ListingSourceAdapter {
     }
 
     const unique = dedupe(listings).slice(0, options?.limit ?? 10);
-    const resultKind = resolveKind({
+    const resultKind = resolveRieltorInspectKind({
       parserFailure,
       httpError,
       blocked,
@@ -201,11 +202,11 @@ export class RieltorSource implements ListingSourceAdapter {
       requestCount += 1;
       lastStatus = response.status;
       notes.push(`${url} -> ${response.status} ${headerBag(response)} final=${response.url}`);
-      if (response.status === 403 || response.status === 429) {
+      if (isRieltorTransportBlocked({ status: response.status, bodyText: response.bodyText })) {
         blocked = true;
         httpError = true;
         notes.push(
-          `${category} page ${page}: transport_blocked (${response.status}); bounded stop, no proxy/CAPTCHA/stealth retries`,
+          `${category} page ${page}: transport_blocked (${response.status}); HTML 200 challenge/block page is not catalog success; bounded stop, no proxy/CAPTCHA/stealth retries`,
         );
         // Single bounded pause before returning so the next cycle/source is spaced;
         // do not retry the blocked request aggressively.
@@ -275,30 +276,6 @@ export class RieltorSource implements ListingSourceAdapter {
   }
 }
 
-function resolveKind(input: {
-  parserFailure: boolean;
-  httpError: boolean;
-  blocked: boolean;
-  uniqueCount: number;
-  sawStructure: boolean;
-}): FetchResultKind {
-  if (input.blocked && input.uniqueCount === 0) {
-    return "http_error";
-  }
-  if (input.parserFailure && input.uniqueCount === 0) {
-    return "parser_failure";
-  }
-  if (input.httpError && input.uniqueCount === 0) {
-    return "http_error";
-  }
-  if (input.uniqueCount === 0 && input.sawStructure) {
-    return "valid_empty";
-  }
-  if (input.uniqueCount > 0) {
-    return "ok";
-  }
-  return "http_error";
-}
 
 function messageFor(
   kind: FetchResultKind,
