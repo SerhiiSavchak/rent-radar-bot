@@ -1,19 +1,20 @@
 /**
- * Bounded TEST Telegram polling (not an always-on daemon).
+ * TEST Telegram polling with local SQLite durability.
  *
  * Requires TELEGRAM_TEST_MODE=true + TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID.
  *
  * Env:
- *   TELEGRAM_POLL_CYCLES       default 6
+ *   TELEGRAM_POLL_CYCLES       default 6; 0 = unbounded (systemd)
  *   TELEGRAM_POLL_INTERVAL_MS  default 600000
  *   TELEGRAM_DRY_RUN=true      optional
  *   FIRST_RUN_MODE=seed|preview  (send→preview; default seed = silent baseline)
+ *   DATABASE_PATH              local SQLite file
+ *   HEARTBEAT_PATH             optional JSON heartbeat file
  */
 
+import { dirname, join } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { getConfig } from "../config/env.ts";
-import { InMemoryListingDedupe } from "../delivery/listing-dedupe-memory.ts";
-import { InMemorySourceBaseline } from "../delivery/source-baseline-memory.ts";
 import {
   formatTelegramFinalSummary,
   formatTelegramStartupMessage,
@@ -25,13 +26,19 @@ import {
   TelegramTestModeError,
 } from "../outputs/telegram-test.sink.ts";
 import { createCollectionAdapters } from "../collection/create-source-adapters.ts";
+import { openDurableRuntime, PollerLockError } from "../storage/durable-runtime.ts";
+import { writeHeartbeat } from "../storage/heartbeat.ts";
 
 loadDotenv();
 
-const cycles = Math.max(1, Number(process.env.TELEGRAM_POLL_CYCLES ?? "6"));
+const rawCycles = process.env.TELEGRAM_POLL_CYCLES;
+const unbounded = rawCycles === "0";
+const cycles = unbounded ? 0 : Math.max(1, Number(rawCycles ?? "6") || 6);
 const intervalMs = Math.max(0, Number(process.env.TELEGRAM_POLL_INTERVAL_MS ?? String(10 * 60_000)));
 
 let stop = false;
+let closeRuntime: (() => void) | undefined;
+
 const onSignal = () => {
   stop = true;
 };
@@ -45,8 +52,13 @@ try {
     maxRetries: 2,
   });
   const adapters = createCollectionAdapters(config);
-  const dedupe = new InMemoryListingDedupe();
-  const baseline = new InMemorySourceBaseline();
+  const runtime = openDurableRuntime({
+    databasePath: config.databasePath,
+    lockHolder: `telegram-poll:${process.pid}`,
+  });
+  closeRuntime = () => runtime.close();
+  const heartbeatPath =
+    process.env.HEARTBEAT_PATH ?? join(dirname(config.databasePath), "heartbeat.json");
   const dryRun = process.env.TELEGRAM_DRY_RUN === "true";
 
   const startup = formatTelegramStartupMessage({
@@ -62,24 +74,36 @@ try {
     ownerOnly: config.ownerOnly,
     ownerAcceptSelfDeclared: config.ownerAcceptSelfDeclared,
     firstRunMode: config.firstRunMode,
+    durable: true,
   });
 
   console.log(
     JSON.stringify({
       message: "live:test-telegram:poll.start",
-      cycles,
+      cycles: unbounded ? 0 : cycles,
+      unbounded,
       intervalMs,
       chatId: sink.chatId,
       dryRun,
       enableOlx: config.enableOlx,
       enableOlxBrowser: config.enableOlxBrowser,
       firstRunMode: config.firstRunMode,
-      dedupeSurvivesRestart: false,
-      baselineSurvivesRestart: false,
-      restartRebaseline: true,
-      note: "Bounded poll. Per-source silent baseline. Old publishedAt never sent as new. Token not logged.",
+      schemaVersion: runtime.schemaVersion,
+      databasePath: config.databasePath,
+      heartbeatPath,
+      dedupeSurvivesRestart: true,
+      baselineSurvivesRestart: true,
+      restartRebaseline: false,
+      note: "SQLite baseline/outbox. Per-source silent first-run seed. Token not logged.",
     }),
   );
+  writeHeartbeat(heartbeatPath, {
+    state: "started",
+    pid: process.pid,
+    schemaVersion: runtime.schemaVersion,
+    unbounded,
+  });
+  runtime.lock.heartbeat();
 
   const startupSend = await sink.sendText(startup);
   if (!startupSend.ok) {
@@ -100,7 +124,7 @@ try {
   let partialCoverageCycles = 0;
   let cyclesAttempted = 0;
 
-  for (let cycle = 1; cycle <= cycles; cycle += 1) {
+  for (let cycle = 1; unbounded || cycle <= cycles; cycle += 1) {
     if (stop) {
       console.log(JSON.stringify({ message: "live:test-telegram:poll.aborted", cycle }));
       break;
@@ -110,8 +134,9 @@ try {
         adapters,
         config,
         sink,
-        dedupe,
-        baseline,
+        dedupe: runtime.store,
+        baseline: runtime.store,
+        outbox: runtime.store,
       },
       cycle,
     );
@@ -129,10 +154,20 @@ try {
       zeroEligibleCycles += 1;
     }
     console.log(JSON.stringify({ message: "live:test-telegram:poll.cycle", ...report }));
+    runtime.lock.heartbeat();
+    writeHeartbeat(heartbeatPath, {
+      state: "cycle",
+      pid: process.pid,
+      cycle,
+      sentOk: report.sentOk,
+      sentFailed: report.sentFailed,
+      deliveryMode: report.deliveryMode,
+      hasSourceFailures: report.hasSourceFailures,
+    });
     if (report.sentFailed > 0 || report.hasSourceFailures) {
       exitFail = true;
     }
-    if (cycle < cycles && !stop && intervalMs > 0) {
+    if ((unbounded || cycle < cycles) && !stop && intervalMs > 0) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => resolve(), intervalMs);
         const cancel = () => {
@@ -154,6 +189,7 @@ try {
     zeroEligibleCycles,
     partialCoverageCycles,
     dryRun,
+    durable: true,
   });
   const summarySend = await sink.sendText(summaryText);
   if (!summarySend.ok) {
@@ -166,6 +202,13 @@ try {
     );
   }
 
+  writeHeartbeat(heartbeatPath, {
+    state: stop ? "stopped" : "done",
+    pid: process.pid,
+    cyclesAttempted,
+    totalSentOk,
+    totalSentFailed,
+  });
   console.log(
     JSON.stringify({
       message: "live:test-telegram:poll.done",
@@ -177,8 +220,9 @@ try {
       sourceFailureCycles,
       zeroEligibleCycles,
       partialCoverageCycles,
-      dedupeSurvivesRestart: false,
-      baselineSurvivesRestart: false,
+      dedupeSurvivesRestart: true,
+      baselineSurvivesRestart: true,
+      restartRebaseline: false,
       exitFail,
     }),
   );
@@ -190,7 +234,10 @@ try {
       message: "live:test-telegram:poll.failed",
       error: redactTelegramSecrets(message, process.env.TELEGRAM_BOT_TOKEN),
       testModeRequired: error instanceof TelegramTestModeError,
+      concurrentPoller: error instanceof PollerLockError,
     }),
   );
-  process.exitCode = error instanceof TelegramTestModeError ? 2 : 1;
+  process.exitCode = error instanceof TelegramTestModeError ? 2 : error instanceof PollerLockError ? 3 : 1;
+} finally {
+  closeRuntime?.();
 }

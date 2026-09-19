@@ -36,7 +36,8 @@ validate_config() {
   echo "TELEGRAM_DRY_RUN=${TELEGRAM_DRY_RUN:-unset}"
   echo "TELEGRAM_POLL_CYCLES=${TELEGRAM_POLL_CYCLES:-6}"
   echo "TELEGRAM_POLL_INTERVAL_MS=${TELEGRAM_POLL_INTERVAL_MS:-600000}"
-  echo "ENABLE_OLX=${ENABLE_OLX:-false} (HTTP only unless OLX_BROWSER_EXTRACT=true after live check)"
+  echo "ENABLE_OLX=${ENABLE_OLX:-false} (HTTP adapter; keep false)"
+  echo "ENABLE_OLX_BROWSER=${ENABLE_OLX_BROWSER:-false} (explicit Playwright extract; no HTTP fallback)"
 }
 
 owned_tree_alive() {

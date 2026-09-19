@@ -1,6 +1,6 @@
 import type { Listing } from "../domain/listing.ts";
 import type { ListingSource } from "../domain/listing.ts";
-import { InMemoryListingDedupe } from "./listing-dedupe-memory.ts";
+import type { ListingDedupe, SourceBaseline } from "./delivery-ports.ts";
 
 /**
  * Per-source silent baseline for TEST Telegram delivery.
@@ -9,7 +9,7 @@ import { InMemoryListingDedupe } from "./listing-dedupe-memory.ts";
  * State is process-local: on restart every source needs a silent re-baseline.
  * Does not use SQLite (TEST mode stays free of unapproved DB coupling).
  */
-export class InMemorySourceBaseline {
+export class InMemorySourceBaseline implements SourceBaseline {
   private readonly ready = new Map<string, Date>();
 
   hasBaseline(source: ListingSource | string): boolean {
@@ -27,7 +27,7 @@ export class InMemorySourceBaseline {
   establishSilent(
     source: ListingSource | string,
     listings: Listing[],
-    dedupe: InMemoryListingDedupe,
+    dedupe: ListingDedupe,
     at = new Date(),
   ): number {
     for (const listing of listings) {
@@ -35,6 +35,10 @@ export class InMemorySourceBaseline {
     }
     this.ready.set(source, at);
     return listings.length;
+  }
+
+  recordSuccess(): void {
+    // Process-local baseline has no last_success_at column.
   }
 
   /** Sources that already completed a successful baseline this process. */

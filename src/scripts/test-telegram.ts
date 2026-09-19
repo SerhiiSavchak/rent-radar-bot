@@ -8,12 +8,12 @@
  *   TELEGRAM_TEST_MODE=true
  *   TELEGRAM_BOT_TOKEN=...
  *   TELEGRAM_CHAT_ID=...
+ *
+ * Durability: local SQLite (DATABASE_PATH). Concurrent oneshot/poll is rejected.
  */
 
 import { config as loadDotenv } from "dotenv";
 import { getConfig } from "../config/env.ts";
-import { InMemoryListingDedupe } from "../delivery/listing-dedupe-memory.ts";
-import { InMemorySourceBaseline } from "../delivery/source-baseline-memory.ts";
 import { runTelegramTestCycle } from "../delivery/telegram-test-pipeline.ts";
 import {
   createTelegramTestSinkFromEnv,
@@ -21,8 +21,18 @@ import {
   TelegramTestModeError,
 } from "../outputs/telegram-test.sink.ts";
 import { createCollectionAdapters } from "../collection/create-source-adapters.ts";
+import { openDurableRuntime, PollerLockError } from "../storage/durable-runtime.ts";
 
 loadDotenv();
+
+let closeRuntime: (() => void) | undefined;
+
+const shutdown = () => {
+  closeRuntime?.();
+  closeRuntime = undefined;
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 try {
   const config = getConfig();
@@ -31,6 +41,11 @@ try {
     maxRetries: 2,
   });
   const adapters = createCollectionAdapters(config);
+  const runtime = openDurableRuntime({
+    databasePath: config.databasePath,
+    lockHolder: `telegram-oneshot:${process.pid}`,
+  });
+  closeRuntime = () => runtime.close();
 
   console.log(
     JSON.stringify({
@@ -44,7 +59,11 @@ try {
       enableRieltor: config.enableRieltor,
       enableOlx: config.enableOlx,
       enableOlxBrowser: config.enableOlxBrowser,
-      note: "TEST mode. Default silent baseline. Token not logged.",
+      schemaVersion: runtime.schemaVersion,
+      dedupeSurvivesRestart: true,
+      baselineSurvivesRestart: true,
+      restartRebaseline: false,
+      note: "TEST mode. SQLite baseline/outbox. Token not logged.",
     }),
   );
 
@@ -52,8 +71,9 @@ try {
     adapters,
     config,
     sink,
-    dedupe: new InMemoryListingDedupe(),
-    baseline: new InMemorySourceBaseline(),
+    dedupe: runtime.store,
+    baseline: runtime.store,
+    outbox: runtime.store,
   });
 
   console.log(JSON.stringify({ message: "live:test-telegram.done", ...report }));
@@ -65,7 +85,10 @@ try {
       message: "live:test-telegram.failed",
       error: redactTelegramSecrets(message, process.env.TELEGRAM_BOT_TOKEN),
       testModeRequired: error instanceof TelegramTestModeError,
+      concurrentPoller: error instanceof PollerLockError,
     }),
   );
-  process.exitCode = error instanceof TelegramTestModeError ? 2 : 1;
+  process.exitCode = error instanceof TelegramTestModeError ? 2 : error instanceof PollerLockError ? 3 : 1;
+} finally {
+  shutdown();
 }

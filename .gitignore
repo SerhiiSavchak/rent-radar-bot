@@ -80,6 +80,8 @@ tmp-probe/
 data/
 *.sqlite
 *.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 dist-cf-probe/
 probe/cloudflare-workers/dist-cf-probe/
 probe/cloudflare-workers/.wrangler/

@@ -1,8 +1,9 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Listing } from "../domain/listing.ts";
 import { getConfig } from "../config/env.ts";
+import { applyMigrations } from "./migrations.ts";
 
 export type StoredListing = {
   id: number;
@@ -25,26 +26,22 @@ export function getDb(databasePath = openedPath ?? getConfig().databasePath): Da
     return db;
   }
   openedPath = databasePath;
-  mkdirSync(dirname(databasePath), { recursive: true });
+  mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dirname(databasePath), 0o700);
+  } catch {
+    // Windows may ignore POSIX modes.
+  }
   db = new DatabaseSync(databasePath);
+  try {
+    chmodSync(databasePath, 0o600);
+  } catch {
+    // best-effort
+  }
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS listings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      source TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      canonical_url TEXT NOT NULL,
-      title TEXT NOT NULL,
-      discovered_at TEXT NOT NULL,
-      published_at TEXT,
-      first_seen_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL,
-      raw_json TEXT,
-      UNIQUE (source, source_id)
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS listings_url_idx ON listings (canonical_url);
-  `);
+  db.exec("PRAGMA busy_timeout = 5000;");
+  applyMigrations(db);
   return db;
 }
 
@@ -140,6 +137,12 @@ export function resetDbForTests(databasePath: string): void {
   closeDb();
   db = new DatabaseSync(databasePath);
   db.exec(`
+    DROP TABLE IF EXISTS telegram_outbox;
+    DROP TABLE IF EXISTS seen_listings;
+    DROP TABLE IF EXISTS source_baselines;
+    DROP TABLE IF EXISTS poller_lock;
+    DROP TABLE IF EXISTS schema_meta;
+    DROP TABLE IF EXISTS schema_migrations;
     DROP TABLE IF EXISTS listings;
   `);
   closeDb();

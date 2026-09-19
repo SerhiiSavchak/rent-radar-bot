@@ -1,17 +1,5 @@
 import type { Listing } from "../domain/listing.ts";
-
-function normalizeUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    parsed.hash = "";
-    parsed.search = "";
-    parsed.hostname = parsed.hostname.replace(/^www\./, "");
-    const path = parsed.pathname.replace(/\/+$/, "");
-    return `${parsed.protocol}//${parsed.hostname}${path}`.toLowerCase();
-  } catch {
-    return url.trim().toLowerCase();
-  }
-}
+import { canonicalListingUrl, type ListingDedupe } from "./delivery-ports.ts";
 
 /**
  * Process-local dedupe for TEST Telegram delivery (no DB required).
@@ -21,7 +9,7 @@ function normalizeUrl(url: string): string {
  * Restart durability: **in-memory only** — a process restart forgets all keys.
  * Do not claim cross-restart dedupe without an approved persistence layer.
  */
-export class InMemoryListingDedupe {
+export class InMemoryListingDedupe implements ListingDedupe {
   private readonly ids = new Set<string>();
   private readonly urls = new Set<string>();
 
@@ -33,12 +21,12 @@ export class InMemoryListingDedupe {
     if (this.ids.has(this.keyOf(listing))) {
       return true;
     }
-    return this.urls.has(normalizeUrl(listing.url));
+    return this.urls.has(canonicalListingUrl(listing.url));
   }
 
   markSeen(listing: Pick<Listing, "source" | "sourceId" | "url">): void {
     this.ids.add(this.keyOf(listing));
-    this.urls.add(normalizeUrl(listing.url));
+    this.urls.add(canonicalListingUrl(listing.url));
   }
 
   /** Return unseen listings without marking (failed sends must remain eligible). */

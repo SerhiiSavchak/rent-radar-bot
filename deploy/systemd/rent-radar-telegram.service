@@ -1,0 +1,31 @@
+[Unit]
+Description=Rent Radar Telegram poller (local SQLite)
+Documentation=file:///home/ubuntu/rent-radar-bot/docs/TELEGRAM_TEST_MODE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO_DIR__
+EnvironmentFile=-__ENV_FILE__
+Environment=NODE_ENV=production
+Environment=TELEGRAM_POLL_CYCLES=0
+Environment=ENABLE_OLX=false
+Environment=DATABASE_PATH=__DATABASE_PATH__
+Environment=HEARTBEAT_PATH=__HEARTBEAT_PATH__
+ExecStartPre=/bin/mkdir -p __RUNTIME_DIR__
+ExecStartPre=/bin/chmod 700 __RUNTIME_DIR__
+ExecStart=__NPM_BIN__ run live:test-telegram:poll
+Restart=on-failure
+RestartSec=20
+RestartPreventExitStatus=2
+TimeoutStopSec=45
+KillSignal=SIGTERM
+KillMode=mixed
+StandardOutput=append:__LOG_FILE__
+StandardError=append:__LOG_FILE__
+SyslogIdentifier=rent-radar-telegram
+# systemd starts at most one instance of this unit.
+
+[Install]
+WantedBy=default.target

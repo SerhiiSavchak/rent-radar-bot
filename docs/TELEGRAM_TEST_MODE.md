@@ -14,10 +14,11 @@ Optional:
 
 ```bash
 TELEGRAM_DRY_RUN=true          # format only, no HTTP send
-TELEGRAM_POLL_CYCLES=6
+TELEGRAM_POLL_CYCLES=6         # 0 = unbounded (systemd)
 TELEGRAM_POLL_INTERVAL_MS=600000
 FIRST_RUN_MODE=seed            # default: cycle 1 seeds inventory without listing sends
-# FIRST_RUN_MODE=send          # cycle 1 sends labeled initial_inventory
+# FIRST_RUN_MODE=send          # treated as preview
+DATABASE_PATH=./data/rent-radar.sqlite
 ```
 
 `TELEGRAM_TEST_MODE` must be exactly `true`. Values like `1` / `True` are refused.
@@ -33,7 +34,7 @@ TELEGRAM_CHAT_ID=... \
 npm run live:test-telegram
 ```
 
-Bounded poll (default 6 × 10 min, not a daemon):
+Bounded poll (default 6 × 10 min). `TELEGRAM_POLL_CYCLES=0` runs until SIGTERM (systemd).
 
 ```bash
 TELEGRAM_TEST_MODE=true \
@@ -47,9 +48,13 @@ npm run live:test-telegram:poll
 ## Dedupe, baseline, and freshness
 
 - Exact keys only: `source:sourceId` and canonical URL. No phone/price similarity merges.
-- A failed send does **not** mark the listing delivered; it remains eligible next cycle.
-- Dedupe and per-source baseline are **process-local / in-memory** — they do **not** survive restart.
-  On restart the process performs a **silent re-baseline** (does not flood historical inventory as «нове»).
+- Live `live:test-telegram*` scripts persist baseline, seen IDs/fingerprints, freshness timestamps, and a Telegram outbox in **local SQLite** (`DATABASE_PATH`). No paid external store.
+- First successful fetch per source is a **silent seed**. Restart reuses `established_at`; it does not silent-rebaseline.
+- A listing first seen after downtime is classified against the persisted baseline (`late_discovered` vs new publication).
+- Telegram outbox: `pending` → `sending` → `sent` only after the Bot API confirms success. Failed rows stay retryable. `sending` rows recover to `pending` on reopen.
+- Duplicate cycles cannot send the same fingerprint twice. Concurrent pollers are rejected by a SQLite lock.
+- A failed source fetch does **not** delete the last known baseline.
+- In-memory stores remain in unit tests to document the old restart-rebaseline behaviour.
 - Default `FIRST_RUN_MODE=seed`: first successful fetch per source establishes a silent baseline.
 - `FIRST_RUN_MODE=preview`: sends a small sample labeled **«Початкова добірка»** (never «Нове оголошення»).
 - After baseline, unseen listings are classified by `classifyListingFreshness`:
@@ -60,9 +65,7 @@ npm run live:test-telegram:poll
   - old / refreshed-old `publishedAt` → suppressed
 - `OWNER_ONLY=true` (default) requires platform-confirmed `sellerType=owner`.
   `OWNER_ACCEPT_SELF_DECLARED=true` is an explicit opt-in for clean self-declared text (private account + «від власника» / «без посередників», no agency). Telegram labels those as a self-declaration, never «за позначкою майданчика».
-- Failed source fetches **do not** establish a baseline; recovery re-baselines silently.
-- Persistence: dedupe and baseline are **in-memory**. A restart forgets keys and silent-rebaselines current inventory, including listings that would have been new during downtime. There is no approved durable store for TEST delivery.
-- **Production acceptance** still requires durable baseline, dedupe, outbox, and restart recovery. This TEST sink is not that store.
+- Oracle VM: `scripts/oracle-telegram-test/install-systemd.sh` installs a user service/timer (start after reboot, restart on failure, one unit instance, logs + heartbeat). Secrets stay in `~/.config/rent-radar/telegram-test.env`.
 - `disabled`, `transport_blocked`, `parser_failed`, and `valid_empty` are reported per source.
 - Final summary includes `cycles_with_partial_source_coverage`.
 

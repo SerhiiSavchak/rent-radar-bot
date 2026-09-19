@@ -26,6 +26,6 @@ Guarded sink (`TELEGRAM_TEST_MODE=true` only). HTTP sources plus optional `ENABL
 
 ## Recommended next action
 
-OLX browser extract and RIELTOR owner HTML are live-PASS on Oracle (`3ec12cf`). Telegram collection can use `ENABLE_OLX_BROWSER` (no HTTP fallback). `ENABLE_OLX` HTTP stays off. Production still needs durable baseline/dedupe/outbox, restart recovery, and a scheduler.
+OLX browser extract and RIELTOR owner HTML are live-PASS on Oracle (`3ec12cf`). Telegram collection can use `ENABLE_OLX_BROWSER` (no HTTP fallback). `ENABLE_OLX` HTTP stays off.
 
-Durable baseline / dedupe / outbox and restart recovery remain **required before production Telegram acceptance**. In-memory TEST state is not enough.
+Local SQLite now persists baseline, seen listings, freshness, and the Telegram outbox. systemd user service/timer can keep one poller alive on the Oracle VM. Phase 1 is still **not complete** until a live Oracle durability cycle is accepted (this change does not send Telegram from the development environment).
