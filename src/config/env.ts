@@ -50,6 +50,7 @@ const envSchema = z.object({
   ENABLE_DOMRIA: booleanFromEnv(true),
   ENABLE_LUN: booleanFromEnv(true),
   ENABLE_OLX: booleanFromEnv(false),
+  ENABLE_OLX_BROWSER: booleanFromEnv(false),
   ENABLE_RIELTOR: booleanFromEnv(true),
   OWNER_ONLY: booleanFromEnv(true),
   OWNER_ACCEPT_SELF_DECLARED: booleanFromEnv(false),
@@ -88,6 +89,8 @@ export type AppConfig = {
   enableDomria: boolean;
   enableLun: boolean;
   enableOlx: boolean;
+  /** When true, Telegram/collection uses Playwright extract and never the blocked OLX HTTP API. */
+  enableOlxBrowser: boolean;
   enableRieltor: boolean;
   ownerOnly: boolean;
   /** Opt-in: treat clean OLX/text self-declarations as owner-eligible. Default false. */
@@ -145,6 +148,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     enableDomria: parsed.ENABLE_DOMRIA,
     enableLun: parsed.ENABLE_LUN,
     enableOlx: parsed.ENABLE_OLX,
+    enableOlxBrowser: parsed.ENABLE_OLX_BROWSER,
     enableRieltor: parsed.ENABLE_RIELTOR,
     ownerOnly: parsed.OWNER_ONLY,
     ownerAcceptSelfDeclared: parsed.OWNER_ACCEPT_SELF_DECLARED,

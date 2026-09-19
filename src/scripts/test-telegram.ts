@@ -20,10 +20,7 @@ import {
   redactTelegramSecrets,
   TelegramTestModeError,
 } from "../outputs/telegram-test.sink.ts";
-import { DomriaSource } from "../sources/domria/domria.source.ts";
-import { LunSource } from "../sources/lun/lun.source.ts";
-import { OlxSource } from "../sources/olx/olx.source.ts";
-import { RieltorSource } from "../sources/rieltor/rieltor.source.ts";
+import { createCollectionAdapters } from "../collection/create-source-adapters.ts";
 
 loadDotenv();
 
@@ -33,7 +30,7 @@ try {
     timeoutMs: config.sourceTimeoutMs,
     maxRetries: 2,
   });
-  const adapters = [new DomriaSource(), new LunSource(), new RieltorSource(), new OlxSource()];
+  const adapters = createCollectionAdapters(config);
 
   console.log(
     JSON.stringify({
@@ -46,6 +43,7 @@ try {
       enableLun: config.enableLun,
       enableRieltor: config.enableRieltor,
       enableOlx: config.enableOlx,
+      enableOlxBrowser: config.enableOlxBrowser,
       note: "TEST mode. Default silent baseline. Token not logged.",
     }),
   );

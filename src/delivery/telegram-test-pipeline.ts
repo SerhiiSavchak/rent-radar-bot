@@ -11,6 +11,8 @@ import {
 import { InMemoryListingDedupe } from "./listing-dedupe-memory.ts";
 import { InMemorySourceBaseline } from "./source-baseline-memory.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
+import { isOlxCollectionEnabled } from "../collection/create-source-adapters.ts";
+import { OLX_BROWSER_TRANSPORT } from "../sources/olx/olx-browser.source.ts";
 
 export type TelegramSourceAttempt = {
   source: string;
@@ -84,9 +86,12 @@ function capabilityFor(source: string, enabled: boolean, config: AppConfig): str
     return "disabled_by_config";
   }
   if (source === "olx") {
+    if (config.enableOlxBrowser) {
+      return `${OLX_BROWSER_TRANSPORT} — no HTTP api/v1/offers fallback`;
+    }
     return config.enableOlx
-      ? "http_adapter_only — on Oracle this is typically CloudFront 403; browser extract is opt-in and separate"
-      : "disabled — OLX HTTP blocked on Oracle; browser extract is opt-in and does not feed Telegram until proven";
+      ? "http_adapter_only — on Oracle this is typically CloudFront 403"
+      : "disabled — OLX HTTP blocked on Oracle; set ENABLE_OLX_BROWSER=true to use Playwright extract";
   }
   if (source === "domria") {
     return "http_html_or_official_api";
@@ -180,7 +185,7 @@ export async function runTelegramTestCycle(
     const enabled =
       (adapter.source === "domria" && deps.config.enableDomria) ||
       (adapter.source === "lun" && deps.config.enableLun) ||
-      (adapter.source === "olx" && deps.config.enableOlx) ||
+      (adapter.source === "olx" && isOlxCollectionEnabled(deps.config)) ||
       (adapter.source === "rieltor" && deps.config.enableRieltor);
 
     const capability = capabilityFor(adapter.source, enabled, deps.config);
@@ -418,6 +423,7 @@ export function formatTelegramStartupMessage(input: {
   enableLun: boolean;
   enableRieltor: boolean;
   enableOlx: boolean;
+  enableOlxBrowser: boolean;
   ownerOnly: boolean;
   ownerAcceptSelfDeclared: boolean;
   firstRunMode: "seed" | "preview" | "send";
@@ -431,7 +437,7 @@ export function formatTelegramStartupMessage(input: {
     `owner_only: ${input.ownerOnly}`,
     `owner_accept_self_declared: ${input.ownerAcceptSelfDeclared}`,
     `first_run_mode: ${mode} (seed = silent per-source baseline; preview = small «Початкова добірка»)`,
-    `sources: domria=${input.enableDomria} lun=${input.enableLun} rieltor=${input.enableRieltor} olx_http=${input.enableOlx}`,
+    `sources: domria=${input.enableDomria} lun=${input.enableLun} rieltor=${input.enableRieltor} olx_http=${input.enableOlx} olx_browser=${input.enableOlxBrowser}`,
     "Age window is necessary but not sufficient: listings published before the silent baseline are not «Нова публікація».",
     "Dedupe + baseline are in-memory only — restart triggers silent re-baseline (no flood of historical inventory as «нове»).",
     "Platform seller labels are not legal ownership proof. Self-declared text is labeled separately and off by default.",

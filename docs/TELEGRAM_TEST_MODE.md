@@ -72,7 +72,8 @@ npm run live:test-telegram:poll
 - No Igor credentials or destinations are hard-coded.
 - Unit tests do not send unless a fake `fetch` is injected; live scripts require explicit env.
 - Production `ListingMonitorService` / `TelegramOutput` defaults are unchanged.
-- OLX browser extract is **not** wired into Telegram; `ENABLE_OLX` uses HTTP only (blocked on Oracle).
+- `ENABLE_OLX` (HTTP) stays **false** by default. Oracle CloudFront 403 is `transport_blocked`, not browser success.
+- `ENABLE_OLX_BROWSER=true` wires Playwright catalog extract into collection/Telegram. There is **no** silent fallback to `api/v1/offers`.
 - Startup and final summary messages are always sent on `live:test-telegram:poll`.
 - Seller line uses «Власник — за позначкою майданчика» (not legal ownership proof).
 - Dates are shown in Europe/Kyiv; raw ISO timestamps are not shown.

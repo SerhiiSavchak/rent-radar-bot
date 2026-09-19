@@ -66,3 +66,7 @@ Compliant public route (ordinary GET, no `/api/`, no `/ajax/`, no stealth):
 12-cycle soak (`3af328c`) recorded RIELTOR **200** on those owner URLs (12/12). Telegram TEST notes an **intermittent Cloudflare 403** on the same path/headers. That 403 was **not re-fetched from the development workstation**.
 
 Classification rule: HTTP 403/429, or HTTP 200 whose body is a Cloudflare challenge/block page, is `transport_blocked`. A later 403 must not be hidden behind an earlier catalog HTML 200 (`resultKind=ok` + `httpStatus=403` is a lie). No proxy/CAPTCHA/stealth retries.
+
+## Live Oracle `3ec12cf`
+
+HTTP 200. 4 validated owner apartments (`Власник`). Houses `valid_empty` with HTTP 200. Overall `resultKind=ok` — empty houses are not a source failure. Missing `publishedAt` stays unknown and follows the existing freshness gate (`first_noticed` / strict exclude).

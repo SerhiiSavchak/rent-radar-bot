@@ -22,10 +22,10 @@ Evidence: `evidence/phase-1/oracle-soak/summary.json`, `REVIEW.md`.
 
 ## Telegram TEST delivery
 
-Guarded sink (`TELEGRAM_TEST_MODE=true` only). HTTP sources only; OLX browser is **not** a Telegram transport. Unknown sellers labeled “not verified ownership”. Six-cycle unattended launcher: `scripts/oracle-telegram-test/`.
+Guarded sink (`TELEGRAM_TEST_MODE=true` only). HTTP sources plus optional `ENABLE_OLX_BROWSER` (no OLX HTTP fallback). Unknown sellers labeled “not verified ownership”. Six-cycle unattended launcher: `scripts/oracle-telegram-test/`.
 
 ## Recommended next action
 
-**RIELTOR access** is the next source task (`evidence/phase-1/rieltor.md`). OLX browser extract produced listings; ownership is still not platform-confirmed. The remaining OLX owner check is one offer-detail diagnostic on Oracle (`scripts/oracle-olx-verify/`). If that page has no stronger seller-role field, the OLX owner investigation is closed.
+OLX browser extract and RIELTOR owner HTML are live-PASS on Oracle (`3ec12cf`). Telegram collection can use `ENABLE_OLX_BROWSER` (no HTTP fallback). `ENABLE_OLX` HTTP stays off. Production still needs durable baseline/dedupe/outbox, restart recovery, and a scheduler.
 
 Durable baseline / dedupe / outbox and restart recovery remain **required before production Telegram acceptance**. In-memory TEST state is not enough.

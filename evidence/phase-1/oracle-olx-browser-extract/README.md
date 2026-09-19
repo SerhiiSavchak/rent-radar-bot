@@ -1,6 +1,6 @@
 # Oracle OLX browser extract — status
 
-OLX is **not delivery-ready**. `ENABLE_OLX` stays false. Browser extract is not wired to Telegram.
+`ENABLE_OLX` (HTTP) stays false. Browser extract is wired to collection/Telegram only behind `ENABLE_OLX_BROWSER` (default false). No HTTP API fallback.
 
 ## 219316f live probe — adapter failure, not Oracle access
 
