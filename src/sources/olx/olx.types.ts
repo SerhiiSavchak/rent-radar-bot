@@ -71,6 +71,8 @@ export const olxOfferSchema = z
     location: olxLocationSchema.optional(),
     map: olxMapSchema.optional(),
     user: olxUserSchema.optional(),
+    // Catalog ads use string[] CDN URLs. api/v1/offers uses { link }. 219316f required
+    // { link } only and rejected every live candidate (uniqueIdCount=0).
     photos: z
       .array(
         z.union([

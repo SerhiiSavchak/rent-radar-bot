@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractOlxUrlToken, parseOlxOffersPayload } from "../src/sources/olx/olx.parser.ts";
+import { diagnoseOlxOfferParse, extractOlxUrlToken, parseOlxOffersPayload } from "../src/sources/olx/olx.parser.ts";
 import {
   buildOlxOffersUrl,
   OLX_CATEGORY_APARTMENTS_LONG_TERM_RENT,
@@ -82,6 +82,17 @@ describe("OLX parser", () => {
     expect(listings[0]?.images).toEqual([
       "https://ireland.apollo.olxcdn.com:443/v1/files/derived-private-apt-UA/image;s=1000x750",
     ]);
+  });
+
+  it("names the exact schema path when a catalog photo is not a URL string or link object", () => {
+    expect(
+      diagnoseOlxOfferParse({
+        id: 1,
+        title: "x",
+        url: "https://www.olx.ua/d/uk/obyavlenie/x-ID11aaaa.html",
+        photos: [123],
+      }),
+    ).toMatch(/offer_schema photos\.0/);
   });
 
   it("extracts URL tokens for exact identity matching", () => {

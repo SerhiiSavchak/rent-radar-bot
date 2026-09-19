@@ -1,0 +1,30 @@
+{
+  "commit": "219316f",
+  "deliveryReady": false,
+  "wiredToTelegram": false,
+  "htmlInputKind": "main_document",
+  "hasPrerenderedState": true,
+  "prerenderedStateComplete": true,
+  "prerenderedAdsPathFound": true,
+  "apartments": {
+    "rawObjectCount": 51,
+    "uniqueIdCount": 0,
+    "normalizedListingCount": 0
+  },
+  "houses": {
+    "rawObjectCount": 38,
+    "uniqueIdCount": 0,
+    "normalizedListingCount": 0
+  },
+  "rejection": "embedded_offers_partial_schema_failure",
+  "accessibilityOk": true,
+  "extractionOk": false,
+  "browserClosed": true,
+  "rootCause": "olxOfferSchema required photos[].link objects. Live listing.listing.ads.photos is string[] CDN URLs. adaptOracleCatalogAd passed photos through unchanged. Every candidate failed schema, so uniqueIdCount stayed 0.",
+  "offlineRecheckOfBaab323Salvage": {
+    "apartmentsAds": 52,
+    "housesAds": 37,
+    "adaptedAndParsedOk": 89,
+    "note": "Current adapter+schema accepts string[] photos. Not a 219316f live re-run."
+  }
+}

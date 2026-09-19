@@ -8,7 +8,7 @@ import {
   defaultMaxPublicationAgeMinutes,
 } from "../../delivery/listing-freshness.ts";
 import type { Listing } from "../../domain/listing.ts";
-import { parseOlxOffer } from "./olx.parser.ts";
+import { diagnoseOlxOfferParse, parseOlxOffer } from "./olx.parser.ts";
 import { olxOfferSchema } from "./olx.types.ts";
 
 export type OlxHtmlExtractRejection = {
@@ -557,7 +557,7 @@ function listingsFromCandidates(
     const listing = parseOlxOffer(normalized, discoveredAt);
     if (!listing) {
       rejectedMalformed += 1;
-      bump("listing_required_field_missing", id);
+      bump("listing_required_field_missing", id, diagnoseOlxOfferParse(normalized, discoveredAt));
       continue;
     }
     const key = `${listing.source}:${listing.sourceId}`;

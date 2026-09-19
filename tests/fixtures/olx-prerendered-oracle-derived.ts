@@ -90,6 +90,42 @@ export function derivedOracleApartmentBusinessAd(): DerivedOlxCatalogAd {
   };
 }
 
+/**
+ * Extra catalog keys observed on a real baab323 / live-shape apartment ad.
+ * Descriptions, phones, avatars and the original photo set are omitted.
+ */
+export function derivedOracleApartmentLiveShapeAd(): Record<string, unknown> {
+  return {
+    ...derivedOracleApartmentBusinessAd(),
+    description: "Sanitized derived catalog description.",
+    isHighlighted: true,
+    isPromoted: true,
+    promotion: {
+      highlighted: true,
+      top_ad: true,
+      options: ["bundle_optimum"],
+      premium_ad_page: false,
+      urgent: false,
+      b2c_ad_page: false,
+    },
+    externalUrl: null,
+    protectPhone: false,
+    validToTime: "2026-10-17T01:13:35+03:00",
+    isActive: true,
+    status: "active",
+    itemCondition: null,
+    salary: null,
+    partner: null,
+    isJob: false,
+    shop: null,
+    safedeal: null,
+    searchReason: null,
+    isGpsrAvailable: false,
+    payAndShip: null,
+    isNewFavouriteAd: false,
+  };
+}
+
 export function derivedOracleHousePrivateAd(): DerivedOlxCatalogAd {
   return {
     id: 924128798,

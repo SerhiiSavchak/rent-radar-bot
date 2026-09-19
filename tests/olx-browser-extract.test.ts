@@ -19,6 +19,7 @@ import {
 } from "./fixtures/olx-catalog-html.ts";
 import {
   derivedOracleApartmentBusinessAd,
+  derivedOracleApartmentLiveShapeAd,
   derivedOracleApartmentPrivateAd,
   derivedOracleHousePrivateAd,
   derivedOracleMainDocumentHtml,
@@ -389,6 +390,33 @@ describe("OLX browser extract integration", () => {
 });
 
 describe("OLX Oracle-derived prerendered catalog adapter", () => {
+  it("normalizes a real Oracle catalog live-shape ad into a validated Listing", () => {
+    const html = derivedOracleMainDocumentHtml([
+      derivedOracleApartmentLiveShapeAd(),
+      derivedOracleApartmentPrivateAd(),
+    ]);
+    const result = extractListingsFromOlxCatalogHtml(html, new Date(), { expectedCategoryId: 1760 });
+    expect(result.source).toBe("prerendered_state");
+    expect(result.listings.length).toBeGreaterThan(0);
+    expect(result.diagnostics.uniqueIdCount).toBe(2);
+    expect(result.diagnostics.uniqueRawIdCount).toBe(2);
+    expect(result.diagnostics.normalizedListingCount).toBe(2);
+    expect(result.diagnostics.rejectedMalformed).toBe(0);
+    const live = result.listings.find((item) => item.sourceId === "931996810");
+    expect(live?.title).toBe("Оренда стильної 1-кімнатної квартири");
+    expect(live?.url).toContain("ID114yVC.html");
+    expect(live?.propertyType).toBe("apartment");
+    expect(live?.location.city).toBe("Львів");
+    expect(live?.price?.amount).toBe(30000);
+    expect(live?.price?.currency).toBe("UAH");
+    expect(live?.publishedAt?.toISOString()).toBe(new Date("2026-08-17T01:13:35+03:00").toISOString());
+    expect(live?.refreshedAt?.toISOString()).toBe(new Date("2026-09-17T10:27:55+03:00").toISOString());
+    expect(live?.metadata?.pushupTime).toBe("2026-09-17T10:27:55+03:00");
+    expect(live?.metadata?.olxIsBusiness).toBe(true);
+    expect(live?.metadata?.coordinatesApproximate).toBe(true);
+    expect(live?.sellerType).toBe("business");
+  });
+
   it("maps camelCase catalog fields without inventing ownership", () => {
     const html = derivedOracleMainDocumentHtml([
       derivedOracleApartmentPrivateAd(),

@@ -2,7 +2,13 @@
 
 OLX is **not delivery-ready**. `ENABLE_OLX` stays false. Browser extract is not wired to Telegram.
 
-These two results are **different snapshots**. Do not copy the ownership table onto the live 75f7384 run.
+## 219316f live probe — adapter failure, not Oracle access
+
+Live extract on `219316f` had `htmlInputKind=main_document`, complete prerendered `listing.listing.ads` (apartments raw 51, houses raw 38), and **uniqueIdCount=0**. Every candidate was `embedded_offers_partial_schema_failure`. Accessibility succeeded; the browser closed.
+
+Root cause: `olxOfferSchema` required `photos: { link }[]`. The catalog payload uses `photos: string[]`. See `cycle-219316f-schema-failure.json`. The adapter now maps string photos and keeps per-candidate Zod paths.
+
+These two later results are **different snapshots**. Do not copy the ownership table onto the live 75f7384 run.
 
 ## A. Live catalog extract (`75f7384`) — 2026-09-18
 

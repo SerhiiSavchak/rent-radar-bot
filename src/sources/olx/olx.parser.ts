@@ -93,12 +93,16 @@ function photoLinks(photos: OlxOffer["photos"] | undefined): string[] {
   return links;
 }
 
-export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Listing | undefined {
-  const parsed = olxOfferSchema.safeParse(offerRaw);
-  if (!parsed.success) {
-    return undefined;
+function formatZodIssue(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
+  const first = error.issues[0];
+  if (!first) {
+    return "unknown validation issue";
   }
-  const offer = parsed.data;
+  const path = first.path.length > 0 ? first.path.map(String).join(".") : "(root)";
+  return `${path}: ${first.message}`;
+}
+
+function buildListingFromOffer(offer: OlxOffer, discoveredAt: Date): Listing | undefined {
   const sourceId = String(offer.id);
   const url = offer.url ?? `https://www.olx.ua/d/obyavlenie/-ID${sourceId}.html`;
   if (!offer.title) {
@@ -109,11 +113,8 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
   const district = offer.location?.district?.name;
   const rawLocation = [city, district].filter(Boolean).join(", ") || "unknown";
   const price = readPrice(offer);
-  // Real api/v1/offers payloads put coordinates in `map` (with an approximation radius),
-  // not in `location`. Keep `location.lat/lon` as a fallback for older shapes.
   const lat = offer.map?.lat ?? offer.location?.lat;
   const lon = offer.map?.lon ?? offer.location?.lon;
-  // publishedAt means creation time only; last_refresh_time is refreshedAt, never publishedAt.
   const published = offer.created_time;
   let refreshedAt: Date | undefined;
   if (offer.last_refresh_time) {
@@ -174,6 +175,37 @@ export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Lis
   const images = photoLinks(offer.photos);
   if (images.length > 0) {
     listing.images = images;
+  }
+  return listing;
+}
+
+/**
+ * Why parseOlxOffer returned undefined. Used in extract diagnostics; does not invent listings.
+ */
+export function diagnoseOlxOfferParse(offerRaw: unknown, discoveredAt = new Date()): string {
+  const parsed = olxOfferSchema.safeParse(offerRaw);
+  if (!parsed.success) {
+    return `offer_schema ${formatZodIssue(parsed.error)}`;
+  }
+  const built = buildListingFromOffer(parsed.data, discoveredAt);
+  if (!built) {
+    return "missing_title";
+  }
+  const validated = listingSchema.safeParse(built);
+  if (!validated.success) {
+    return `listing_schema ${formatZodIssue(validated.error)}`;
+  }
+  return "unknown_parse_failure";
+}
+
+export function parseOlxOffer(offerRaw: unknown, discoveredAt = new Date()): Listing | undefined {
+  const parsed = olxOfferSchema.safeParse(offerRaw);
+  if (!parsed.success) {
+    return undefined;
+  }
+  const listing = buildListingFromOffer(parsed.data, discoveredAt);
+  if (!listing) {
+    return undefined;
   }
   const validated = listingSchema.safeParse(listing);
   return validated.success ? validated.data : undefined;
