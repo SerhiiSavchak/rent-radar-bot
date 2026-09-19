@@ -55,7 +55,8 @@ npm run live:olx:browser-extract
 
 - Deliverable Telegram sources are HTTP adapters (typically DIM.RIA, LUN, RIELTOR).
 - `ENABLE_OLX` defaults false; even if true, Telegram uses **OLX HTTP** (CloudFront-403 on Oracle).
-- OLX browser **extract** is opt-in and separate from accessibility probes; not wired to Telegram until a live Oracle extraction check passes.
+- OLX browser **extract** is opt-in and separate from accessibility probes; not wired to Telegram until a live Oracle extraction check passes (`validatedListingCount > 0`).
+- 2026-09-17 Oracle extract: accessibilityOk=true but validatedListingCount=0 (`no_offers_api_payload_captured`). See `evidence/phase-1/oracle-olx-browser-extract/README.md`.
 - Dedupe is **in-memory only** — does not survive process restart.
 - Failed Telegram sends do not mark listings delivered.
 - RIELTOR intermittent HTTP 403 is classified as `transport_blocked` when request path/headers match soak (owners filter) — not a silent empty market.
