@@ -22,7 +22,7 @@ These two later results are **different snapshots**. Do not copy the ownership t
 | `ownerEligibleCount` | 0 |
 | sampleListings | 5, all `sellerType=business` |
 
-Source file: `cycle-75f7384.json` (preserved). Timing fix `1446347` (skip rendered capture after success) is **live-unverified**.
+Source file: `cycle-75f7384.json` (preserved). Timing fix `1446347` (skip rendered capture after success) was later live-checked on `2daa290`.
 
 This run does **not** include an ownership distribution. There is no salvaged ads array from 75f7384.
 
@@ -58,7 +58,13 @@ Houses 37 vs live-75f7384 houses 39 is a **different day's catalog**, not a trun
 
 Self-declared ids: `924128798`, `933587870` (title); `935081899` (description). Default `OWNER_ONLY` still ignores these.
 
-## C. Bounded owner-detail diagnostic (implemented, live-untested)
+## C. Live catalog extract (`2daa290`) — 2026-09-19 timing overrun
+
+Oracle verify on `2daa290d95f6dba49f3a52290202059266c3283a`: `extractionOk=true`, `validatedListingCount=84` (apartments 46, houses 38), `htmlInputKind=main_document`, `extractSource=prerendered_state`, `browserClosed=true`. Owner-detail: HTTP 200, `sellerType=null`, `isBusiness=false`, self-declaration only; default owner gate rejected.
+
+Remaining defect: `wallClockMs=189873` vs `totalBudgetMs=95000`. Apartments 56700ms, houses 122716ms. Both categories were `timedOut` after a successful parse because cleanup/`page.title()`/`page.close()` were unbounded and `timedOut` was flipped just because the clock passed the deadline. Extraction success is now separate from `budgetExceeded`; cleanup is bounded and timed.
+
+## D. Bounded owner-detail diagnostic (implemented; live 2daa290)
 
 One private self-declared candidate from capture **B**, not from run **A**:
 
@@ -68,7 +74,7 @@ One private self-declared candidate from capture **B**, not from run **A**:
 
 Diagnostic: one stock Playwright navigation of that URL, original `response.body()` only, no `/api/v1/offers` intercept, no pagination/retry. Telegram gate unchanged.
 
-**Live Oracle result: not run from the development environment.** Untested assumption: the detail page may still have `sellerType=null`. If the operator JSON shows `strongerThanCatalogSelfDeclared=false`, this ownership investigation is **closed** — no further speculative OLX owner probes.
+**Live Oracle result (`2daa290`):** HTTP 200, `sellerType=null`, `isBusiness=false`, seller self-declaration present, no stronger platform-confirmed ownership. Default owner gate rejected. This ownership investigation is **closed** — no further speculative OLX owner probes.
 
 Operator sequence: `scripts/oracle-olx-verify/README.md`.
 

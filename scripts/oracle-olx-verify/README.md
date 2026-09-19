@@ -33,7 +33,7 @@ The script:
 
 ## What to read afterwards
 
-- `catalog/extract-*.json` — `extractionOk`, `wallClockMs` vs `totalBudgetMs`, `timedOut`, `browserClosed`, whether houses still hang after a successful parse.
+- `catalog/extract-*.json` — `extractionOk` separately from `budgetExceeded`; `timing` (navigation/responseBody/parse/capture/cleanup); `timedOut` only when extract was cancelled; `browserClosed`.
 - `owner-detail/owner-detail-*.json` — `inspection.platformLabel`, `sellerTypeField`, `strongerThanCatalogSelfDeclared`, `elapsedMs`, `timedOut`, `browserClosed`.
 
 If `strongerThanCatalogSelfDeclared` is false (missing/null platform seller role), this OLX ownership investigation is **closed**. Do not add further speculative probes.

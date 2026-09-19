@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, Page, Response } from "playwright";
-import { extractOlxListingsViaBrowser, isOlxCategoryHtmlResponse } from "../src/sources/olx/olx-browser.extract.ts";
+import {
+  closeWithBudget,
+  extractOlxListingsViaBrowser,
+  isOlxCategoryHtmlResponse,
+} from "../src/sources/olx/olx-browser.extract.ts";
 import { OLX_BROWSER_APARTMENTS_URL } from "../src/probe/olx-browser-classify.ts";
 import {
   collectOfferLikeObjects,
@@ -573,6 +577,14 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
 });
 
 describe("OLX browser extract deadlines", () => {
+  it("bounds a hanging close so cleanup cannot stall the run", async () => {
+    const started = Date.now();
+    const result = await closeWithBudget(() => new Promise(() => undefined), 40);
+    expect(result.timedOut).toBe(true);
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(30);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
   it("cancels hanging navigation at the total deadline, skips houses, and closes the browser", async () => {
     const pageClose = vi.fn(async () => {
       hungReject?.(new Error("Target closed"));
@@ -619,5 +631,125 @@ describe("OLX browser extract deadlines", () => {
     expect(contextClose).toHaveBeenCalled();
     expect(browserClose).toHaveBeenCalled();
     expect(result.notes.some((item) => item.includes("houses_skipped_total_budget"))).toBe(true);
+    expect(result.extractionOk).toBe(false);
+    expect(result.apartments.timing?.navigationMs).toBeGreaterThanOrEqual(0);
+    expect(result.timing.browserCloseMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("keeps extractionOk when listings finished before a hanging deadline cleanup", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    let nowMs = 0;
+    let lastUrl = OLX_BROWSER_APARTMENTS_URL;
+    const content = vi.fn(async () => {
+      throw new Error("page.content() must not start after a successful extract");
+    });
+    const page = {
+      on: vi.fn(),
+      goto: vi.fn(async (navUrl: string) => {
+        lastUrl = navUrl;
+        nowMs += 20;
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => Buffer.from(main, "utf8"),
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content,
+      url: () => lastUrl,
+      title: async () => {
+        nowMs += 10_000;
+        return "OLX";
+      },
+      close: () => new Promise<void>(() => undefined),
+    } as unknown as Page;
+    const browser = {
+      newContext: async () => ({
+        newPage: async () => page,
+        close: () => new Promise<void>(() => undefined),
+      }),
+      close: vi.fn(async () => undefined),
+    } as unknown as Browser;
+
+    const started = Date.now();
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 80,
+      categoryBudgetMs: 80,
+      totalBudgetMs: 80,
+      cleanupBudgetMs: 40,
+      launch: async () => browser,
+      clockMs: () => nowMs,
+    });
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(3_000);
+    expect(result.extractionOk).toBe(true);
+    expect(result.apartments.validatedListingCount).toBeGreaterThan(0);
+    expect(result.apartments.extractSource).toBe("prerendered_state");
+    expect(result.apartments.timedOut).toBe(false);
+    expect(result.apartments.timing?.cleanupTimedOut).toBe(true);
+    expect(result.apartments.timing?.cleanupMs).toBeGreaterThanOrEqual(30);
+    expect(result.apartments.timing?.extractMs).toBeGreaterThan(0);
+    expect(result.apartments.timing?.navigationMs).toBeGreaterThan(0);
+    expect(content).not.toHaveBeenCalled();
+    expect(result.listings[0]?.sourceId).toBe("935081899");
+    expect(result.budgetExceeded).toBe(true);
+    expect(result.notes.some((item) => item.includes("extraction_ok_but_budget_exceeded=true"))).toBe(
+      true,
+    );
+    expect(result.browserClosed).toBe(true);
+  });
+
+  it("cancels the next category when the total budget is already gone", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    let nowMs = 0;
+    let lastUrl = OLX_BROWSER_APARTMENTS_URL;
+    const page = {
+      on: vi.fn(),
+      goto: vi.fn(async (navUrl: string) => {
+        lastUrl = navUrl;
+        nowMs += 70;
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => Buffer.from(main, "utf8"),
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content: vi.fn(async () => {
+        throw new Error("houses must not start a rendered capture after total-budget cancel");
+      }),
+      url: () => lastUrl,
+      title: async () => "OLX",
+      close: vi.fn(async () => undefined),
+    } as unknown as Page;
+    const browser = {
+      newContext: async () => ({
+        newPage: async () => page,
+        close: vi.fn(async () => undefined),
+      }),
+      close: vi.fn(async () => undefined),
+    } as unknown as Browser;
+
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 80,
+      categoryBudgetMs: 80,
+      totalBudgetMs: 80,
+      cleanupBudgetMs: 20,
+      launch: async () => browser,
+      clockMs: () => nowMs,
+    });
+    expect(result.extractionOk).toBe(true);
+    expect(result.apartments.validatedListingCount).toBeGreaterThan(0);
+    expect(result.apartments.timedOut).toBe(false);
+    expect(result.houses.rejections.some((item) => item.reason === "total_budget_exhausted")).toBe(true);
+    expect(result.houses.timedOut).toBe(true);
+    expect(result.houses.listings).toHaveLength(0);
+    expect(result.notes.some((item) => item.includes("houses_skipped_total_budget"))).toBe(true);
+    expect(result.budgetExceeded).toBe(false);
+    expect(result.browserClosed).toBe(true);
   });
 });

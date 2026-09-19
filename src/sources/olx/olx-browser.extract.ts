@@ -11,6 +11,9 @@
  * timeoutMs = per-navigation (page.goto) deadline only.
  * categoryBudgetMs / totalBudgetMs abort in-flight navigation/capture, skip the next
  * category, and close the owned browser.
+ *
+ * Extraction success is independent of budgetExceeded. timedOut means extract did
+ * not finish before cancellation. Cleanup is bounded and reported separately.
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -57,6 +60,74 @@ export type OlxNetworkJsonProbe = {
 
 export type OlxHtmlInputKind = "main_document" | "rendered_dom" | "network_offers_api" | "none";
 
+export const DEFAULT_OLX_CLEANUP_BUDGET_MS = 2_000;
+
+export type OlxExtractPhaseTiming = {
+  navigationMs: number;
+  responseBodyMs: number;
+  parseMs: number;
+  captureMs: number;
+  cleanupMs: number;
+  extractMs: number;
+  cleanupTimedOut: boolean;
+};
+
+export type OlxBrowserExtractTiming = {
+  apartments: OlxExtractPhaseTiming;
+  houses: OlxExtractPhaseTiming;
+  browserCloseMs: number;
+  browserCloseTimedOut: boolean;
+};
+
+export function emptyOlxExtractPhaseTiming(): OlxExtractPhaseTiming {
+  return {
+    navigationMs: 0,
+    responseBodyMs: 0,
+    parseMs: 0,
+    captureMs: 0,
+    cleanupMs: 0,
+    extractMs: 0,
+    cleanupTimedOut: false,
+  };
+}
+
+export async function closeWithBudget(
+  close: () => Promise<void>,
+  budgetMs = DEFAULT_OLX_CLEANUP_BUDGET_MS,
+): Promise<{ elapsedMs: number; timedOut: boolean }> {
+  const started = Date.now();
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timedOut = await new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          resolve(true);
+        }
+      }, Math.max(1, budgetMs));
+      void close()
+        .then(() => {
+          if (!settled) {
+            settled = true;
+            resolve(false);
+          }
+        })
+        .catch(() => {
+          if (!settled) {
+            settled = true;
+            resolve(false);
+          }
+        });
+    });
+    return { elapsedMs: Date.now() - started, timedOut };
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export type OlxBrowserCategoryExtract = {
   category: "apartments" | "houses";
   requestedUrl: string;
@@ -74,6 +145,8 @@ export type OlxBrowserCategoryExtract = {
   htmlDiagnostics?: OlxHtmlExtractDiagnostics;
   networkJsonProbes?: OlxNetworkJsonProbe[];
   timedOut?: boolean;
+  budgetExceeded?: boolean;
+  timing?: OlxExtractPhaseTiming;
   capturePaths?: OlxCategoryCapturePaths;
   htmlInputKind?: OlxHtmlInputKind;
 };
@@ -94,6 +167,7 @@ export type OlxBrowserExtractResult = {
   };
   wallClockMs: number;
   budgetExceeded: boolean;
+  timing: OlxBrowserExtractTiming;
 };
 
 export type OlxBrowserExtractDeps = {
@@ -111,6 +185,8 @@ export type OlxBrowserExtractDeps = {
   clockMs?: () => number;
   captureDir?: string;
   commit?: string;
+  /** Wall-clock bound for page/context/browser close. Defaults to 2s. */
+  cleanupBudgetMs?: number;
 };
 
 const OFFERS_API_RE = /\/api\/v1\/offers\/?/i;
@@ -192,11 +268,8 @@ async function raceDeadline<T>(
     return await new Promise<T>((resolve, reject) => {
       timer = setTimeout(() => {
         expired = true;
-        void cancel()
-          .catch(() => undefined)
-          .finally(() => {
-            reject(new OlxDeadlineExceededError());
-          });
+        reject(new OlxDeadlineExceededError());
+        void cancel().catch(() => undefined);
       }, left);
       work.then(
         (value) => {
@@ -238,6 +311,8 @@ function emptyCategory(
     elapsedMs: 0,
     extractSource: "none",
     timedOut: true,
+    budgetExceeded: true,
+    timing: emptyOlxExtractPhaseTiming(),
     htmlInputKind: "none",
   };
 }
@@ -280,6 +355,7 @@ async function extractCategory(
     captureDir?: string;
     commit: string;
     runDeadlineAt: number;
+    cleanupBudgetMs: number;
   },
 ): Promise<OlxBrowserCategoryExtract> {
   const started = deps.clock();
@@ -288,9 +364,12 @@ async function extractCategory(
   const capturedPayloads: unknown[] = [];
   const networkJsonProbes: OlxNetworkJsonProbe[] = [];
   const networkMeta: OlxNetworkCaptureMeta[] = [];
+  const timing = emptyOlxExtractPhaseTiming();
   let mainDocumentHtml: string | undefined;
   let renderedHtml = "";
   let timedOut = false;
+  let extractCompleted = false;
+  let acceptNetwork = true;
   const listings: Listing[] = [];
   let rawOfferCount = 0;
   let extractSource = "none";
@@ -299,32 +378,49 @@ async function extractCategory(
     expectedCategoryId: expectedCategoryId(category),
   });
   const markTimeout = () => {
-    timedOut = true;
+    if (!extractCompleted) {
+      timedOut = true;
+    }
+  };
+  const markExtractCompleted = () => {
+    if (!extractCompleted) {
+      extractCompleted = true;
+      timing.extractMs = deps.clock() - started;
+    }
   };
 
   const context = await browser.newContext({ locale: "uk-UA" });
   let pageClosed = false;
   const page = await context.newPage();
+  const closePageBounded = async () => {
+    if (pageClosed) {
+      return;
+    }
+    pageClosed = true;
+    const closed = await closeWithBudget(() => page.close(), deps.cleanupBudgetMs);
+    timing.cleanupMs += closed.elapsedMs;
+    timing.cleanupTimedOut = timing.cleanupTimedOut || closed.timedOut;
+  };
   const cancelOwnedWork = async () => {
     markTimeout();
-    if (!pageClosed) {
-      pageClosed = true;
-      await page.close().catch(() => undefined);
-    }
+    acceptNetwork = false;
+    await closePageBounded();
   };
 
+  let result: OlxBrowserCategoryExtract | undefined;
   try {
     if (remainingMs(categoryDeadlineAt, deps.clock()) <= 0) {
       await cancelOwnedWork();
-      return {
+      result = {
         ...emptyCategory(category, url, "category_budget_exhausted", "expired before navigation"),
         elapsedMs: deps.clock() - started,
+        timing,
       };
+      return result;
     }
 
     page.on("response", (response: Response) => {
-      if (deps.clock() >= categoryDeadlineAt) {
-        markTimeout();
+      if (!acceptNetwork || deps.clock() >= categoryDeadlineAt) {
         return;
       }
       const responseUrl = response.url();
@@ -382,12 +478,15 @@ async function extractCategory(
     );
     if (gotoBudget < MIN_GOTO_BUDGET_MS) {
       await cancelOwnedWork();
-      return {
+      result = {
         ...emptyCategory(category, url, "category_budget_exhausted", "insufficient time for navigation"),
         elapsedMs: deps.clock() - started,
+        timing,
       };
+      return result;
     }
 
+    const navigationStarted = deps.clock();
     const response = await raceDeadline(
       page.goto(url, {
         waitUntil: "domcontentloaded",
@@ -397,6 +496,7 @@ async function extractCategory(
       deps.clock,
       cancelOwnedWork,
     );
+    timing.navigationMs = deps.clock() - navigationStarted;
 
     if (!response) {
       rejections.push({ reason: "navigation_response_missing", detail: url });
@@ -415,12 +515,14 @@ async function extractCategory(
           detail: sanitizeUrlForLog(responseUrl),
         });
       } else {
+        const bodyStarted = deps.clock();
         const body = await raceDeadline(
           readGotoHtmlBody(response, OLX_PARSER_MAX_HTML_BYTES),
           categoryDeadlineAt,
           deps.clock,
           cancelOwnedWork,
         );
+        timing.responseBodyMs = deps.clock() - bodyStarted;
         mainDocumentHtml = body.text;
         if (body.truncated) {
           rejections.push({
@@ -434,6 +536,7 @@ async function extractCategory(
     const listingsFromMain: Listing[] = [];
     htmlInputKind = mainDocumentHtml ? "main_document" : "none";
 
+    const parseStarted = deps.clock();
     htmlExtract = extractListingsFromOlxBrowserDocuments(
       {
         ...(mainDocumentHtml ? { mainDocumentHtml } : {}),
@@ -451,6 +554,7 @@ async function extractCategory(
     } else {
       rejections.push(...htmlExtract.rejections);
     }
+    timing.parseMs += deps.clock() - parseStarted;
 
     if (listingsFromMain.length === 0 && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
       await raceDeadline(
@@ -466,6 +570,7 @@ async function extractCategory(
     }
 
     if (listingsFromMain.length === 0) {
+      const networkParseStarted = deps.clock();
       for (const payload of capturedPayloads) {
         const data = (payload as { data?: unknown })?.data;
         if (Array.isArray(data)) {
@@ -480,6 +585,7 @@ async function extractCategory(
           });
         }
       }
+      timing.parseMs += deps.clock() - networkParseStarted;
       if (listings.length > 0) {
         extractSource = "network_offers_api";
         htmlInputKind = "network_offers_api";
@@ -488,13 +594,16 @@ async function extractCategory(
 
     const stillNeedDomFallback =
       listings.length === 0 && !htmlExtract.diagnostics.hasPrerenderedState;
+    // Do not start rendered capture after the category deadline.
     if (stillNeedDomFallback && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
       renderedHtml = await raceDeadline(page.content(), categoryDeadlineAt, deps.clock, cancelOwnedWork);
+      const renderedParseStarted = deps.clock();
       const fromRendered = extractListingsFromOlxBrowserDocuments(
         { renderedHtml },
         deps.now(),
         { expectedCategoryId: expectedCategoryId(category) },
       );
+      timing.parseMs += deps.clock() - renderedParseStarted;
       htmlExtract = fromRendered;
       if (fromRendered.listings.length > 0) {
         listings.push(...fromRendered.listings);
@@ -507,13 +616,31 @@ async function extractCategory(
       }
     }
 
+    acceptNetwork = false;
+    markExtractCompleted();
+
     let finalUrl = url;
     let title = "";
-    try {
-      finalUrl = page.url();
-      title = await page.title().catch(() => "");
-    } catch {
-      markTimeout();
+    if (!pageClosed && remainingMs(categoryDeadlineAt, deps.clock()) > 0) {
+      try {
+        finalUrl = page.url();
+        title = await raceDeadline(
+          page.title().catch(() => ""),
+          categoryDeadlineAt,
+          deps.clock,
+          cancelOwnedWork,
+        );
+      } catch (error) {
+        if (!(error instanceof OlxDeadlineExceededError)) {
+          throw error;
+        }
+      }
+    } else if (!pageClosed) {
+      try {
+        finalUrl = page.url();
+      } catch {
+        // page already closing
+      }
     }
     const httpStatus = response?.status();
     const contentType = response?.headers()["content-type"];
@@ -533,16 +660,12 @@ async function extractCategory(
       });
     }
 
-    // Close the page before diagnostic capture so cleanup cannot wait on rendered DOM.
-    if (!pageClosed) {
-      pageClosed = true;
-      await page.close().catch(() => undefined);
-    }
+    await closePageBounded();
 
     let capturePaths: OlxCategoryCapturePaths | undefined;
+    const captureStarted = deps.clock();
     if (deps.captureDir) {
       if (remainingMs(categoryDeadlineAt, deps.clock()) <= 0) {
-        markTimeout();
         if (listings.length > 0) {
           rejections.push({
             reason: "post_extract_deadline",
@@ -580,14 +703,11 @@ async function extractCategory(
         });
       }
     }
-
-    if (deps.clock() >= categoryDeadlineAt) {
-      markTimeout();
-    }
+    timing.captureMs = deps.clock() - captureStarted;
 
     const unique = dedupeListings(listings);
     const extractedOk = unique.length > 0;
-    return {
+    result = {
       category,
       requestedUrl: url,
       finalUrl,
@@ -604,13 +724,22 @@ async function extractCategory(
       networkJsonProbes,
       htmlInputKind,
       timedOut,
+      budgetExceeded: deps.clock() - started > deps.categoryBudgetMs,
+      timing,
       ...(httpStatus !== undefined ? { httpStatus } : {}),
       ...(capturePaths ? { capturePaths } : {}),
     };
+    return result;
   } catch (error) {
     if (error instanceof OlxDeadlineExceededError) {
       markTimeout();
+      const unique = dedupeListings(listings);
+      const extractedOk = unique.length > 0;
+      if (!timing.extractMs && extractedOk) {
+        timing.extractMs = deps.clock() - started;
+      }
       let capturePaths: OlxCategoryCapturePaths | undefined;
+      const captureStarted = deps.clock();
       if (deps.captureDir) {
         capturePaths = writeOlxCategoryCapture({
           captureDir: deps.captureDir,
@@ -625,9 +754,8 @@ async function extractCategory(
           skippedReason: "deadline_before_capture",
         });
       }
-      const unique = dedupeListings(listings);
-      const extractedOk = unique.length > 0;
-      return {
+      timing.captureMs += deps.clock() - captureStarted;
+      result = {
         category,
         requestedUrl: url,
         finalUrl: url,
@@ -651,13 +779,23 @@ async function extractCategory(
         htmlDiagnostics: htmlExtract.diagnostics,
         networkJsonProbes,
         htmlInputKind: mainDocumentHtml ? "main_document" : htmlInputKind,
-        timedOut: true,
+        timedOut,
+        budgetExceeded: true,
+        timing,
         ...(capturePaths ? { capturePaths } : {}),
       };
+      return result;
     }
     throw error;
   } finally {
-    await context.close().catch(() => undefined);
+    const closed = await closeWithBudget(() => context.close(), deps.cleanupBudgetMs);
+    timing.cleanupMs += closed.elapsedMs;
+    timing.cleanupTimedOut = timing.cleanupTimedOut || closed.timedOut;
+    if (result) {
+      result.timing = timing;
+      result.elapsedMs = deps.clock() - started;
+      result.budgetExceeded = result.budgetExceeded || result.elapsedMs > deps.categoryBudgetMs;
+    }
   }
 }
 
@@ -673,6 +811,7 @@ export async function extractOlxListingsViaBrowser(
     categoryBudgetMs,
     deps.totalBudgetMs ?? categoryBudgetMs * 2 + 5_000,
   );
+  const cleanupBudgetMs = Math.max(1, deps.cleanupBudgetMs ?? DEFAULT_OLX_CLEANUP_BUDGET_MS);
   const maxPages = Math.max(1, Math.min(deps.maxPagesPerCategory ?? 1, 2));
   const now = deps.now ?? (() => new Date());
   const clock = deps.clockMs ?? (() => Date.now());
@@ -695,12 +834,15 @@ export async function extractOlxListingsViaBrowser(
     `navigationTimeoutMs=${navigationTimeoutMs}`,
     `categoryBudgetMs=${categoryBudgetMs}`,
     `totalBudgetMs=${totalBudgetMs}`,
+    `cleanupBudgetMs=${cleanupBudgetMs}`,
     "html_parser_input=main_document_then_rendered_dom",
     `parserMaxHtmlBytes=${OLX_PARSER_MAX_HTML_BYTES}`,
     `diagnosticMaxHtmlBytes=${DEFAULT_OLX_CAPTURE_LIMITS.maxHtmlBytes}`,
   ];
   let apartments: OlxBrowserCategoryExtract | undefined;
   let houses: OlxBrowserCategoryExtract | undefined;
+  let browserCloseMs: number;
+  let browserCloseTimedOut: boolean;
   try {
     apartments = await extractCategory(browser, "apartments", OLX_BROWSER_APARTMENTS_URL, {
       navigationTimeoutMs,
@@ -709,6 +851,7 @@ export async function extractOlxListingsViaBrowser(
       clock,
       commit,
       runDeadlineAt,
+      cleanupBudgetMs,
       ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
     });
     const remainingForHouses = remainingMs(runDeadlineAt, clock());
@@ -728,11 +871,14 @@ export async function extractOlxListingsViaBrowser(
         clock,
         commit,
         runDeadlineAt,
+        cleanupBudgetMs,
         ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
       });
     }
   } finally {
-    await browser.close();
+    const closed = await closeWithBudget(() => browser.close(), cleanupBudgetMs);
+    browserCloseMs = closed.elapsedMs;
+    browserCloseTimedOut = closed.timedOut;
   }
   const wallClockMs = clock() - runStarted;
   if (!apartments || !houses) {
@@ -747,12 +893,14 @@ export async function extractOlxListingsViaBrowser(
           commit,
           startedAt: new Date(runStarted).toISOString(),
           finishedAt: new Date().toISOString(),
-          budgets: { navigationTimeoutMs, categoryBudgetMs, totalBudgetMs },
+          budgets: { navigationTimeoutMs, categoryBudgetMs, totalBudgetMs, cleanupBudgetMs },
           apartments: {
             requestedUrl: apartments.requestedUrl,
             finalUrl: apartments.finalUrl,
             elapsedMs: apartments.elapsedMs,
             timedOut: apartments.timedOut ?? false,
+            budgetExceeded: apartments.budgetExceeded ?? false,
+            timing: apartments.timing ?? emptyOlxExtractPhaseTiming(),
             capturePaths: apartments.capturePaths ?? null,
           },
           houses: {
@@ -760,8 +908,12 @@ export async function extractOlxListingsViaBrowser(
             finalUrl: houses.finalUrl,
             elapsedMs: houses.elapsedMs,
             timedOut: houses.timedOut ?? false,
+            budgetExceeded: houses.budgetExceeded ?? false,
+            timing: houses.timing ?? emptyOlxExtractPhaseTiming(),
             capturePaths: houses.capturePaths ?? null,
           },
+          browserCloseMs,
+          browserCloseTimedOut,
         },
         null,
         2,
@@ -783,13 +935,20 @@ export async function extractOlxListingsViaBrowser(
   if (apartments.timedOut || houses.timedOut) {
     notes.push("category_or_total_budget_hit=true");
   }
-  if (extractionOk && (apartments.timedOut || houses.timedOut)) {
-    notes.push("timeout_after_successful_extract=true");
-  }
   const budgetExceeded = wallClockMs > totalBudgetMs;
   notes.push(`wallClockMs=${wallClockMs}`);
   if (budgetExceeded) {
     notes.push("total_budget_exceeded_including_cleanup=true");
+  }
+  if (extractionOk && budgetExceeded) {
+    notes.push("extraction_ok_but_budget_exceeded=true");
+  }
+  const cleanupTimedOut =
+    Boolean(apartments.timing?.cleanupTimedOut) ||
+    Boolean(houses.timing?.cleanupTimedOut) ||
+    browserCloseTimedOut;
+  if (cleanupTimedOut) {
+    notes.push("cleanup_budget_hit=true");
   }
   return {
     apartments,
@@ -802,6 +961,12 @@ export async function extractOlxListingsViaBrowser(
     budgets: { navigationTimeoutMs, categoryBudgetMs, totalBudgetMs },
     wallClockMs,
     budgetExceeded,
+    timing: {
+      apartments: apartments.timing ?? emptyOlxExtractPhaseTiming(),
+      houses: houses.timing ?? emptyOlxExtractPhaseTiming(),
+      browserCloseMs,
+      browserCloseTimedOut,
+    },
     ...(deps.captureDir ? { captureRootDir: deps.captureDir } : {}),
   };
 }
