@@ -51,7 +51,7 @@ try {
     JSON.stringify({
       message: "live:test-telegram.start",
       chatId: sink.chatId,
-      dryRun: process.env.TELEGRAM_DRY_RUN === "true",
+      dryRun: sink.dryRun,
       ownerOnly: config.ownerOnly,
       firstRunMode: config.firstRunMode,
       enableDomria: config.enableDomria,

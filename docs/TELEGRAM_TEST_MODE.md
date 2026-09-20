@@ -23,6 +23,8 @@ DATABASE_PATH=./data/rent-radar.sqlite
 
 `TELEGRAM_TEST_MODE` must be exactly `true`. Values like `1` / `True` are refused.
 
+`TELEGRAM_DRY_RUN` is the single source of truth for Telegram dry-run. Startup, cycle, and summary logs all read `sink.dryRun` (exact `TELEGRAM_DRY_RUN=true`). A silent inventory seed no longer reports `dryRun=false`.
+
 ## Commands
 
 One-shot (one collection → filter → dedupe → send):
@@ -43,6 +45,18 @@ TELEGRAM_CHAT_ID=... \
 TELEGRAM_POLL_CYCLES=6 \
 TELEGRAM_POLL_INTERVAL_MS=600000 \
 npm run live:test-telegram:poll
+```
+
+Safe canary (exactly one marked test message, isolated SQLite, never inventory). Off by default:
+
+```bash
+TELEGRAM_TEST_MODE=true \
+TELEGRAM_CANARY=true \
+TELEGRAM_DRY_RUN=false \
+TELEGRAM_CANARY_DATABASE_PATH="$HOME/rent-radar-runtime/telegram-test/rent-radar-canary.sqlite" \
+TELEGRAM_BOT_TOKEN=... \
+TELEGRAM_CHAT_ID=... \
+npm run live:test-telegram:canary
 ```
 
 ## Dedupe, baseline, and freshness

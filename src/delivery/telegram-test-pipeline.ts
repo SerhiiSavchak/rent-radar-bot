@@ -309,7 +309,7 @@ export async function runTelegramTestCycle(
 
   let sentOk = 0;
   let sentFailed = 0;
-  let dryRun = false;
+  const dryRun = deps.sink.dryRun === true;
   let initialInventoryCount = 0;
   let newlyObservedCount = 0;
   let suppressedOld = 0;
@@ -325,7 +325,6 @@ export async function runTelegramTestCycle(
   if (deps.outbox) {
     for (const item of deps.outbox.listRetryable(20)) {
       const delivered = await deliverListing(deps, item.listing, item.deliveryKind, item.id);
-      dryRun = delivered.dryRun || dryRun;
       sentOk += delivered.sentOk;
       sentFailed += delivered.sentFailed;
       sendErrors.push(...delivered.sendErrors);
@@ -353,7 +352,6 @@ export async function runTelegramTestCycle(
         const sample = unseen.slice(0, previewLimit);
         for (const listing of sample) {
           const delivered = await deliverListing(deps, listing, "initial_preview");
-          dryRun = delivered.dryRun || dryRun;
           sentOk += delivered.sentOk;
           sentFailed += delivered.sentFailed;
           sendErrors.push(...delivered.sendErrors);
@@ -405,7 +403,6 @@ export async function runTelegramTestCycle(
           ? freshness.kind
           : "first_noticed";
       const delivered = await deliverListing(deps, listing, deliveryKind);
-      dryRun = delivered.dryRun || dryRun;
       sentOk += delivered.sentOk;
       sentFailed += delivered.sentFailed;
       sendErrors.push(...delivered.sendErrors);

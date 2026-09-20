@@ -235,6 +235,10 @@ export class TelegramTestSink {
     return this.options.chatId;
   }
 
+  get dryRun(): boolean {
+    return this.options.dryRun;
+  }
+
   assertAllowed(): void {
     if (this.options.testMode !== true) {
       throw new TelegramTestModeError("TelegramTestSink refuses send: testMode is not true.");

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
+import { listingFingerprint } from "../src/delivery/delivery-ports.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
@@ -200,6 +201,8 @@ describe("SQLite durability and recovery", () => {
 
     const restarted = new DurableDeliveryStore(getDb(path));
     expect(restarted.hasBaseline("domria")).toBe(true);
+    expect(restarted.hasSeen(inventory[0]!)).toBe(true);
+    expect(restarted.seenFingerprints()).toContain(listingFingerprint(inventory[0]!));
     expect(restarted.establishedAt("domria")?.toISOString()).toBe(established);
     const replay = await runTelegramTestCycle(
       {

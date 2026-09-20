@@ -45,4 +45,14 @@ if [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
   exit 1
 fi
 
+echo "== stale pid/pgid files must not block a new start =="
+echo "999999" >"$RUNTIME_DIR/poll.pid"
+echo "999999" >"$RUNTIME_DIR/poll.pgid"
+"$SCRIPT" start
+"$SCRIPT" status
+fresh_pid="$(tr -d '[:space:]' <"$RUNTIME_DIR/poll.pid")"
+[[ "$fresh_pid" != "999999" ]] || { echo "stale pid was not replaced"; exit 1; }
+kill -0 "$fresh_pid" 2>/dev/null || { echo "replacement leader not alive"; exit 1; }
+"$SCRIPT" stop
+
 echo "lifecycle_smoke=PASS"

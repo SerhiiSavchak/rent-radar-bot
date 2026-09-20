@@ -59,7 +59,7 @@ try {
   closeRuntime = () => runtime.close();
   const heartbeatPath =
     process.env.HEARTBEAT_PATH ?? join(dirname(config.databasePath), "heartbeat.json");
-  const dryRun = process.env.TELEGRAM_DRY_RUN === "true";
+  const dryRun = sink.dryRun;
 
   const startup = formatTelegramStartupMessage({
     chatId: sink.chatId,
@@ -102,6 +102,7 @@ try {
     pid: process.pid,
     schemaVersion: runtime.schemaVersion,
     unbounded,
+    dryRun,
   });
   runtime.lock.heartbeat();
 
@@ -163,6 +164,7 @@ try {
       sentFailed: report.sentFailed,
       deliveryMode: report.deliveryMode,
       hasSourceFailures: report.hasSourceFailures,
+      dryRun: report.dryRun,
     });
     if (report.sentFailed > 0 || report.hasSourceFailures) {
       exitFail = true;
@@ -223,6 +225,7 @@ try {
       dedupeSurvivesRestart: true,
       baselineSurvivesRestart: true,
       restartRebaseline: false,
+      dryRun,
       exitFail,
     }),
   );

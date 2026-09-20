@@ -3,17 +3,27 @@
 # Secrets stay in ~/.config/rent-radar/telegram-test.env (not copied here).
 set -euo pipefail
 
+die() { echo "ERROR: $*" >&2; exit 1; }
+
 REPO_DIR="${REPO_DIR:-$HOME/rent-radar-bot}"
+[[ -d "$REPO_DIR" ]] || die "REPO_DIR not found: $REPO_DIR"
+REPO_DIR="$(cd "$REPO_DIR" && pwd)"
 RUNTIME_DIR="${RUNTIME_DIR:-$HOME/rent-radar-runtime/telegram-test}"
-ENV_FILE="${ENV_FILE:-$HOME/.config/rent-radar/telegram-test.env}"
+mkdir -p "$RUNTIME_DIR"
+RUNTIME_DIR="$(cd "$RUNTIME_DIR" && pwd)"
+EXPECTED_ENV_FILE="$HOME/.config/rent-radar/telegram-test.env"
+ENV_FILE="${ENV_FILE:-$EXPECTED_ENV_FILE}"
 UNIT_DIR="${UNIT_DIR:-$HOME/.config/systemd/user}"
 DATABASE_PATH="${DATABASE_PATH:-$RUNTIME_DIR/rent-radar.sqlite}"
+case "$DATABASE_PATH" in
+  /*) ;;
+  *) DATABASE_PATH="$RUNTIME_DIR/${DATABASE_PATH##*/}" ;;
+esac
 HEARTBEAT_PATH="${HEARTBEAT_PATH:-$RUNTIME_DIR/heartbeat.json}"
 LOG_FILE="${LOG_FILE:-$RUNTIME_DIR/poll.log}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-$REPO_DIR/deploy/systemd}"
 
-die() { echo "ERROR: $*" >&2; exit 1; }
-
+[[ "$ENV_FILE" == "$EXPECTED_ENV_FILE" ]] || die "Environment file must be $EXPECTED_ENV_FILE"
 [[ -d "$REPO_DIR" ]] || die "REPO_DIR not found: $REPO_DIR"
 [[ -f "$ENV_FILE" ]] || die "Environment file missing: $ENV_FILE (create the existing protected telegram-test.env)"
 [[ -f "$TEMPLATE_DIR/rent-radar-telegram.service" ]] || die "Missing unit template"
@@ -65,8 +75,10 @@ sqlite:  $DATABASE_PATH
 logs:    $LOG_FILE
 heartbeat: $HEARTBEAT_PATH
 
-ENABLE_OLX stays false unless you change the env file.
+ENABLE_OLX is forced false by the unit ExecStart.
 ENABLE_OLX_BROWSER must be set explicitly in $ENV_FILE.
+TELEGRAM_POLL_CYCLES is forced to 0 (unbounded) by the unit ExecStart.
+After reboot the user unit needs lingering: sudo loginctl enable-linger $USER
 
 Start now:
   systemctl --user start rent-radar-telegram.timer

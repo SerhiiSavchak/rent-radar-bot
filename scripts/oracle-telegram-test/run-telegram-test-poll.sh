@@ -107,6 +107,13 @@ release_start_lock() {
   fi
 }
 
+clear_stale_owned_files() {
+  if owned_tree_alive; then
+    return 0
+  fi
+  rm -f "$PID_FILE" "$PGID_FILE"
+}
+
 cmd_start() {
   if [[ -z "${POLL_COMMAND}" ]]; then
     validate_config
@@ -115,6 +122,7 @@ cmd_start() {
     die "Another start attempt holds $LOCK_FILE"
   fi
   trap 'release_start_lock' EXIT
+  clear_stale_owned_files
   if poller_running; then
     die "Another source poller appears to be running. Stop it first: $0 stop"
   fi

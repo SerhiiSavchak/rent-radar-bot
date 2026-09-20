@@ -38,10 +38,27 @@ chmod +x scripts/oracle-telegram-test/run-telegram-test-poll.sh
 User service + timer: start after reboot, restart on process failure, one active unit, logs and heartbeat. Secrets stay in `~/.config/rent-radar/telegram-test.env`. `ENABLE_OLX` stays false; set `ENABLE_OLX_BROWSER` explicitly in that file if you want Playwright.
 
 ```bash
+sudo loginctl enable-linger "$USER"
 chmod +x scripts/oracle-telegram-test/install-systemd.sh
 ./scripts/oracle-telegram-test/install-systemd.sh
+systemctl --user start rent-radar-telegram.timer
 systemctl --user start rent-radar-telegram.service
 systemctl --user status rent-radar-telegram.service
+```
+
+## Safe Telegram canary (exactly one marked message)
+
+Never sends inventory. Uses a separate SQLite file. Off unless both flags are exact `true`.
+
+```bash
+set -a
+source ~/.config/rent-radar/telegram-test.env
+set +a
+TELEGRAM_TEST_MODE=true \
+TELEGRAM_CANARY=true \
+TELEGRAM_DRY_RUN=false \
+TELEGRAM_CANARY_DATABASE_PATH="$HOME/rent-radar-runtime/telegram-test/rent-radar-canary.sqlite" \
+npm run live:test-telegram:canary
 ```
 
 SQLite default under systemd: `~/rent-radar-runtime/telegram-test/rent-radar.sqlite`.

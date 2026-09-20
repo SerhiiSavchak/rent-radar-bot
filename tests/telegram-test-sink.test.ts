@@ -4,7 +4,11 @@ import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/sour
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
 import { InMemoryListingDedupe } from "../src/delivery/listing-dedupe-memory.ts";
 import { InMemorySourceBaseline } from "../src/delivery/source-baseline-memory.ts";
-import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
+import {
+  formatTelegramFinalSummary,
+  formatTelegramStartupMessage,
+  runTelegramTestCycle,
+} from "../src/delivery/telegram-test-pipeline.ts";
 import {
   createTelegramTestSinkFromEnv,
   formatKyivDateTime,
@@ -149,6 +153,147 @@ describe("Telegram chat targeting and dry-run", () => {
     expect(result.dryRun).toBe(true);
     expect(result.chatId).toBe("424242");
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reports the same dryRun on a silent seed cycle as on the sink", async () => {
+    resetConfigCache();
+    const config = loadConfig({
+      OWNER_ONLY: "true",
+      ENABLE_DOMRIA: "true",
+      ENABLE_LUN: "false",
+      ENABLE_OLX: "false",
+      ENABLE_OLX_BROWSER: "false",
+      ENABLE_RIELTOR: "false",
+      PROPERTY_TYPES: "apartment,house",
+      TARGET_LAT: "49.8397",
+      TARGET_LNG: "24.0297",
+      TARGET_RADIUS_KM: "15",
+      GEO_UNKNOWN_POLICY: "include",
+      FIRST_RUN_MODE: "seed",
+    });
+    const fetchImpl = vi.fn();
+    const drySink = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "424242",
+      testMode: true,
+      dryRun: true,
+      timeoutMs: 1000,
+      maxRetries: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const report = await runTelegramTestCycle({
+      adapters: [adapter("domria", [sampleListing()])],
+      config,
+      sink: drySink,
+      dedupe: new InMemoryListingDedupe(),
+      baseline: new InMemorySourceBaseline(),
+      firstRunMode: "seed",
+    });
+    expect(drySink.dryRun).toBe(true);
+    expect(report.dryRun).toBe(true);
+    expect(report.deliveryMode).toBe("inventory_seed");
+    expect(report.sentOk).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(formatTelegramStartupMessage({
+      chatId: drySink.chatId,
+      cycles: 2,
+      intervalMs: 1000,
+      dryRun: drySink.dryRun,
+      enableDomria: true,
+      enableLun: false,
+      enableRieltor: false,
+      enableOlx: false,
+      enableOlxBrowser: false,
+      ownerOnly: true,
+      ownerAcceptSelfDeclared: false,
+      firstRunMode: "seed",
+    })).toContain("dry_run: true");
+    expect(formatTelegramFinalSummary({
+      cyclesAttempted: 2,
+      totalSentOk: 0,
+      totalSentFailed: 0,
+      totalNewAfterDedupe: 0,
+      sourceFailureCycles: 0,
+      zeroEligibleCycles: 2,
+      partialCoverageCycles: 0,
+      dryRun: drySink.dryRun,
+    })).toContain("dry_run: true");
+    resetConfigCache();
+  });
+
+  it("never calls Telegram HTTP when dryRun=true even after a deliverable listing appears", async () => {
+    resetConfigCache();
+    const config = loadConfig({
+      OWNER_ONLY: "true",
+      ENABLE_DOMRIA: "true",
+      ENABLE_LUN: "false",
+      ENABLE_OLX: "false",
+      ENABLE_OLX_BROWSER: "false",
+      ENABLE_RIELTOR: "false",
+      PROPERTY_TYPES: "apartment,house",
+      TARGET_LAT: "49.8397",
+      TARGET_LNG: "24.0297",
+      TARGET_RADIUS_KM: "15",
+      GEO_UNKNOWN_POLICY: "include",
+      FIRST_RUN_MODE: "seed",
+      TELEGRAM_STRICT_NEW_PUBLICATIONS: "true",
+      MAX_LISTING_AGE_MINUTES: String(7 * 24 * 60),
+    });
+    const fetchImpl = vi.fn();
+    const drySink = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "424242",
+      testMode: true,
+      dryRun: true,
+      timeoutMs: 1000,
+      maxRetries: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const dedupe = new InMemoryListingDedupe();
+    const baseline = new InMemorySourceBaseline();
+    const t0 = new Date("2026-09-17T12:00:00Z");
+    const t1 = new Date("2026-09-17T13:00:00Z");
+    const seed = sampleListing({
+      source: "domria",
+      sourceId: "seed-1",
+      url: "https://dom.ria.com/uk/realty-seed-1.html",
+      publishedAt: new Date("2026-09-16T12:00:00Z"),
+    });
+    await runTelegramTestCycle(
+      {
+        adapters: [adapter("domria", [seed])],
+        config,
+        sink: drySink,
+        dedupe,
+        baseline,
+        now: () => t0,
+        firstRunMode: "seed",
+      },
+      1,
+    );
+    const neu = sampleListing({
+      source: "domria",
+      sourceId: "new-1",
+      url: "https://dom.ria.com/uk/realty-new-1.html",
+      publishedAt: new Date("2026-09-17T12:30:00Z"),
+    });
+    const report = await runTelegramTestCycle(
+      {
+        adapters: [adapter("domria", [seed, neu])],
+        config,
+        sink: drySink,
+        dedupe,
+        baseline,
+        now: () => t1,
+        firstRunMode: "seed",
+      },
+      2,
+    );
+    expect(report.dryRun).toBe(true);
+    expect(report.sentOk).toBe(1);
+    expect(report.deliveryMode).toBe("send_new");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    resetConfigCache();
   });
 
   it("posts only to the configured chat_id", async () => {

@@ -24,6 +24,7 @@
     "test:lifecycle-smoke": "bash scripts/oracle-telegram-test/test-lifecycle-smoke.sh",
     "live:test-telegram": "tsx src/scripts/test-telegram.ts",
     "live:test-telegram:poll": "tsx src/scripts/test-telegram-poll.ts",
+    "live:test-telegram:canary": "tsx src/scripts/test-telegram-canary.ts",
     "live:domria": "tsx src/scripts/test-domria.ts",
     "live:lun": "tsx src/scripts/test-lun.ts",
     "live:rieltor": "tsx src/scripts/test-rieltor.ts",
