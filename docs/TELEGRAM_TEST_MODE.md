@@ -66,7 +66,7 @@ npm run live:test-telegram:canary
 - First successful fetch per source is a **silent seed**. Restart reuses `established_at`; it does not silent-rebaseline.
 - A listing first seen after downtime is classified against the persisted baseline (`late_discovered` vs new publication).
 - Telegram outbox: `pending` → `sending` → `sent` only after the Bot API confirms success. Failed rows stay retryable. `sending` rows recover to `pending` on reopen.
-- Duplicate cycles cannot send the same fingerprint twice. Concurrent pollers are rejected by a SQLite lock.
+- Duplicate cycles cannot send the same fingerprint twice. Concurrent pollers are rejected by a SQLite lock keyed by OS boot id + pid + starttime. A lock from a previous boot is stolen immediately; a live owner on this boot is not.
 - A failed source fetch does **not** delete the last known baseline.
 - In-memory stores remain in unit tests to document the old restart-rebaseline behaviour.
 - Default `FIRST_RUN_MODE=seed`: first successful fetch per source establishes a silent baseline.

@@ -54,7 +54,7 @@ try {
   const adapters = createCollectionAdapters(config);
   const runtime = openDurableRuntime({
     databasePath: config.databasePath,
-    lockHolder: `telegram-poll:${process.pid}`,
+    lockHolder: "telegram-poll",
   });
   closeRuntime = () => runtime.close();
   const heartbeatPath =
@@ -193,15 +193,17 @@ try {
     dryRun,
     durable: true,
   });
-  const summarySend = await sink.sendText(summaryText);
-  if (!summarySend.ok) {
-    exitFail = true;
-    console.error(
-      JSON.stringify({
-        message: "live:test-telegram:poll.summary_notify_failed",
-        error: summarySend.errorSafe,
-      }),
-    );
+  if (!stop) {
+    const summarySend = await sink.sendText(summaryText);
+    if (!summarySend.ok) {
+      exitFail = true;
+      console.error(
+        JSON.stringify({
+          message: "live:test-telegram:poll.summary_notify_failed",
+          error: summarySend.errorSafe,
+        }),
+      );
+    }
   }
 
   writeHeartbeat(heartbeatPath, {

@@ -43,7 +43,7 @@ try {
   const adapters = createCollectionAdapters(config);
   const runtime = openDurableRuntime({
     databasePath: config.databasePath,
-    lockHolder: `telegram-oneshot:${process.pid}`,
+    lockHolder: "telegram-oneshot",
   });
   closeRuntime = () => runtime.close();
 

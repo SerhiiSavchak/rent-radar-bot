@@ -34,7 +34,9 @@ chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
 chmod 700 "$(dirname "$ENV_FILE")" 2>/dev/null || true
 
 NPM_BIN="$(command -v npm || true)"
+NODE_BIN="$(command -v node || true)"
 [[ -n "$NPM_BIN" ]] || die "npm not found on PATH"
+[[ -n "$NODE_BIN" ]] || die "node not found on PATH"
 
 render() {
   local src="$1"
@@ -47,6 +49,7 @@ render() {
     -e "s|__HEARTBEAT_PATH__|$HEARTBEAT_PATH|g" \
     -e "s|__LOG_FILE__|$LOG_FILE|g" \
     -e "s|__NPM_BIN__|$NPM_BIN|g" \
+    -e "s|__NODE_BIN__|$NODE_BIN|g" \
     "$src" >"$dest"
 }
 

@@ -470,7 +470,7 @@ describe("SQLite durability and recovery", () => {
     first.close();
 
     const third = openDurableRuntime({ databasePath: path, lockHolder: "poller-c" });
-    expect(third.lock.holder).toBe("poller-c");
+    expect(third.lock.holder.startsWith("poller-c:")).toBe(true);
     third.close();
   });
 

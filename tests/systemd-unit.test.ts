@@ -18,6 +18,9 @@ describe("Oracle systemd unit", () => {
     expect(service).toContain("ENABLE_OLX=false");
     expect(service).not.toMatch(/ENABLE_OLX_BROWSER=true/);
     expect(service).toContain("one instance of this unit");
+    expect(service).toContain("__NODE_BIN__ --import tsx ./src/scripts/test-telegram-poll.ts");
+    expect(service).toContain("KillMode=control-group");
+    expect(service).toContain("RestartPreventExitStatus=2 3");
   });
 
   it("loads secrets only from the protected user env file", () => {

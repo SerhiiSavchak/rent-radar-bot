@@ -16,13 +16,13 @@ ExecStartPre=/bin/mkdir -p __RUNTIME_DIR__
 ExecStartPre=/bin/chmod 700 __RUNTIME_DIR__
 # Force unbounded poll and keep the blocked OLX HTTP adapter off even if the env file differs.
 # ENABLE_OLX_BROWSER stays explicit in the env file only.
-ExecStart=/usr/bin/env TELEGRAM_POLL_CYCLES=0 ENABLE_OLX=false __NPM_BIN__ run live:test-telegram:poll
+ExecStart=/usr/bin/env TELEGRAM_POLL_CYCLES=0 ENABLE_OLX=false __NODE_BIN__ --import tsx ./src/scripts/test-telegram-poll.ts
 Restart=on-failure
 RestartSec=20
-RestartPreventExitStatus=2
+RestartPreventExitStatus=2 3
 TimeoutStopSec=45
 KillSignal=SIGTERM
-KillMode=mixed
+KillMode=control-group
 StandardOutput=append:__LOG_FILE__
 StandardError=append:__LOG_FILE__
 SyslogIdentifier=rent-radar-telegram

@@ -45,7 +45,7 @@ try {
   });
   const runtime = openDurableRuntime({
     databasePath,
-    lockHolder: `telegram-canary:${process.pid}`,
+    lockHolder: "telegram-canary",
   });
   closeRuntime = () => runtime.close();
 

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const MIGRATION_1 = `
 CREATE TABLE IF NOT EXISTS listings (
@@ -66,9 +66,16 @@ CREATE TABLE IF NOT EXISTS poller_lock (
 );
 `;
 
+const MIGRATION_3 = `
+ALTER TABLE poller_lock ADD COLUMN boot_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE poller_lock ADD COLUMN pid INTEGER;
+ALTER TABLE poller_lock ADD COLUMN starttime TEXT;
+`;
+
 const MIGRATIONS: Record<number, string> = {
   1: MIGRATION_1,
   2: MIGRATION_2,
+  3: MIGRATION_3,
 };
 
 function tableExists(db: DatabaseSync, name: string): boolean {
