@@ -1,6 +1,6 @@
 import { listingSchema, type Listing, type PropertyType } from "../../domain/listing.ts";
 import { detectPropertyType } from "../../filters/listing-filter.ts";
-import { classifyOwner } from "../../filters/owner-filter.ts";
+import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import { olxOfferSchema, type OlxOffer } from "./olx.types.ts";
 
@@ -27,14 +27,21 @@ function sellerSignals(offer: OlxOffer) {
       : undefined;
   const extra = collectTextEvidence(`${offer.title ?? ""} ${offer.description ?? ""}`);
   if (offer.business === false) {
-    extra.unshift("OLX isBusiness/business = false (private account, not proof of property ownership)");
+    extra.unshift(
+      "OLX isBusiness/business = false (private account, not proof of property ownership)",
+    );
   }
   if (offer.business === true) {
-    extra.unshift("OLX isBusiness/business = true (account type, not proof of agency/realtor status)");
+    extra.unshift(
+      "OLX isBusiness/business = true (account type, not proof of agency/realtor status)",
+    );
   }
   if (userSellerType) {
     extra.push(`OLX user.sellerType = ${userSellerType}`);
-  } else if (offer.user && (offer.user.sellerType === null || offer.user.sellerType === undefined)) {
+  } else if (
+    offer.user &&
+    (offer.user.sellerType === null || offer.user.sellerType === undefined)
+  ) {
     extra.push("OLX user.sellerType is null (does not establish ownership)");
   }
   return classifyOwner({
@@ -94,7 +101,9 @@ function photoLinks(photos: OlxOffer["photos"] | undefined): string[] {
   return links;
 }
 
-function formatZodIssue(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
+function formatZodIssue(error: {
+  issues: Array<{ path: PropertyKey[]; message: string }>;
+}): string {
   const first = error.issues[0];
   if (!first) {
     return "unknown validation issue";
@@ -148,6 +157,7 @@ function buildListingFromOffer(offer: OlxOffer, discoveredAt: Date): Listing | u
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
       filterConsidersSelfDeclaredOwner: owner.filterConsidersSelfDeclaredOwner,
       ownerEvidenceLevel: owner.ownerEvidenceLevel,
+      ...sellerAnnotation(owner),
       transportCandidate: "public JSON API api/v1/offers",
       publishedAtProvenance: offer.created_time ? "olx.createdTime" : "missing",
       ...(urlToken ? { urlToken } : {}),

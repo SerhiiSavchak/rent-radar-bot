@@ -1,6 +1,6 @@
 import type { Listing } from "../../domain/listing.ts";
 import { detectPropertyType } from "../../filters/listing-filter.ts";
-import { classifyOwner } from "../../filters/owner-filter.ts";
+import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import { DOMRIA_OFFER_TYPE, domriaInfoSchema, type DomriaInfo } from "./domria.types.ts";
 
@@ -72,6 +72,9 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
     extraEvidence: [
       ...collectTextEvidence(`${title}\n${description ?? ""}`),
       ...(agencyId > 0 ? [`agency_id=${agencyId} (not used as ownership proof)`] : []),
+      ...(info.user_id !== undefined && info.user_id !== null && String(info.user_id) !== ""
+        ? [`dimria.user_id=${String(info.user_id)} (seller id retained, not ownership proof)`]
+        : []),
       ...(!role.recognized ? ["characteristic 1437 missing or unrecognized"] : []),
     ],
   });
@@ -106,6 +109,7 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
       advertType: info.advert_type_name_uk ?? info.advert_type_name,
       userId: info.user_id,
       characteristic1437Recognized: role.recognized,
+      ...sellerAnnotation(owner),
     },
   };
   if (description) {

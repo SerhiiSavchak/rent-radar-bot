@@ -1,6 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Listing } from "../domain/listing.ts";
 import {
+  decideFromHits,
+  type CrossSourceDecision,
+  type IdentityHit,
+} from "../delivery/cross-source-dedup.ts";
+import {
   canonicalListingUrl,
   listingFingerprint,
   type ListingDedupe,
@@ -9,6 +14,7 @@ import {
   type SourceBaseline,
   type TelegramOutbox,
 } from "../delivery/delivery-ports.ts";
+import { identityKeys, type IdentityKeyClass } from "../domain/provenance.ts";
 
 type SeenRow = {
   source: string;
@@ -56,7 +62,12 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     return Boolean(sent);
   }
 
-  markSeen(listing: Pick<Listing, "source" | "sourceId" | "url"> & Partial<Pick<Listing, "publishedAt" | "refreshedAt">>): void {
+  markSeen(
+    listing: Pick<Listing, "source" | "sourceId" | "url"> &
+      Partial<
+        Pick<Listing, "publishedAt" | "refreshedAt" | "metadata" | "rooms" | "areaM2" | "price">
+      >,
+  ): void {
     const now = new Date().toISOString();
     const url = canonicalListingUrl(listing.url);
     const fingerprint = listingFingerprint(listing);
@@ -71,15 +82,74 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
           "UPDATE seen_listings SET canonical_url = ?, fingerprint = ?, last_seen_at = ?, published_at = COALESCE(?, published_at), refreshed_at = COALESCE(?, refreshed_at) WHERE source = ? AND source_id = ?",
         )
         .run(url, fingerprint, now, published, refreshed, listing.source, listing.sourceId);
-      return;
-    }
-    this.db
-      .prepare(
-        `INSERT INTO seen_listings (
+    } else {
+      this.db
+        .prepare(
+          `INSERT INTO seen_listings (
           source, source_id, fingerprint, canonical_url, first_seen_at, last_seen_at, published_at, refreshed_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(listing.source, listing.sourceId, fingerprint, url, now, now, published, refreshed);
+        )
+        .run(listing.source, listing.sourceId, fingerprint, url, now, now, published, refreshed);
+    }
+    this.rememberCrossSource(listing);
+  }
+
+  assessCrossSource(listing: Listing, peers: Listing[] = []): CrossSourceDecision {
+    const keys = identityKeys(listing);
+    const hits: IdentityHit[] = [];
+    const query = this.db.prepare(
+      `SELECT identity_key AS identityKey, key_class AS keyClass, source, source_id AS sourceId
+       FROM cross_source_identities
+       WHERE identity_key = ? AND NOT (source = ? AND source_id = ?)`,
+    );
+    for (const item of keys) {
+      const rows = query.all(item.key, listing.source, listing.sourceId) as Array<{
+        identityKey: string;
+        keyClass: string;
+        source: string;
+        sourceId: string;
+      }>;
+      for (const row of rows) {
+        const theirClass = asKeyClass(row.keyClass);
+        if (!theirClass) {
+          continue;
+        }
+        hits.push({
+          key: row.identityKey,
+          ourClass: item.keyClass,
+          theirClass,
+          source: row.source,
+          sourceId: row.sourceId,
+        });
+      }
+    }
+    return decideFromHits(listing, hits, peers);
+  }
+
+  rememberCrossSource(
+    listing: Pick<Listing, "source" | "sourceId" | "url"> &
+      Partial<Pick<Listing, "metadata" | "rooms" | "areaM2" | "price">>,
+  ): void {
+    const keys = identityKeys(listing);
+    if (keys.length === 0) {
+      return;
+    }
+    const createdAt = new Date().toISOString();
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO cross_source_identities (
+        identity_key, key_class, source, source_id, created_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+    );
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const item of keys) {
+        insert.run(item.key, item.keyClass, listing.source, listing.sourceId, createdAt);
+      }
+      this.db.exec("COMMIT;");
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   filterUnseen(listings: Listing[]): Listing[] {
@@ -87,7 +157,9 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
   }
 
   hasBaseline(source: string): boolean {
-    return Boolean(this.db.prepare("SELECT source FROM source_baselines WHERE source = ?").get(source));
+    return Boolean(
+      this.db.prepare("SELECT source FROM source_baselines WHERE source = ?").get(source),
+    );
   }
 
   establishedAt(source: string): Date | undefined {
@@ -97,7 +169,12 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     return row ? new Date(row.establishedAt) : undefined;
   }
 
-  establishSilent(source: string, listings: Listing[], dedupe: ListingDedupe, at = new Date()): number {
+  establishSilent(
+    source: string,
+    listings: Listing[],
+    dedupe: ListingDedupe,
+    at = new Date(),
+  ): number {
     for (const listing of listings) {
       dedupe.markSeen(listing);
     }
@@ -140,7 +217,14 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
           source, source_id, fingerprint, listing_json, delivery_kind, status, attempt_count, created_at
         ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)`,
       )
-      .run(listing.source, listing.sourceId, fingerprint, serializeListing(listing), deliveryKind, created);
+      .run(
+        listing.source,
+        listing.sourceId,
+        fingerprint,
+        serializeListing(listing),
+        deliveryKind,
+        created,
+      );
     const row = this.db
       .prepare("SELECT id FROM telegram_outbox WHERE fingerprint = ?")
       .get(fingerprint) as { id: number };
@@ -217,13 +301,14 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
 
   private readMeta(key: string): string | undefined {
     const row = this.db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as
-      | { value: string }
-      | undefined;
+      { value: string } | undefined;
     return row?.value;
   }
 
   private writeMeta(key: string, value: string): void {
-    this.db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)").run(key, value);
+    this.db
+      .prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)")
+      .run(key, value);
   }
 }
 
@@ -253,6 +338,13 @@ export function deserializeListing(raw: string): Listing {
     ...(parsed.refreshedAt ? { refreshedAt: new Date(String(parsed.refreshedAt)) } : {}),
     ...(parsed.firstSeenAt ? { firstSeenAt: new Date(String(parsed.firstSeenAt)) } : {}),
   };
+}
+
+function asKeyClass(value: string): IdentityKeyClass | undefined {
+  if (value === "own" || value === "explicit_external" || value === "lun_cluster") {
+    return value;
+  }
+  return undefined;
 }
 
 function rowToOutboxItem(row: OutboxRow): OutboxItem {

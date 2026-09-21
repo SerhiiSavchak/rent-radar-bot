@@ -1,6 +1,6 @@
 import type { Listing } from "../../domain/listing.ts";
 import { detectPropertyType } from "../../filters/listing-filter.ts";
-import { classifyOwner } from "../../filters/owner-filter.ts";
+import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { normalizeLatLng } from "../../utils/geo.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import { lunCardSchema, type LunCard } from "./lun.types.ts";
@@ -240,6 +240,7 @@ export function parseLunCard(
       originalHost: originalListingHost(card.urlRaw),
       withoutCommission: card.withoutCommission,
       isOwner: card.isOwner,
+      ...sellerAnnotation(owner),
       ...lunProvenanceMetadata(card),
     },
   };

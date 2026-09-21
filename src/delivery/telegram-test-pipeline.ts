@@ -8,10 +8,18 @@ import {
   defaultMaxPublicationAgeMinutes,
   withFirstSeenAt,
 } from "./listing-freshness.ts";
-import type { ListingDedupe, OutboxItem, SourceBaseline, TelegramOutbox } from "./delivery-ports.ts";
+import type {
+  ListingDedupe,
+  OutboxItem,
+  SourceBaseline,
+  TelegramOutbox,
+} from "./delivery-ports.ts";
+import { crossSourceOf, type CrossSourceDecision } from "./cross-source-dedup.ts";
+import { annotateListing } from "./listing-annotations.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
 import { isOlxCollectionEnabled } from "../collection/create-source-adapters.ts";
 import { OLX_BROWSER_TRANSPORT } from "../sources/olx/olx-browser.source.ts";
+import { logger } from "../utils/logger.ts";
 
 export type TelegramSourceAttempt = {
   source: string;
@@ -53,6 +61,9 @@ export type TelegramTestCycleReport = {
   suppressedRefreshedOld: number;
   suppressedUnknownStrict: number;
   suppressedLateDiscovered: number;
+  suppressedCrossSourceDuplicate: number;
+  crossSourceUncertainKept: number;
+  crossSourceEvents: CrossSourceEvent[];
   dryRun: boolean;
   chatId: string;
   deliveryMode: "inventory_seed" | "initial_preview" | "send_new";
@@ -87,6 +98,29 @@ export type TelegramTestPipelineDeps = {
   /** Exclude unknown publishedAt (default true). */
   strictNewPublications?: boolean;
 };
+
+export type CrossSourceEvent = {
+  source: string;
+  sourceId: string;
+  verdict: CrossSourceDecision["verdict"];
+  suppress: boolean;
+  reasons: string[];
+  matchedSource?: string;
+  matchedSourceId?: string;
+};
+
+function crossSourceEvent(listing: Listing, decision: CrossSourceDecision): CrossSourceEvent {
+  return {
+    source: listing.source,
+    sourceId: listing.sourceId,
+    verdict: decision.verdict,
+    suppress: decision.suppress,
+    reasons: decision.reasons,
+    ...(decision.match
+      ? { matchedSource: decision.match.source, matchedSourceId: decision.match.sourceId }
+      : {}),
+  };
+}
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -206,10 +240,7 @@ function classifySourceAttempt(result: SourceFetchResult): {
   };
 }
 
-function resolveFirstRunMode(
-  config: AppConfig,
-  override?: "seed" | "preview",
-): "seed" | "preview" {
+function resolveFirstRunMode(config: AppConfig, override?: "seed" | "preview"): "seed" | "preview" {
   if (override) {
     return override;
   }
@@ -293,7 +324,9 @@ export async function runTelegramTestCycle(
   );
   const strictNewPublications =
     deps.strictNewPublications ?? deps.config.telegramStrictNewPublications ?? true;
-  const maxPublicationAgeMinutes = defaultMaxPublicationAgeMinutes(deps.config.maxListingAgeMinutes);
+  const maxPublicationAgeMinutes = defaultMaxPublicationAgeMinutes(
+    deps.config.maxListingAgeMinutes,
+  );
   deps.baseline.ensureSellerPolicy?.(deps.config.sellerPolicy, now());
   const policyCutoverAt = deps.baseline.sellerPolicyCutoverAt?.();
 
@@ -399,6 +432,11 @@ export async function runTelegramTestCycle(
   let suppressedRefreshedOld = 0;
   let suppressedUnknownStrict = 0;
   let suppressedLateDiscovered = 0;
+  let suppressedCrossSourceDuplicate = 0;
+  let crossSourceUncertainKept = 0;
+  const crossSourceEvents: CrossSourceEvent[] = [];
+  const crossSourcePeers: Listing[] = [];
+  const crossSource = crossSourceOf(deps.dedupe);
   let newAfterDedupe = 0;
   let collectedRaw = 0;
   let acceptedFiltered = 0;
@@ -428,12 +466,27 @@ export async function runTelegramTestCycle(
     }
 
     if (!deps.baseline.hasBaseline(bucket.source)) {
-      const unseen = deps.dedupe.filterUnseen(bucket.listings).map((l) => withFirstSeenAt(l, now()));
+      const unseen = deps.dedupe
+        .filterUnseen(bucket.listings)
+        .map((l) => withFirstSeenAt(l, now()));
       initialInventoryCount += unseen.length;
       if (firstRunMode === "preview") {
         usedPreview = true;
         const sample = unseen.slice(0, previewLimit);
-        for (const listing of sample) {
+        for (const original of sample) {
+          const listing = annotateListing(original);
+          if (crossSource) {
+            const decision = crossSource.assessCrossSource(listing, crossSourcePeers);
+            if (decision.suppress) {
+              suppressedCrossSourceDuplicate += 1;
+              if (crossSourceEvents.length < 30) {
+                crossSourceEvents.push(crossSourceEvent(listing, decision));
+              }
+              continue;
+            }
+            crossSource.rememberCrossSource(listing);
+            crossSourcePeers.push(listing);
+          }
           const delivered = await deliverListing(deps, listing, "initial_preview");
           sentOk += delivered.sentOk;
           sentFailed += delivered.sentFailed;
@@ -457,7 +510,34 @@ export async function runTelegramTestCycle(
     newAfterDedupe += unseen.length;
     newlyObservedCount += unseen.length;
 
-    for (const listing of unseen) {
+    for (const original of unseen) {
+      const listing = annotateListing(original);
+      if (crossSource) {
+        const decision = crossSource.assessCrossSource(listing, crossSourcePeers);
+        if (decision.verdict !== "unique") {
+          const event = crossSourceEvent(listing, decision);
+          if (crossSourceEvents.length < 30) {
+            crossSourceEvents.push(event);
+          }
+          logger.info(
+            decision.suppress
+              ? "dedup.confirmed_cross_source_duplicate"
+              : "dedup.uncertain_cross_source_kept",
+            event,
+          );
+        }
+        if (decision.suppress) {
+          suppressedCrossSourceDuplicate += 1;
+          deps.dedupe.markSeen(listing);
+          continue;
+        }
+        if (decision.verdict === "possible_duplicate") {
+          crossSourceUncertainKept += 1;
+        }
+        crossSource.rememberCrossSource(listing);
+        crossSourcePeers.push(listing);
+      }
+
       const established = deps.baseline.establishedAt(bucket.source);
       const monitoringStartedAt = laterDate(established, policyCutoverAt);
       const freshness = classifyListingFreshness(listing, {
@@ -524,6 +604,9 @@ export async function runTelegramTestCycle(
     suppressedRefreshedOld,
     suppressedUnknownStrict,
     suppressedLateDiscovered,
+    suppressedCrossSourceDuplicate,
+    crossSourceUncertainKept,
+    crossSourceEvents,
     dryRun,
     chatId: deps.sink.chatId,
     deliveryMode,

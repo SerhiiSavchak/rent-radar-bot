@@ -1,6 +1,6 @@
 import type { Listing } from "../../domain/listing.ts";
 import type { FetchResultKind } from "../../domain/source.ts";
-import { classifyOwner } from "../../filters/owner-filter.ts";
+import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import {
   RIELTOR_CITY_PREFIX,
@@ -67,7 +67,10 @@ export function sliceMainCatalog(html: string): string | undefined {
   return extras > start ? html.slice(start, extras) : html.slice(start);
 }
 
-export function resolveRieltorLocation(html: string, pageUrl: string): {
+export function resolveRieltorLocation(
+  html: string,
+  pageUrl: string,
+): {
   resolved: boolean;
   label?: string;
 } {
@@ -90,10 +93,15 @@ export function resolveRieltorLocation(html: string, pageUrl: string): {
 
 export function extractJsonLdItems(html: string): Map<string, RieltorJsonLdItem> {
   const items = new Map<string, RieltorJsonLdItem>();
-  const blocks = html.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+  const blocks = html.matchAll(
+    /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi,
+  );
   for (const block of blocks) {
     try {
-      const parsed = JSON.parse(block[1] ?? "") as { "@type"?: string; itemListElement?: unknown[] };
+      const parsed = JSON.parse(block[1] ?? "") as {
+        "@type"?: string;
+        itemListElement?: unknown[];
+      };
       if (parsed["@type"] !== "ItemList" || !Array.isArray(parsed.itemListElement)) {
         continue;
       }
@@ -178,7 +186,11 @@ export function inspectRieltorHtml(
 
   const truncated = declaredCount !== undefined && declaredCount > listings.length;
   const resultKind: FetchResultKind =
-    listings.length > 0 ? "ok" : emptyMarket || declaredCount === 0 ? "valid_empty" : "parser_failure";
+    listings.length > 0
+      ? "ok"
+      : emptyMarket || declaredCount === 0
+        ? "valid_empty"
+        : "parser_failure";
 
   return {
     resultKind,
@@ -205,17 +217,15 @@ export function parseRieltorCard(
   },
 ): Listing | undefined {
   const id =
-    cardHtml.match(/data-catalog-item-id="(\d+)"/)?.[1] ??
-    cardHtml.match(/\/view\/(\d+)\//)?.[1];
+    cardHtml.match(/data-catalog-item-id="(\d+)"/)?.[1] ?? cardHtml.match(/\/view\/(\d+)\//)?.[1];
   const href = cardHtml.match(/href="(https:\/\/rieltor\.ua\/[^"]+\/view\/\d+\/)"/)?.[1];
   if (!id || !href) {
     return undefined;
   }
   const url = normalizeRieltorUrl(href);
   const json = options.jsonLd.get(url);
-  const roleLabel = cardHtml.match(
-    /class="catalog-card-author-subtitle"[\s\S]*?<span>([^<]+)<\/span>/,
-  )?.[1]
+  const roleLabel = cardHtml
+    .match(/class="catalog-card-author-subtitle"[\s\S]*?<span>([^<]+)<\/span>/)?.[1]
     ?.trim();
   const agencyName = cardHtml
     .match(/class="catalog-card-author-company"[\s\S]*?>([\s\S]*?)<\/button>/)?.[1]
@@ -230,7 +240,9 @@ export function parseRieltorCard(
   const lat = num(attr(cardHtml, "data-latitude") ?? json?.geo?.latitude);
   const lng = num(attr(cardHtml, "data-longitude") ?? json?.geo?.longitude);
   const price = parsePrice(cardHtml, json);
-  const publishedLabel = cardHtml.match(/class="catalog-card-update"[\s\S]*?<span>([^<]+)<\/span>/)?.[1]?.trim();
+  const publishedLabel = cardHtml
+    .match(/class="catalog-card-update"[\s\S]*?<span>([^<]+)<\/span>/)?.[1]
+    ?.trim();
   const publishedAt = parseJsonLdDate(json?.offers?.availabilityStarts);
   const description = json?.description;
   const listing: Listing = {
@@ -239,7 +251,8 @@ export function parseRieltorCard(
     url,
     title,
     location: {
-      raw: [address, region].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || city || "Lviv",
+      raw:
+        [address, region].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || city || "Lviv",
       ...(city ? { city } : {}),
       ...(district ? { district } : {}),
       ...(lat !== undefined ? { latitude: lat } : {}),
@@ -254,8 +267,11 @@ export function parseRieltorCard(
       filterConsidersPrivateOwner: owner.filterConsidersPrivateOwner,
       ownerEvidenceLevel: owner.ownerEvidenceLevel,
       platformRoleLabel: roleLabel ?? null,
+      ...sellerAnnotation(owner),
       coordinatePrecision: lat !== undefined && lng !== undefined ? "unspecified_point" : "missing",
-      timestampPrecision: publishedAt ? "jsonld_availabilityStarts_seconds_unknown_semantics" : "relative_or_missing",
+      timestampPrecision: publishedAt
+        ? "jsonld_availabilityStarts_seconds_unknown_semantics"
+        : "relative_or_missing",
       ...(publishedLabel ? { publishedLabel } : {}),
       ...(agencyName ? { agencyName } : {}),
       jsonLdEnriched: Boolean(json),
@@ -323,11 +339,17 @@ function textOf(html: string, className: string): string | undefined {
   if (!match?.[1]) {
     return undefined;
   }
-  const text = match[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const text = match[1]
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return text || undefined;
 }
 
-function firstLocality(region: string | undefined, jsonLocality: string | undefined): string | undefined {
+function firstLocality(
+  region: string | undefined,
+  jsonLocality: string | undefined,
+): string | undefined {
   if (jsonLocality) {
     return jsonLocality.trim();
   }
@@ -342,7 +364,10 @@ function firstDistrict(region: string | undefined): string | undefined {
   if (!region) {
     return undefined;
   }
-  const parts = region.split(",").map((item) => item.trim()).filter(Boolean);
+  const parts = region
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
   return parts[1];
 }
 

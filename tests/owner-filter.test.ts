@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { classifyOwner, isOwnerEligible, isSellerEligible } from "../src/filters/owner-filter.ts";
+import {
+  classifyOwner,
+  isOwnerEligible,
+  isSellerEligible,
+  sellerAssessmentFromClassification,
+} from "../src/filters/owner-filter.ts";
 import { detectPropertyType } from "../src/filters/listing-filter.ts";
 import { hasExplicitIntermediaryText } from "../src/utils/text-evidence.ts";
 
@@ -12,10 +17,12 @@ describe("owner classifier", () => {
     expect(result.filterConsidersPrivateOwner).toBe(false);
     expect(result.filterConsidersSelfDeclaredOwner).toBe(true);
     expect(result.ownerEvidenceLevel).toBe("self_declared");
-    expect(isSellerEligible({
-      sellerType: result.sellerType,
-      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
-    })).toBe(true);
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(true);
   });
 
   it("does not treat private-account flags as property ownership", () => {
@@ -25,12 +32,18 @@ describe("owner classifier", () => {
     expect(result.sellerType).toBe("unknown");
     expect(result.filterConsidersPrivateOwner).toBe(false);
     expect(result.ownerEvidenceLevel).toBe("private_unknown");
-    expect(isOwnerEligible({ sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } })).toBe(
-      false,
-    );
-    expect(isSellerEligible({ sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } })).toBe(
-      true,
-    );
+    expect(
+      isOwnerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(true);
   });
 
   it("requires a platform owner signal for sellerType=owner", () => {
@@ -137,13 +150,21 @@ describe("owner classifier", () => {
     expect(result.sellerType).toBe("unknown");
     expect(result.ownerEvidenceLevel).toBe("conflict");
     expect(result.filterConsidersSelfDeclaredOwner).toBe(false);
-    expect(isOwnerEligible(
-      { sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } },
-      { acceptSelfDeclared: true },
-    )).toBe(false);
-    expect(isSellerEligible(
-      { sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } },
-    )).toBe(false);
+    expect(
+      isOwnerEligible(
+        {
+          sellerType: result.sellerType,
+          metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+        },
+        { acceptSelfDeclared: true },
+      ),
+    ).toBe(false);
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
   });
 
   it("does not treat «від власника» plus owner-seeking copy as a self-declaration", () => {
@@ -179,10 +200,12 @@ describe("owner classifier", () => {
     });
     expect(result.sellerType).toBe("unknown");
     expect(result.ownerEvidenceLevel).toBe("private_unknown");
-    expect(isSellerEligible({
-      sellerType: result.sellerType,
-      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
-    })).toBe(true);
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(true);
   });
 
   it("allows a self-declaration without the legacy OWNER_ACCEPT_SELF_DECLARED opt-in", () => {
@@ -191,10 +214,12 @@ describe("owner classifier", () => {
     });
     expect(result.ownerEvidenceLevel).toBe("self_declared");
     expect(result.sellerType).toBe("unknown");
-    expect(isSellerEligible({
-      sellerType: result.sellerType,
-      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
-    })).toBe(true);
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(true);
   });
 
   it("lets explicit intermediary evidence override an owner claim", () => {
@@ -203,10 +228,12 @@ describe("owner classifier", () => {
       text: "від власника, без комісії",
     });
     expect(result.ownerEvidenceLevel).toBe("conflict");
-    expect(isSellerEligible({
-      sellerType: result.sellerType,
-      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
-    })).toBe(false);
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
   });
 
   it("rejects unambiguous realtor/agency copy and keeps negative phrases", () => {
@@ -220,14 +247,84 @@ describe("owner classifier", () => {
     expect(hasExplicitIntermediaryText("Приватний будинок біля парку")).toBe(false);
     expect(hasExplicitIntermediaryText("Готовий співпрацювати з ріелторами")).toBe(false);
 
-    for (const text of ["Без комісії", "Без рієлтора", "Агентствам не турбувати", "Рієлторам не телефонувати"]) {
+    for (const text of [
+      "Без комісії",
+      "Без рієлтора",
+      "Агентствам не турбувати",
+      "Рієлторам не телефонувати",
+    ]) {
       const result = classifyOwner({ text, platformPrivate: true });
       expect(result.ownerEvidenceLevel).toBe("private_unknown");
-      expect(isSellerEligible({
+      expect(
+        isSellerEligible({
+          sellerType: result.sellerType,
+          metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("keeps UNKNOWN sendable and records structured evidence", () => {
+    const result = classifyOwner({});
+    const assessment = sellerAssessmentFromClassification(result);
+    expect(assessment.state).toBe("unknown");
+    expect(assessment.send).toBe(true);
+    expect(
+      isSellerEligible({
         sellerType: result.sellerType,
         metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
-      })).toBe(true);
-    }
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps OLX isBusiness alone unknown and sendable", () => {
+    const result = classifyOwner({ isBusiness: true });
+    const assessment = sellerAssessmentFromClassification(result);
+    expect(result.sellerType).toBe("unknown");
+    expect(assessment.state).toBe("unknown");
+    expect(assessment.send).toBe(true);
+    expect(assessment.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "account",
+          type: "business_flag",
+          value: "true",
+          strength: "weak",
+        }),
+      ]),
+    );
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects an explicit RIELTOR realtor label as a confirmed intermediary", () => {
+    const result = classifyOwner({
+      platformAgent: true,
+      offerTypeLabel: "Рієлтор",
+    });
+    const assessment = sellerAssessmentFromClassification(result);
+    expect(assessment.state).toBe("confirmed_agent");
+    expect(assessment.send).toBe(false);
+    expect(assessment.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "platform",
+          type: "seller_role",
+          value: "agent",
+          strength: "strong",
+        }),
+      ]),
+    );
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
   });
 });
 

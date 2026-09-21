@@ -5,17 +5,17 @@ Only decisions supported by the current code and the live checks in `docs/RENT_R
 
 ## ADR: seller classification is evidence-based and permissive
 
-Status: **final** for the delivery gate. The five names below are conceptual. The stored fields are `sellerType` (`owner` | `agent` | `business` | `unknown`) and `metadata.ownerEvidenceLevel`.
+Status: **final** for the delivery gate. `classifyOwner` still returns `sellerType` and `ownerEvidenceLevel`. It also returns `evidenceItems` (`source`, `type`, `value`, `strength`). `sellerAssessmentFromClassification` maps that to `metadata.sellerAssessment` (`state`, `confidence`, `evidence`, `send`). Parsers copy the assessment onto the listing. The delivery gate is still `isSellerEligible`.
 
-| Conceptual state | Current code                                                                                                          | Delivery                                                |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| CONFIRMED_OWNER  | `sellerType=owner` from a platform flag (`isOwner`, characteristic 1437 = від власника, RIELTOR label `Власник`)      | SEND                                                    |
-| LIKELY_OWNER     | `ownerEvidenceLevel=self_declared`. `sellerType` stays `unknown`. Title wording alone is not a platform confirmation. | SEND                                                    |
-| UNKNOWN          | no platform role and no explicit intermediary evidence                                                                | SEND                                                    |
-| LIKELY_AGENT     | agency id/name or explicit intermediary copy. `sellerRejectionReason` is `explicit_intermediary` or `conflict`.       | DROP, because that evidence is treated as strong enough |
-| CONFIRMED_AGENT  | `sellerType=agent` or `business` from a platform role                                                                 | DROP                                                    |
+| Conceptual state | Current code                                                                                                                                                                                        | Delivery                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| CONFIRMED_OWNER  | `sellerType=owner` from a platform flag (`isOwner`, characteristic 1437 = від власника, RIELTOR label `Власник`)                                                                                    | SEND                       |
+| LIKELY_OWNER     | `ownerEvidenceLevel=self_declared`. `sellerType` stays `unknown`. Title wording alone is not a platform confirmation.                                                                               | SEND                       |
+| UNKNOWN          | no platform role and no explicit intermediary evidence. Includes OLX `isBusiness` and a LUN card whose only extra fact is `site.internalName`.                                                      | SEND                       |
+| LIKELY_AGENT     | Not emitted in v1. A weak hint must stay sendable, and no current signal is classified here.                                                                                                        | SEND if it is ever emitted |
+| CONFIRMED_AGENT  | `sellerType=agent` or `business`, or `ownerEvidenceLevel` `intermediary` / `conflict` (platform role, agency id/name passed into the classifier, or explicit intermediary text such as «я рієлтор») | DROP                       |
 
-`agency_id` on DIM.RIA and a private-account flag on OLX are not ownership and are not, by themselves, an agent drop.
+DIM.RIA `agency_id` is stored as evidence text and is not passed into `classifyOwner`, so it is not an agent drop. `user_id` is stored as `metadata.userId` and as a context note. It is not ownership proof. A private-account flag and OLX `isBusiness` are not ownership and are not an agent drop. A LUN `site.internalName` of `rieltor.ua` is provenance, not intermediary evidence.
 
 ## ADR: UNKNOWN seller is sent
 
@@ -25,13 +25,28 @@ Status: **final**.
 
 ## ADR: uncertain dedup is sent
 
-Status: **final as a rule, not implemented as cross-source matching**.
+Status: **final**. Implemented in `src/delivery/cross-source-dedup.ts`.
 
-Exact repeats of the same source id / outbox fingerprint are suppressed. LUN `hasDuplicates`, `similarPageIds`, and `groupId` are stored on the listing and do not remove it. No fuzzy cross-source drop exists. An uncertain duplicate is therefore kept.
+Only `confirmed_duplicate` suppresses delivery. `possible_duplicate` and `unique` continue. There is no opaque score.
+
+What can suppress:
+
+1. Same `source + sourceId`, or the same canonical listing URL, via the existing seen-listing store.
+2. An explicit foreign listing identity. A LUN `urlRaw` whose host is OLX, RIELTOR, or DIM.RIA is normalized (tracking query and hash removed; OLX token case kept). If that token or `/view/{id}` matches another listing's own identity, the later listing is a confirmed duplicate.
+3. A shared LUN `groupId` between two LUN listings. The key is `lun:group:{id}`. It is never compared to an OLX, RIELTOR, or DIM.RIA id.
+
+What cannot suppress:
+
+- `similarPageIds` and `hasDuplicates` are kept on the provenance record. They are not identity keys.
+- Rooms, area, and price, including the same combination on the same coordinates.
+- Title or description text. v1 does not compute text similarity.
+- Image perceptual hashing and AI/LLM similarity. They are not part of v1.
+
+An uncertain attribute overlap is reported as `possible_duplicate` with reason `attribute_overlap_not_sufficient` and is still sent.
 
 ## ADR: explicit provenance outranks fuzzy similarity
 
-Status: **final as a ranking rule. The dropper is not built.**
+Status: **final**. The dropper uses only the hierarchy above.
 
 LUN catalog cards expose platform-provided links:
 
@@ -40,7 +55,9 @@ LUN catalog cards expose platform-provided links:
 - `hasDuplicates` boolean on 26/48 true
 - `urlRaw` plus `site.internalName`: 35/48 `rieltor.ua`, 13/48 `olx.ua`
 
-Those fields outrank any future text/price similarity. Similarity alone must not drop a listing. DIM.RIA and RIELTOR cards inspected here did not expose a foreign listing id.
+`readProvenance` stores source, source listing id, canonical URL, external source name, external URL, external listing id when the URL pattern is deterministic, `groupId`, `similarPageIds`, `hasDuplicates`, and the raw site name. DIM.RIA and RIELTOR cards inspected in the source-layer batch did not expose a foreign listing id, so they contribute only their own identity.
+
+Confirmed identity rows live in SQLite table `cross_source_identities` (schema version 4). `markSeen` writes them, and the poller also writes them before a Telegram attempt so a failed send still suppresses the twin. Reopening the same database keeps the match. Same-source baseline, freshness, and the Telegram outbox are unchanged. Retention cleanup is not part of this schema change.
 
 ## ADR: DIM.RIA official API cannot be consumed blindly every 10 minutes
 
