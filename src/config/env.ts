@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PropertyType } from "../domain/listing.ts";
+import type { SellerPolicy } from "../filters/owner-filter.ts";
 
 const optionalString = z.preprocess(
   (value) => (value === "" || value === undefined ? undefined : value),
@@ -50,7 +51,15 @@ const envSchema = z.object({
   ENABLE_DOMRIA: booleanFromEnv(true),
   ENABLE_LUN: booleanFromEnv(true),
   ENABLE_OLX: booleanFromEnv(false),
+  ENABLE_OLX_BROWSER: booleanFromEnv(false),
+  ENABLE_RIELTOR: booleanFromEnv(true),
   OWNER_ONLY: booleanFromEnv(true),
+  OWNER_ACCEPT_SELF_DECLARED: booleanFromEnv(false),
+  /**
+   * Approved default: reject confirmed intermediaries, keep unknown/self-declared.
+   * OWNER_ONLY=true does not restore the old gate unless this is owner_only.
+   */
+  SELLER_POLICY: z.enum(["reject_intermediaries", "owner_only"]).default("reject_intermediaries"),
   PROPERTY_TYPES: z.string().default("apartment,house"),
   MAX_LISTING_AGE_MINUTES: optionalPositiveInt,
   DOMRIA_API_KEY: optionalString,
@@ -60,12 +69,14 @@ const envSchema = z.object({
   TELEGRAM_CHAT_ID: optionalString,
   ADMIN_TELEGRAM_CHAT_ID: optionalString,
   DATABASE_PATH: z.string().default("./data/rent-radar.sqlite"),
-  FIRST_RUN_MODE: z.enum(["seed", "send"]).default("seed"),
+  FIRST_RUN_MODE: z.enum(["seed", "preview", "send"]).default("seed"),
+  TELEGRAM_STRICT_NEW_PUBLICATIONS: booleanFromEnv(true),
+  TELEGRAM_INITIAL_PREVIEW_LIMIT: z.coerce.number().int().min(1).max(10).default(3),
   DRY_RUN: booleanFromEnv(false),
 });
 
 export type GeoUnknownPolicy = "exclude" | "include";
-export type FirstRunMode = "seed" | "send";
+export type FirstRunMode = "seed" | "preview" | "send";
 
 export type AppConfig = {
   nodeEnv: string;
@@ -84,7 +95,16 @@ export type AppConfig = {
   enableDomria: boolean;
   enableLun: boolean;
   enableOlx: boolean;
+  /** When true, Telegram/collection uses Playwright extract and never the blocked OLX HTTP API. */
+  enableOlxBrowser: boolean;
+  enableRieltor: boolean;
   ownerOnly: boolean;
+  /** Opt-in for the legacy owner_only policy only. Ignored by reject_intermediaries. */
+  ownerAcceptSelfDeclared: boolean;
+  /**
+   * Default reject_intermediaries. OWNER_ONLY=true cannot silently restore owner_only.
+   */
+  sellerPolicy: SellerPolicy;
   propertyTypes: PropertyType[];
   maxListingAgeMinutes?: number;
   domriaApiKey?: string;
@@ -95,6 +115,8 @@ export type AppConfig = {
   adminTelegramChatId?: string;
   databasePath: string;
   firstRunMode: FirstRunMode;
+  telegramStrictNewPublications: boolean;
+  telegramInitialPreviewLimit: number;
   dryRun: boolean;
 };
 
@@ -112,7 +134,7 @@ function parsePropertyTypes(raw: string): PropertyType[] {
   return [...new Set(values)];
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+export function loadConfig(env: Record<string, string | undefined> = process.env): AppConfig {
   const parsed = envSchema.parse(env);
   const lunPoll = parsed.LUN_POLL_INTERVAL_SECONDS ?? parsed.POLL_INTERVAL_SECONDS;
   const officialDomria = Boolean(parsed.DOMRIA_API_KEY);
@@ -136,12 +158,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     enableDomria: parsed.ENABLE_DOMRIA,
     enableLun: parsed.ENABLE_LUN,
     enableOlx: parsed.ENABLE_OLX,
+    enableOlxBrowser: parsed.ENABLE_OLX_BROWSER,
+    enableRieltor: parsed.ENABLE_RIELTOR,
     ownerOnly: parsed.OWNER_ONLY,
+    ownerAcceptSelfDeclared: parsed.OWNER_ACCEPT_SELF_DECLARED,
+    sellerPolicy: parsed.SELLER_POLICY,
     propertyTypes: parsePropertyTypes(parsed.PROPERTY_TYPES),
     domriaUsePublicHtmlFallback: parsed.DOMRIA_USE_PUBLIC_HTML_FALLBACK,
     domriaMaxInfoPerPoll: parsed.DOMRIA_MAX_INFO_PER_POLL,
     databasePath: parsed.DATABASE_PATH,
     firstRunMode: parsed.FIRST_RUN_MODE,
+    telegramStrictNewPublications: parsed.TELEGRAM_STRICT_NEW_PUBLICATIONS,
+    telegramInitialPreviewLimit: parsed.TELEGRAM_INITIAL_PREVIEW_LIMIT,
     dryRun: parsed.DRY_RUN,
   };
   if (parsed.MAX_LISTING_AGE_MINUTES) {
@@ -175,6 +203,11 @@ export function resetConfigCache(): void {
 
 export function hasTelegramConfig(config: AppConfig = getConfig()): boolean {
   return Boolean(config.telegramBotToken && config.telegramChatId);
+}
+
+/** Owner-only catalog query. False under the approved default, even if OWNER_ONLY=true. */
+export function usesOwnerOnlySourceFilter(config: Pick<AppConfig, "sellerPolicy" | "ownerOnly">): boolean {
+  return config.sellerPolicy === "owner_only" && config.ownerOnly;
 }
 
 export function estimateDomriaMonthlyRequests(config: AppConfig = getConfig()): {

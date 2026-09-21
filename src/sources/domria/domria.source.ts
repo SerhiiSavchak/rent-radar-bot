@@ -1,6 +1,7 @@
 import type { Listing } from "../../domain/listing.ts";
 import type {
   FetchListingsOptions,
+  FetchResultKind,
   ListingSourceAdapter,
   SourceFetchResult,
   SourceHealth,
@@ -177,6 +178,24 @@ export class DomriaSource implements ListingSourceAdapter {
   }
 }
 
+/** Pure resultKind for soak/Telegram — must never be left unset when listings exist. */
+export function deriveDomriaInspectResultKind(input: {
+  listingCount: number;
+  httpStatus?: number;
+  forceUnhealthy?: boolean;
+}): FetchResultKind {
+  if (input.forceUnhealthy) {
+    return "http_error";
+  }
+  if (input.listingCount > 0) {
+    return "ok";
+  }
+  if (input.httpStatus !== undefined && input.httpStatus !== 200) {
+    return "http_error";
+  }
+  return "parser_failure";
+}
+
 function finish(
   listings: Listing[],
   started: number,
@@ -187,22 +206,29 @@ function finish(
   forceHealthy?: boolean,
 ): SourceFetchResult {
   const unique = dedupe(listings).slice(0, limit ?? 10);
-  const healthy = forceHealthy === false ? false : unique.length > 0;
-  logger.info("domria.inspect", { transport, count: unique.length, status });
+  const resultKind = deriveDomriaInspectResultKind({
+    listingCount: unique.length,
+    ...(status !== undefined ? { httpStatus: status } : {}),
+    ...(forceHealthy === false ? { forceUnhealthy: true } : {}),
+  });
+  const healthyFinal = forceHealthy === false ? false : resultKind === "ok";
+  logger.info("domria.inspect", { transport, count: unique.length, status, resultKind });
   return {
     listings: unique,
     transport,
     dataKind: "LIVE DATA",
+    resultKind,
     ...(status !== undefined ? { httpStatus: status } : {}),
     rawNotes: notes,
     health: {
       source: "domria",
-      healthy,
+      healthy: healthyFinal,
       checkedAt: new Date(),
       latencyMs: Date.now() - started,
+      resultKind,
       ...(status !== undefined ? { httpStatus: status } : {}),
       transport,
-      message: healthy
+      message: healthyFinal
         ? `DIM.RIA returned ${unique.length} listings via ${transport}`
         : notes[0] ?? "DIM.RIA returned no listings",
     },

@@ -2,15 +2,13 @@ import { config as loadDotenv } from "dotenv";
 import { getConfig } from "./config/env.ts";
 import { ListingMonitorService } from "./services/listing-monitor.service.ts";
 import { closeDb } from "./storage/db.ts";
-import { DomriaSource } from "./sources/domria/domria.source.ts";
-import { LunSource } from "./sources/lun/lun.source.ts";
-import { OlxSource } from "./sources/olx/olx.source.ts";
+import { createCollectionAdapters } from "./collection/create-source-adapters.ts";
 import { logger } from "./utils/logger.ts";
 
 loadDotenv();
 
 const config = getConfig();
-const monitor = new ListingMonitorService([new OlxSource(), new DomriaSource(), new LunSource()], config);
+const monitor = new ListingMonitorService(createCollectionAdapters(config), config);
 
 const shutdown = () => {
   closeDb();

@@ -1,0 +1,71 @@
+{
+  "experiment": "oracle-always-free-olx",
+  "cycle": 1,
+  "capturedAt": "2026-09-16T21:07:04.454Z",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux",
+    "arch": "x64",
+    "elapsedMs": 4989,
+    "memoryBefore": {
+      "rssBytes": 91738112,
+      "heapUsedBytes": 15162984,
+      "externalBytes": 4562023
+    },
+    "memoryAfter": {
+      "rssBytes": 121282560,
+      "heapUsedBytes": 23548048,
+      "externalBytes": 17211629
+    },
+    "peakRssBytesApprox": 121282560
+  },
+  "apartments": {
+    "category": "apartments",
+    "resultKind": "parser_failure",
+    "httpStatus": 200,
+    "contentType": "text/html",
+    "blocked": true,
+    "healthy": false,
+    "extracted": 0,
+    "elapsedMs": 2722,
+    "sellerTypes": {},
+    "propertyTypes": {},
+    "cities": [],
+    "withCoordinates": 0,
+    "privateAccountEvidenceCount": 0,
+    "sampleIds": [],
+    "sampleCities": [],
+    "notes": [
+      "https://www.olx.ua/api/v1/offers/?offset=0&limit=10&category_id=1760&region_id=5&city_id=176&distance=15&sort_by=created_at%3Adesc -> 403 content-type=text/html; server=CloudFront; x-cache=Error from cloudfront",
+      "HTML https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/ -> 200 content-type=text/html; charset=utf-8; server=nginx; x-cache=Miss from cloudfront",
+      "HTML reached, but Phase 0 does not scrape brittle OLX CSS cards without JSON."
+    ],
+    "success": false,
+    "failureReason": "transport_blocked"
+  },
+  "houses": {
+    "category": "houses",
+    "resultKind": "parser_failure",
+    "httpStatus": 200,
+    "contentType": "text/html",
+    "blocked": true,
+    "healthy": false,
+    "extracted": 0,
+    "elapsedMs": 2189,
+    "sellerTypes": {},
+    "propertyTypes": {},
+    "cities": [],
+    "withCoordinates": 0,
+    "privateAccountEvidenceCount": 0,
+    "sampleIds": [],
+    "sampleCities": [],
+    "notes": [
+      "https://www.olx.ua/api/v1/offers/?offset=0&limit=10&category_id=330&region_id=5&city_id=176&distance=15&sort_by=created_at%3Adesc -> 403 content-type=text/html; server=CloudFront; x-cache=Error from cloudfront",
+      "HTML https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/ -> 200 content-type=text/html; charset=utf-8; server=nginx; x-cache=Miss from cloudfront",
+      "HTML reached, but Phase 0 does not scrape brittle OLX CSS cards without JSON."
+    ],
+    "success": false,
+    "failureReason": "transport_blocked"
+  },
+  "overallSuccess": false
+}

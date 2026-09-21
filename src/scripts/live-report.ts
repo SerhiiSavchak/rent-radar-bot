@@ -46,6 +46,7 @@ export function printLiveReport(label: string, result: SourceFetchResult, requir
   console.log(`Listings discovered: ${result.listings.length}`);
   console.log(`Execution duration: ${duration} ms`);
   console.log(`Health: ${result.health.healthy ? "healthy" : "unhealthy"}`);
+  console.log(`Result kind: ${result.resultKind ?? result.health.resultKind ?? "n/a"}`);
   if (result.health.message) {
     console.log(`Message: ${result.health.message}`);
   }
@@ -66,6 +67,7 @@ export function printLiveReport(label: string, result: SourceFetchResult, requir
     );
     console.log(`location: ${listing.location.raw}`);
     console.log(`listing URL: ${listing.url}`);
+    console.log(`original URL: ${typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : "n/a"}`);
     console.log(`listing ID: ${listing.sourceId}`);
     console.log(`publication date/time: ${listing.publishedAt?.toISOString() ?? "n/a"}`);
     console.log(`property type: ${listing.propertyType}`);

@@ -1,0 +1,59 @@
+{
+  "experiment": "oracle-soak",
+  "startedAt": "2026-09-17T01:12:53.346Z",
+  "endedAt": "2026-09-17T03:41:09.550Z",
+  "commit": "3af328cea6e1f4d5bbfc2877f0f34cf9d5feb734",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux",
+    "arch": "x64",
+    "totalElapsedMs": 8896204
+  },
+  "config": {
+    "cyclesRequested": 12,
+    "intervalMs": 600000,
+    "outDir": "evidence/phase-1/oracle-soak"
+  },
+  "totals": {
+    "cyclesAttempted": 12,
+    "complete": 0,
+    "degraded": 12,
+    "failed": 0
+  },
+  "perSourceSuccessRate": {
+    "domria": {
+      "success": 0,
+      "total": 12,
+      "rate": 0
+    },
+    "lun": {
+      "success": 12,
+      "total": 12,
+      "rate": 1
+    },
+    "rieltor": {
+      "success": 12,
+      "total": 12,
+      "rate": 1
+    },
+    "olx_http": {
+      "success": 0,
+      "total": 12,
+      "rate": 0
+    },
+    "olx_browser": {
+      "success": 12,
+      "total": 12,
+      "rate": 1
+    }
+  },
+  "repeatedFailureStreaks": {
+    "domria": 12,
+    "olx_http": 12
+  },
+  "maxRssBytes": 196411392,
+  "maxCycleDurationMs": 290610,
+  "stoppedEarly": false,
+  "verdict": "DEGRADED",
+  "note": "Soak finished with mixed cycle health. Not multi-day proof."
+}

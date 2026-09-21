@@ -70,11 +70,21 @@ web_modules/
 .env.*
 !.env.example
 
+# Oracle Cloud Shell provisioner keys / local state (never commit private keys)
+**/rent-radar-phase1-oracle/
+scripts/oracle-cloud-shell/ssh/
+*.pem
+
 # Local probe dumps and SQLite
 tmp-probe/
 data/
 *.sqlite
 *.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+dist-cf-probe/
+probe/cloudflare-workers/dist-cf-probe/
+probe/cloudflare-workers/.wrangler/
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

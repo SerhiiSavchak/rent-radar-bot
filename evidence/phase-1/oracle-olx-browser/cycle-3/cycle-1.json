@@ -1,0 +1,70 @@
+{
+  "experiment": "oracle-olx-browser",
+  "cycle": 1,
+  "capturedAt": "2026-09-16T21:54:42.661Z",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "constraints": {
+    "proxies": false,
+    "stealthPlugins": false,
+    "captchaSolving": false,
+    "ipRotation": false,
+    "fingerprintSpoofing": false,
+    "wafBypass": false,
+    "productionAdapterTouched": false
+  },
+  "apartments": {
+    "category": "apartments",
+    "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
+    "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
+    "httpStatus": 200,
+    "contentType": "text/html; charset=utf-8",
+    "title": "Оренда квартир у Львові за доступними цінами на OLX.ua",
+    "bodyChars": 436756,
+    "bodySample": "<!DOCTYPE html><html data-platform=\"desktop\" lang=\"uk\" data-rh=\"lang\" style=\"--vh: 7.2px;\"><head><style id=\"react-aria-pressable-style\">@layer { [data-react-aria-pressable] { touch-action: pan-x pan-y pinch-zoom; } }</style><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,shrink-to-fit=no\"><meta name=\"theme-color\" content=\"#f9f9f9\"><meta name=\"version\" content=\"9d8451da_10020144\"><meta name=\"mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-capable\" content=\"yes\"><link rel=\"preconnect\" crossorigin=\"\" href=\"https://tracking.olx-st.com\"><link rel=\"preconnect\" crossorigin=\"\" href=\"https://ninja.data.olxcdn.com\"><link rel=\"preconnect\" href=\"https://frankfurt.apollo.olxcdn.com\" crossorigin=\"\"><link rel=\"preconnect\" href=\"https://ireland.apollo.olxcdn.com\" crossorigin=\"\"><link rel=\"preconnect\" href=\"https://securepubads.g.doubleclick.net\" crossorigin=\"\"><link rel=\"preconnect\" href=\"https://cdn.slots.baxter.olx.org\" crossorigin=\"\"><link rel=\"dns-prefetch\" href=\"https://static.criteo.net\"><link rel=\"dns-prefetch\" href=\"https://www.google-analytics.com\"><link rel=\"dns-prefetch\" href=\"https://www.googletagmanager.com\"><link rel=\"dns",
+    "outcome": "browser_accessible",
+    "success": true,
+    "challengeIndicators": [],
+    "listingSignals": [
+      "data_cy_l_card",
+      "data_testid_listing",
+      "offer_id_html_link",
+      "listing_grid"
+    ],
+    "notes": [
+      "supported listing structure signals present in page HTML"
+    ],
+    "elapsedMs": 21684
+  },
+  "houses": {
+    "category": "houses",
+    "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/",
+    "finalUrl": "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/",
+    "httpStatus": 200,
+    "contentType": "text/html; charset=utf-8",
+    "title": "Оренда будинків довгостроково Львів, зняти приватний будинок на OLX",
+    "bodyChars": 4054331,
+    "bodySample": "<!DOCTYPE html><html data-platform=\"desktop\" lang=\"uk\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,shrink-to-fit=no\"><meta name=\"theme-color\" content=\"#f9f9f9\"><meta name=\"version\" content=\"9d8451da_10020144\"><meta name=\"mobile-web-app-capable\" content=\"yes\"><meta name=\"apple-mobile-web-app-capable\" content=\"yes\"><link rel=\"preconnect\" crossorigin=\"\" href=\"https://tracking.olx-st.com\"><link rel=\"preconnect\" crossorigin=\"\" href=\"https://ninja.data.olxcdn.com\"><link rel=\"preconnect\" href=\"https://frankfurt.apollo.olxcdn.com\" crossorigin=\"\"><link rel=\"preconnect\" href=\"https://ireland.apollo.olxcdn.com\" crossorigin=\"\"><link rel=\"preconnect\" href=\"https://securepubads.g.doubleclick.net\" crossorigin=\"\"><link rel=\"preconnect\" href=\"https://cdn.slots.baxter.olx.org\" crossorigin=\"\"><link rel=\"dns-prefetch\" href=\"https://static.criteo.net\"><link rel=\"dns-prefetch\" href=\"https://www.google-analytics.com\"><link rel=\"dns-prefetch\" href=\"https://www.googletagmanager.com\"><link rel=\"dns-prefetch\" href=\"https://js-agent.newrelic.com\"><link rel=\"preload\" href=\"/fonts/OLXvGeomanistRegular.woff2\" as=\"font\" type=\"font/woff2\" crossorigin=\"\"><link rel=\"",
+    "outcome": "browser_accessible",
+    "success": true,
+    "challengeIndicators": [],
+    "listingSignals": [
+      "data_cy_l_card",
+      "data_testid_listing",
+      "offer_id_html_link",
+      "listing_grid"
+    ],
+    "notes": [
+      "supported listing structure signals present in page HTML"
+    ],
+    "elapsedMs": 15909
+  },
+  "overallSuccess": true,
+  "overallOutcomes": {
+    "apartments": "browser_accessible",
+    "houses": "browser_accessible"
+  }
+}

@@ -1,6 +1,6 @@
 # rent-radar-bot
 
-Phase 0 prototype for a future Telegram rental monitor. The goal of this phase is **not** a production bot. It is to prove, with live requests, whether OLX Ukraine, DIM.RIA and LUN can currently supply long-term apartment and house rentals around Lviv, and to normalize them into one listing model.
+Phase 0 prototype for a future Telegram rental monitor. The goal of this phase is **not** a production bot. It is to prove, with live requests, whether OLX Ukraine, DIM.RIA, LUN and RIELTOR.UA can currently supply long-term apartment and house rentals around Lviv, and to normalize them into one listing model.
 
 ## Current Phase 0 status
 
@@ -10,7 +10,8 @@ Validated on 2026-09-13 against live sites from a Node.js process:
 |--------|-----------------------------------|---------------|
 | DIM.RIA | Yes (public search HTML + `__INITIAL_STATE__`) | Official API exists but needs `DOMRIA_API_KEY`; HTML fallback used when the key is absent |
 | LUN | Yes (search HTML, JSON-LD + Next.js RSC cards) | No public listings API; structured embedded data |
-| OLX | No (`403` CloudFront) | Ordinary HTTP to HTML and `api/v1/offers` is blocked; no WAF bypass was implemented |
+| RIELTOR.UA | Yes (public catalog HTML; JSON-LD optional) | `/lvov/flats-rent/`, `/lvov/houses-rent/`; `f-owners=1` is a real filter on primary cards only |
+| OLX | Environment-dependent: `403` CloudFront from this workstation, but plain `api/v1/offers` HTTP **worked from a second (non-residential) environment** on 2026-09-15 | Public JSON API with verified Lviv ids (region 5, city 176, categories 1760/330, `distance=15`); no WAF bypass anywhere |
 
 See [docs/SOURCE_RESEARCH.md](docs/SOURCE_RESEARCH.md) for the measured results.
 
@@ -22,6 +23,7 @@ Scheduler / live scripts
     +-- OLX Source Adapter
     +-- DIM.RIA Source Adapter
     +-- LUN Source Adapter
+    +-- RIELTOR.UA Source Adapter
              |
              v
         Filters (owner, location/Haversine, property type)
@@ -69,7 +71,11 @@ npm test
 npm run live:olx
 npm run live:domria
 npm run live:lun
+npm run live:rieltor
 npm run live:all
+npm run probe:cf:fixtures
+npm run probe:cf:olx
+npm run probe:cf:bundle
 ```
 
 Aliases:
@@ -78,6 +84,7 @@ Aliases:
 npm run test:olx
 npm run test:domria
 npm run test:lun
+npm run test:rieltor
 npm run test:sources
 ```
 
@@ -101,7 +108,7 @@ Phase 0 only implements the Bot API sink. Create a bot with [@BotFather](https:/
 
 ## Known limitations
 
-- OLX is blocked by CloudFront for this Node.js client; reliability for unattended OLX monitoring is currently **low**.
+- OLX blocks this workstation's Node.js client with CloudFront 403, but ordinary HTTP works from at least one other environment (see `evidence/phase-1/olx-http.md`); unattended reliability from a zero-cost host is still unproven.
 - DIM.RIA official API is the maintainable path but requires a key and has a free cap of about 30 requests/hour and 1000/month. Search returns IDs only; each detail call consumes quota.
 - LUN cards come from Next.js RSC payload plus JSON-LD. JSON-LD around Lviv currently swaps lat/lng; the adapter prefers GeoJSON `[lng, lat]` from cards.
 - LUN `без посередників` / `isOwner` is a platform signal, not a legal guarantee.

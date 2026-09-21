@@ -1,0 +1,43 @@
+{
+  "kind": "offline_ownership_audit",
+  "notTheLive75f7384Extract": true,
+  "generatingCommit": "baab3230824bc4e976cae50c6ad2c9ded2e91467",
+  "captureId": "capture-1789666022490",
+  "liveExtractAtCaptureTime": {
+    "startedAt": "2026-09-17T17:27:02.490Z",
+    "finishedAt": "2026-09-17T17:31:01.948Z",
+    "extractionOk": false,
+    "validatedListingCount": 0
+  },
+  "apartments": {
+    "captureStartedAt": "2026-09-17T17:27:05.353Z",
+    "prerenderedTotalElements": 1000,
+    "prerenderedTotalPages": 25,
+    "salvagedRawAds": 52,
+    "uniqueIds": 52,
+    "validatedAtCaptureTime": 0
+  },
+  "houses": {
+    "captureStartedAt": "2026-09-17T17:28:22.151Z",
+    "prerenderedTotalElements": 37,
+    "prerenderedVisibleElements": 37,
+    "prerenderedTotalPages": 1,
+    "salvagedRawAds": 37,
+    "uniqueIds": 37,
+    "validatedAtCaptureTime": 0
+  },
+  "offlineReclassifyCommit": "8620ab1",
+  "parsedListings": 89,
+  "ownerEvidenceLevelCounts": {
+    "platform_confirmed": 0,
+    "self_declared": 3,
+    "private_unknown": 1,
+    "intermediary": 85,
+    "conflict": 0
+  },
+  "isBusiness": { "true": 85, "false": 4 },
+  "userSellerTypeNull": 89,
+  "selfDeclaredIds": ["924128798", "933587870", "935081899"],
+  "ownerDetailCandidateId": "924128798",
+  "note": "Do not attribute these counts to cycle-75f7384.json."
+}

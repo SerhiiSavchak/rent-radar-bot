@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const listingSourceSchema = z.enum(["olx", "domria", "lun"]);
+export const listingSourceSchema = z.enum(["olx", "domria", "lun", "rieltor"]);
 export type ListingSource = z.infer<typeof listingSourceSchema>;
 
 export const propertyTypeSchema = z.enum(["apartment", "house", "unknown"]);
@@ -43,7 +43,16 @@ export const listingSchema = z.object({
   sellerType: sellerTypeSchema,
   sellerConfidence: sellerConfidenceSchema.optional(),
   sellerEvidence: z.array(z.string()).optional(),
+  /**
+   * Platform publication / creation time when known.
+   * Never substitute refresh or observation time here.
+   */
   publishedAt: z.date().optional(),
+  /** Platform refresh/bump time when distinct from publication (e.g. OLX last_refresh_time). */
+  refreshedAt: z.date().optional(),
+  /** First time this process observed the listing (set by delivery, not parsers). */
+  firstSeenAt: z.date().optional(),
+  /** This fetch's observation time. */
   discoveredAt: z.date(),
   images: z.array(z.string()).optional(),
   distanceKm: z.number().finite().optional(),

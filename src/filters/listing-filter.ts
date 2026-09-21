@@ -1,6 +1,7 @@
 import type { Listing, PropertyType } from "../domain/listing.ts";
 import type { AppConfig } from "../config/env.ts";
 import { filterByLocation } from "./location-filter.ts";
+import { isSellerEligible, sellerRejectionReason } from "./owner-filter.ts";
 import { detectPropertyType } from "./property-type.ts";
 
 export type ListingFilterOptions = {
@@ -16,6 +17,8 @@ export type FilteredListing = {
   locationReason: string;
   distanceKm?: number;
   ownerMatched: boolean;
+  sellerEligible: boolean;
+  sellerRejectionReason?: string;
   propertyMatched: boolean;
   tooOld: boolean;
 };
@@ -26,7 +29,6 @@ export function applyListingFilters(
   options: ListingFilterOptions = {},
 ): FilteredListing[] {
   const propertyTypes = options.propertyTypes ?? config.propertyTypes;
-  const ownerOnly = options.ownerOnly ?? config.ownerOnly;
   const unknownPolicy =
     options.requireCoordinates === true ? "exclude" : config.geoUnknownPolicy;
 
@@ -44,11 +46,15 @@ export function applyListingFilters(
         unknownPolicy,
       },
     );
-    const ownerMatched = listing.sellerType === "owner";
+    const sellerEligible = isSellerEligible(listing, {
+      policy: config.sellerPolicy,
+      acceptSelfDeclared: config.ownerAcceptSelfDeclared === true,
+    });
+    const rejection = sellerEligible ? undefined : sellerRejectionReason(listing);
     const propertyMatched = propertyTypes.includes(listing.propertyType);
     const tooOld = isTooOld(listing, config.maxListingAgeMinutes);
     const accepted =
-      location.matched && propertyMatched && (!ownerOnly || ownerMatched) && !tooOld;
+      location.matched && propertyMatched && sellerEligible && !tooOld;
     const withDistance: Listing =
       location.distanceKm === undefined
         ? listing
@@ -59,7 +65,9 @@ export function applyListingFilters(
       locationMatched: location.matched,
       locationReason: location.reason,
       ...(location.distanceKm !== undefined ? { distanceKm: location.distanceKm } : {}),
-      ownerMatched,
+      ownerMatched: sellerEligible,
+      sellerEligible,
+      ...(rejection ? { sellerRejectionReason: rejection } : {}),
       propertyMatched,
       tooOld,
     };

@@ -1,0 +1,11 @@
+[Unit]
+Description=Start Rent Radar Telegram poller after boot
+Requires=rent-radar-telegram.service
+
+[Timer]
+OnBootSec=1min
+Persistent=true
+Unit=rent-radar-telegram.service
+
+[Install]
+WantedBy=timers.target
