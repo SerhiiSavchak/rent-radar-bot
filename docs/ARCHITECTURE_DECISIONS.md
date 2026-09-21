@@ -57,7 +57,7 @@ LUN catalog cards expose platform-provided links:
 
 `readProvenance` stores source, source listing id, canonical URL, external source name, external URL, external listing id when the URL pattern is deterministic, `groupId`, `similarPageIds`, `hasDuplicates`, and the raw site name. DIM.RIA and RIELTOR cards inspected in the source-layer batch did not expose a foreign listing id, so they contribute only their own identity.
 
-Confirmed identity rows live in SQLite table `cross_source_identities` (schema version 4). `markSeen` writes them, and the poller also writes them before a Telegram attempt so a failed send still suppresses the twin. Reopening the same database keeps the match. Same-source baseline, freshness, and the Telegram outbox are unchanged. Retention cleanup is not part of this schema change.
+Confirmed identity rows live in SQLite table `cross_source_identities` (schema version 4). `enqueueIfNew` inserts them in the same transaction as the new `telegram_outbox` row. `markSeen` does not. A freshness rejection, a silent baseline row, or a crash before that commit cannot suppress a later twin. A failed Telegram send still leaves the keeper retryable and still suppresses the twin, because the outbox row and the identity keys committed together. Reopening the same database keeps the match. Retention cleanup is not part of this schema change.
 
 ## ADR: DIM.RIA official API cannot be consumed blindly every 10 minutes
 
@@ -71,15 +71,15 @@ Production acquisition is public HTML (`DOMRIA_ACQUISITION=html`). Official requ
 
 Status: **superseded** by the browser-runtime ADR below.
 
-OLX ordinary HTTP is `OLX_HTTP` fail: 3/3 CloudFront 403 on 2026-09-21. Stock Playwright Chromium extracted 85 real listings on 3/3 local runs with HTTP 200 and no CAPTCHA bypass. Classification of the transport: `OLX_BROWSER_REQUIRED`. Hosted proof on the selected VM did not happen. See `OLX_HOSTED_BROWSER_BLOCKED` in `docs/RENT_RADAR_STATUS.md`.
+OLX ordinary HTTP is `OLX_HTTP` fail: 3/3 CloudFront 403 on 2026-09-21. Stock Playwright Chromium extracted 85 real listings on 3/3 local runs with HTTP 200 and no CAPTCHA bypass. Classification of the transport: `OLX_BROWSER_REQUIRED`. Hosted proof on the existing Oracle VM is PASS; see `docs/RENT_RADAR_STATUS.md`.
 
 ## ADR: browser-capable runtime required by OLX
 
-Status: **final for the requirement. Not proven on the target VM.**
+Status: **final. Hosted proof PASS.**
 
 Ordinary Node HTTP cannot acquire OLX (CloudFront 403). The working adapter is stock Playwright plus the repository's Chromium build, with no stealth plugin, proxy, or CAPTCHA solver. The process needs a `BROWSER_CAPABLE_RUNTIME`: Node 22+, Playwright 1.63, and that Chromium. Cloudflare Workers cannot provide it.
 
-`ENABLE_OLX_BROWSER` stays false until five hosted cycles on the existing free VM succeed. This batch did not enable it.
+Issue #2 accepts five hosted Playwright cycles on the existing free VM, with browser cleanup, all four sources in one poll, and the systemd poller alive after restart and reboot. The repository default `ENABLE_OLX_BROWSER` remains false so a checkout does not start Chromium by itself. The accepted VM run used the browser. This batch did not change the flag and did not repeat the hosted cycles.
 
 ## ADR: normal OLX HTTP path is not production acquisition
 

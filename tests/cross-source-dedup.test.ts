@@ -509,4 +509,219 @@ describe("cross-source delivery", () => {
     expect(next.sentOk).toBe(0);
     expect(sendListing).not.toHaveBeenCalled();
   });
+
+  function countRows(sql: string, ...args: string[]): number {
+    const row = getDb()
+      .prepare(sql)
+      .get(...args) as { n: number };
+    return Number(row.n);
+  }
+
+  it("does not persist a suppressing identity before the keeper is queued", () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const { lun, olx } = linkedPair();
+    store.markSeen(lun);
+    expect(
+      countRows(
+        "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source = ? AND source_id = ?",
+        "lun",
+        "5001",
+      ),
+    ).toBe(0);
+    expect(store.assessCrossSource(olx).suppress).toBe(false);
+
+    const queued = store.enqueueIfNew(lun, "new_publication");
+    expect(queued.duplicate).toBe(false);
+    expect(
+      countRows(
+        "SELECT COUNT(*) AS n FROM telegram_outbox WHERE source = ? AND source_id = ?",
+        "lun",
+        "5001",
+      ),
+    ).toBe(1);
+    expect(
+      countRows(
+        "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source = ? AND source_id = ?",
+        "lun",
+        "5001",
+      ),
+    ).toBeGreaterThan(0);
+    expect(
+      countRows(
+        `SELECT COUNT(*) AS n FROM cross_source_identities i
+         WHERE NOT EXISTS (
+           SELECT 1 FROM telegram_outbox o WHERE o.source = i.source AND o.source_id = i.source_id
+         )`,
+      ),
+    ).toBe(0);
+    expect(store.assessCrossSource(olx).suppress).toBe(true);
+  });
+
+  it("sends a fresh OLX twin when the linked LUN card is late-discovered", async () => {
+    const path = dbPath();
+    const { lun, olx } = linkedPair();
+    const staleLun: Listing = { ...lun, publishedAt: new Date("2026-09-20T07:00:00Z") };
+    const lunBatch: Listing[] = [];
+    const olxBatch: Listing[] = [];
+    const config = configFor({ ENABLE_LUN: "true", ENABLE_OLX: "true" });
+    const store = new DurableDeliveryStore(getDb(path));
+    const adapters = [adapter("lun", () => lunBatch), adapter("olx", () => olxBatch)];
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config,
+        sink: sink(async () => ({
+          ok: true,
+          dryRun: true,
+          attempts: 0,
+          chatId: "1",
+          messageCount: 1,
+        })),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => seededAt,
+        firstRunMode: "seed",
+      },
+      1,
+    );
+    lunBatch.push(staleLun);
+    olxBatch.push(olx);
+    const observations: Array<{ lunIdentity: number; outbox: number; orphans: number }> = [];
+    const sendListing = vi.fn(async (sent: Listing) => {
+      observations.push({
+        lunIdentity: countRows(
+          "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source = ? AND source_id = ?",
+          "lun",
+          staleLun.sourceId,
+        ),
+        outbox: countRows(
+          "SELECT COUNT(*) AS n FROM telegram_outbox WHERE source = ? AND source_id = ?",
+          sent.source,
+          sent.sourceId,
+        ),
+        orphans: countRows(
+          `SELECT COUNT(*) AS n FROM cross_source_identities i
+           WHERE NOT EXISTS (
+             SELECT 1 FROM telegram_outbox o WHERE o.source = i.source AND o.source_id = i.source_id
+           )`,
+        ),
+      });
+      return { ok: true, dryRun: true, attempts: 0, chatId: "1", messageCount: 1 };
+    });
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config,
+        sink: sink(sendListing),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+      },
+      2,
+    );
+    expect(report.suppressedLateDiscovered).toBe(1);
+    expect(report.suppressedCrossSourceDuplicate).toBe(0);
+    expect(report.sentOk).toBe(1);
+    expect(sendListing).toHaveBeenCalledTimes(1);
+    expect(sendListing).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "olx", sourceId: olx.sourceId }),
+      expect.anything(),
+    );
+    expect(observations).toEqual([{ lunIdentity: 0, outbox: 1, orphans: 0 }]);
+    expect(store.hasSeen(staleLun)).toBe(true);
+    expect(store.assessCrossSource(olx).suppress).toBe(false);
+  });
+
+  it("sends a fresh RIELTOR twin discovered after an old linked LUN card", async () => {
+    const path = dbPath();
+    const rieltor = listing({
+      source: "rieltor",
+      sourceId: "555",
+      url: "https://rieltor.ua/lvov/flats-rent/view/555/",
+      publishedAt: published,
+      sellerType: "unknown",
+    });
+    const staleLun: Listing = {
+      ...lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/555/?utm=1", "880"),
+      publishedAt: new Date("2026-08-01T00:00:00Z"),
+    };
+    const config = configFor({ ENABLE_LUN: "true", ENABLE_RIELTOR: "true" });
+    const store = new DurableDeliveryStore(getDb(path));
+    const lunBatch: Listing[] = [];
+    const rieltorBatch: Listing[] = [];
+    const adapters = [adapter("lun", () => lunBatch), adapter("rieltor", () => rieltorBatch)];
+    const idleSink = sink(async () => ({
+      ok: true,
+      dryRun: true,
+      attempts: 0,
+      chatId: "1",
+      messageCount: 1,
+    }));
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config,
+        sink: idleSink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => seededAt,
+        firstRunMode: "seed",
+      },
+      1,
+    );
+    lunBatch.push(staleLun);
+    const staleCycle = await runTelegramTestCycle(
+      {
+        adapters,
+        config,
+        sink: idleSink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+      },
+      2,
+    );
+    expect(staleCycle.sentOk).toBe(0);
+    expect(staleCycle.suppressedOld).toBe(1);
+    expect(
+      countRows(
+        "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source = ? AND source_id = ?",
+        "lun",
+        "880",
+      ),
+    ).toBe(0);
+    expect(store.assessCrossSource(rieltor).suppress).toBe(false);
+
+    rieltorBatch.push(rieltor);
+    const sendListing = vi.fn(async () => ({
+      ok: true,
+      dryRun: true,
+      attempts: 0,
+      chatId: "1",
+      messageCount: 1,
+    }));
+    const freshCycle = await runTelegramTestCycle(
+      {
+        adapters,
+        config,
+        sink: sink(sendListing),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+      },
+      3,
+    );
+    expect(freshCycle.sentOk).toBe(1);
+    expect(freshCycle.suppressedCrossSourceDuplicate).toBe(0);
+    expect(sendListing).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "rieltor", sourceId: "555" }),
+      expect.anything(),
+    );
+  });
 });

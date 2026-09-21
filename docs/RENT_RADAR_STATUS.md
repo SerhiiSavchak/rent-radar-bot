@@ -28,11 +28,12 @@ One poll/delivery path:
 Delivery order:
 
 1. listing accepted by the filters
-2. durable SQLite state and a pending `telegram_outbox` row
-3. Telegram attempt
-4. success marks the row sent
+2. freshness gate. A late, old, or otherwise non-deliverable listing is marked seen and is not a cross-source keeper
+3. a pending `telegram_outbox` row and that listing's confirmed identity keys, committed in one SQLite transaction
+4. Telegram attempt
+5. success marks the row sent
 
-If Telegram fails, the row stays retryable. Reopening the same database retries it. A later success does not send it again.
+If Telegram fails, the row stays retryable. Reopening the same database retries it. A later success does not send it again. A twin can be suppressed only after that outbox row exists. `markSeen` alone does not write `cross_source_identities`.
 
 `src/index.ts` exits 2 and does not collect, persist, or send. `ListingMonitorService.collectNewListings()` throws. `package.json` production poll script is `live:test-telegram:poll`. There is no cron unit besides `deploy/systemd/rent-radar-telegram.timer` (`OnBootSec=1min`), which starts that same service.
 
@@ -54,17 +55,17 @@ If Telegram fails, the row stays retryable. Reopening the same database retries 
 
 ## Subsystem status
 
-| Subsystem              | Status                       | Evidence                                                                                                                                                                                                                                                |
-| ---------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DIM.RIA acquisition    | PASS                         | Public HTML. 6/6 page fetches HTTP 200 on 2026-09-21 (20 flats, 8 houses). Adapter 3/3 `ok`, same 8 ids. Official API not called.                                                                                                                       |
-| LUN acquisition        | PASS                         | After the `imageId` string fix: flats 24/24 validated, houses 24/24, adapter 3/3 `ok`.                                                                                                                                                                  |
-| RIELTOR.UA acquisition | PASS                         | 2026-09-21 20:29:31Z, 20:29:59Z, 20:30:27Z: HTTP 200, `ok`, 10 ids, 2 requests per cycle, ~2.9–3.1 s. Same ids across the three cycles.                                                                                                                 |
-| OLX HTTP               | FAIL                         | 3/3 CloudFront 403. `resultKind=http_error`. Not a production path.                                                                                                                                                                                     |
-| OLX browser            | FAIL on the target VM        | Local 3/3 Playwright PASS (85 listings) remains historical. Hosted classification this batch: `OLX_HOSTED_BROWSER_BLOCKED`. Flag stays off.                                                                                                             |
-| Seller gate            | PASS for the permissive rule | Unknown is sent. OLX `isBusiness` stays `sellerType=unknown` and is sent. Platform agent/business and explicit «я рієлтор» drop.                                                                                                                        |
-| Cross-source dedup     | PASS for the v1 hierarchy    | Explicit LUN→OLX and LUN→RIELTOR identity suppresses. `groupId` does not match a foreign id. Similar rooms/area/price stay sendable. Identity survives reopening SQLite. Proved by `tests/cross-source-dedup.test.ts`, not by a new live overlap count. |
-| Failure isolation      | PASS                         | `inspectAll` uses `Promise.allSettled`. Telegram cycle catches each adapter.                                                                                                                                                                            |
-| Durable outbox         | PASS                         | Only production path. Failed Telegram send stays retryable across a reopened SQLite file and is not sent twice after success.                                                                                                                           |
+| Subsystem              | Status                         | Evidence                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DIM.RIA acquisition    | PASS                           | Public HTML. 6/6 page fetches HTTP 200 on 2026-09-21 (20 flats, 8 houses). Adapter 3/3 `ok`, same 8 ids. Official API not called.                                                                                                                                                                                                                                           |
+| LUN acquisition        | PASS                           | After the `imageId` string fix: flats 24/24 validated, houses 24/24, adapter 3/3 `ok`.                                                                                                                                                                                                                                                                                      |
+| RIELTOR.UA acquisition | PASS                           | 2026-09-21 20:29:31Z, 20:29:59Z, 20:30:27Z: HTTP 200, `ok`, 10 ids, 2 requests per cycle, ~2.9–3.1 s. Same ids across the three cycles.                                                                                                                                                                                                                                     |
+| OLX HTTP               | FAIL                           | 3/3 CloudFront 403. `resultKind=http_error`. Not a production path.                                                                                                                                                                                                                                                                                                         |
+| OLX browser            | PASS on the existing Oracle VM | Issue #2 accepts the hosted proof after `a9d6eaf`: five Playwright cycles, browser cleanup, all four sources together, and the canonical systemd poller survived restart and reboot. Ordinary HTTP stays off. This batch did not re-run those cycles.                                                                                                                       |
+| Seller gate            | PASS for the permissive rule   | Unknown is sent. OLX `isBusiness` stays `sellerType=unknown` and is sent. Platform agent/business and explicit «я рієлтор» drop.                                                                                                                                                                                                                                            |
+| Cross-source dedup     | PASS for the v1 hierarchy      | Explicit LUN→OLX and LUN→RIELTOR identity suppresses only after the keeper is durably queued. A late or old linked card is not a keeper, so the fresh twin is still sent. `groupId` does not match a foreign id. Similar rooms/area/price stay sendable. Identity survives reopening SQLite. Proved by `tests/cross-source-dedup.test.ts`, not by a new live overlap count. |
+| Failure isolation      | PASS                           | `inspectAll` uses `Promise.allSettled`. Telegram cycle catches each adapter.                                                                                                                                                                                                                                                                                                |
+| Durable outbox         | PASS                           | Only production path. Failed Telegram send stays retryable across a reopened SQLite file and is not sent twice after success.                                                                                                                                                                                                                                               |
 
 ## DIM.RIA request budget
 
@@ -93,7 +94,7 @@ A 3-hour interval with 2 searches + 2 info calls is about 960 requests/month and
 - Seller type on those 85 ads: `unknown` only.
 - Default flags stay `ENABLE_OLX=false` and `ENABLE_OLX_BROWSER=false`. Turning the browser flag on does not fall back to HTTP.
 
-Runtime requirement: `BROWSER_CAPABLE_RUNTIME`. The 2026-09-21 hosted attempt did not install Chromium or run a cycle. Classification of that attempt: `OLX_HOSTED_BROWSER_BLOCKED`. `ENABLE_OLX_BROWSER` stays false.
+Runtime requirement: `BROWSER_CAPABLE_RUNTIME`. Issue #2 accepts the hosted Oracle proof as PASS: five Playwright cycles on the existing VM, browser cleanup, four sources in one poll, and the systemd poller still running after restart and reboot. Ordinary HTTP remains `OLX_HTTP` fail and is not the production path. The repository default of `ENABLE_OLX_BROWSER` is still false, so a fresh checkout does not launch Chromium until that flag is set in the environment.
 
 Incompatible with Cloudflare Workers (no Chromium; earlier CPU measurements already rejected Workers Free). A VM must have Node 22+, Playwright, and the matching Chromium build. `PLAYWRIGHT_BROWSERS_PATH` must point at that install. This Windows run used `%LOCALAPPDATA%\ms-playwright`.
 
@@ -156,7 +157,7 @@ Observed on 2026-09-21 from LUN catalog cards (24 flats + 24 houses):
 | RIELTOR ↔ OLX directly | UNKNOWN                         | Not present in the RIELTOR card parser.                                                                                             |
 | DIM.RIA ↔ the others   | UNKNOWN                         | Catalog JSON inspected here has no external listing URL.                                                                            |
 
-LUN is an aggregator/index of other platforms' listings. That is not an official write-integration. v1 drops a listing only when `urlRaw` parses to the same OLX token, RIELTOR `/view/{id}`, or DIM.RIA id as a listing already stored, or when two LUN cards share `groupId`. `similarPageIds` and `hasDuplicates` stay on the record and do not drop. Image hashing and AI similarity are not implemented.
+LUN is an aggregator/index of other platforms' listings. That is not an official write-integration. v1 drops a listing only when `urlRaw` parses to the same OLX token, RIELTOR `/view/{id}`, or DIM.RIA id as a keeper that already has a `telegram_outbox` row, or when two queued LUN cards share `groupId`. A seen, baselined, late, or old card does not become that keeper. `similarPageIds` and `hasDuplicates` stay on the record and do not drop. Image hashing and AI similarity are not implemented.
 
 ## Seller evidence
 
@@ -196,6 +197,8 @@ LUN is an aggregator/index of other platforms' listings. That is not an official
 
 2026-09-21 21:35Z (this core-logic batch): `npm run typecheck` exit 0, `npm run lint` exit 0, `npm test` 27 files, 236 tests, 0 failures. No live source fetch was required for this gate.
 
+2026-09-21 22:18Z (review round 1): `npm run typecheck` exit 0, `npm run lint` exit 0, `npm test` 27 files, 239 tests, 0 failures. The three new tests cover a late LUN card versus a fresh OLX twin, an old LUN card versus a later RIELTOR twin, and identity rows appearing only together with an outbox row.
+
 The 11 Vitest failures, plus the separate `sellerPolicy` type error, were:
 
 | Test                                                                               | Class                  | Cause                                                                                                                    |
@@ -207,11 +210,9 @@ The 11 Vitest failures, plus the separate `sellerPolicy` type error, were:
 | OLX detail `defaultOwnerGateWouldAccept` and the delivery-gate self-declared row   | TEST_EXPECTATION_STALE | Self-declared unknown listings are accepted by the default policy. Legacy `isOwnerEligible` still rejects them.          |
 | `sellerPolicy` missing on the startup fixture (typecheck)                          | TYPE/MODEL_DRIFT       | The startup message requires `sellerPolicy`. The fixture now passes `reject_intermediaries`.                             |
 
-## Hosted OLX attempt
+## Hosted OLX proof
 
-The only host in `~/.ssh/known_hosts` is `92.5.160.179`. SSH answered and rejected `ubuntu` and `opc` with `Permission denied (publickey)`. `~/.ssh` has no private key. `$HOME/rent-radar-phase1-oracle` is absent, so the provisioner key is not on this workstation. No browser dependency was installed on the VM. No cycle was run. Resource budget, reboot, and systemd restart were not measured.
-
-`ENABLE_OLX_BROWSER` was not turned on.
+Issue #2 accepts this as PASS on the existing Oracle VM after `a9d6eaf`. Five Playwright cycles passed, the browser process was cleaned up, DIM.RIA, LUN, RIELTOR.UA, and OLX ran in the same poll, and `rent-radar-telegram.service` survived restart and reboot. This core-logic batch did not SSH to the VM and did not repeat those cycles.
 
 ## Closure live evidence (2026-09-21, this workstation)
 
@@ -223,7 +224,6 @@ The only host in `~/.ssh/known_hosts` is `92.5.160.179`. SSH answered and reject
 
 ## Blockers
 
-- Historical closure note: this file's hosted-OLX section above was written before issue #2 accepted the source layer. This core-logic batch did not SSH to the VM and did not change `ENABLE_OLX` or `ENABLE_OLX_BROWSER`.
 - RIELTOR can still return 429. The adapter makes at most one extra attempt, waits at most 3 s, and does not wait out a long `Retry-After`.
 - Cross-source identity rows are not pruned. Retention cleanup is a later batch.
 - `similarPageIds` is stored and does not suppress. A shared LUN `groupId` does suppress inside LUN only.

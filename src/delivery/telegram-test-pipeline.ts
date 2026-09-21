@@ -272,6 +272,8 @@ async function deliverListing(
       }
       id = enqueued.id;
     }
+    // The outbox row exists. Identity may suppress a twin only from here on.
+    crossSourceOf(deps.dedupe)?.rememberCrossSource(listing);
     if (!outbox.claimForSend(id)) {
       return { dryRun: false, sentOk: 0, sentFailed: 0, sendErrors: [] };
     }
@@ -484,10 +486,11 @@ export async function runTelegramTestCycle(
               }
               continue;
             }
-            crossSource.rememberCrossSource(listing);
-            crossSourcePeers.push(listing);
           }
           const delivered = await deliverListing(deps, listing, "initial_preview");
+          if (crossSource) {
+            crossSourcePeers.push(listing);
+          }
           sentOk += delivered.sentOk;
           sentFailed += delivered.sentFailed;
           sendErrors.push(...delivered.sendErrors);
@@ -534,8 +537,6 @@ export async function runTelegramTestCycle(
         if (decision.verdict === "possible_duplicate") {
           crossSourceUncertainKept += 1;
         }
-        crossSource.rememberCrossSource(listing);
-        crossSourcePeers.push(listing);
       }
 
       const established = deps.baseline.establishedAt(bucket.source);
@@ -566,6 +567,9 @@ export async function runTelegramTestCycle(
           ? freshness.kind
           : "first_noticed";
       const delivered = await deliverListing(deps, listing, deliveryKind);
+      if (crossSource) {
+        crossSourcePeers.push(listing);
+      }
       sentOk += delivered.sentOk;
       sentFailed += delivered.sentFailed;
       sendErrors.push(...delivered.sendErrors);

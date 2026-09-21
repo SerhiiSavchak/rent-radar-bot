@@ -91,7 +91,6 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
         )
         .run(listing.source, listing.sourceId, fingerprint, url, now, now, published, refreshed);
     }
-    this.rememberCrossSource(listing);
   }
 
   assessCrossSource(listing: Listing, peers: Listing[] = []): CrossSourceDecision {
@@ -130,25 +129,39 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     listing: Pick<Listing, "source" | "sourceId" | "url"> &
       Partial<Pick<Listing, "metadata" | "rooms" | "areaM2" | "price">>,
   ): void {
+    if (identityKeys(listing).length === 0) {
+      return;
+    }
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      this.insertIdentityKeys(listing, new Date().toISOString());
+      this.db.exec("COMMIT;");
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  /**
+   * Writes confirmed identity keys. Caller must already be inside a transaction
+   * when this has to commit together with an outbox row.
+   */
+  private insertIdentityKeys(
+    listing: Pick<Listing, "source" | "sourceId" | "url"> &
+      Partial<Pick<Listing, "metadata" | "rooms" | "areaM2" | "price">>,
+    createdAt: string,
+  ): void {
     const keys = identityKeys(listing);
     if (keys.length === 0) {
       return;
     }
-    const createdAt = new Date().toISOString();
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO cross_source_identities (
         identity_key, key_class, source, source_id, created_at
       ) VALUES (?, ?, ?, ?, ?)`,
     );
-    this.db.exec("BEGIN IMMEDIATE;");
-    try {
-      for (const item of keys) {
-        insert.run(item.key, item.keyClass, listing.source, listing.sourceId, createdAt);
-      }
-      this.db.exec("COMMIT;");
-    } catch (error) {
-      this.db.exec("ROLLBACK;");
-      throw error;
+    for (const item of keys) {
+      insert.run(item.key, item.keyClass, listing.source, listing.sourceId, createdAt);
     }
   }
 
@@ -208,16 +221,19 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
       .prepare("SELECT id, status FROM telegram_outbox WHERE fingerprint = ?")
       .get(fingerprint) as { id: number; status: OutboxStatus } | undefined;
     if (existing) {
+      // The outbox row is already durable, so identity cannot outrun delivery state.
+      this.rememberCrossSource(listing);
       return { id: existing.id, status: existing.status, duplicate: true };
     }
     const created = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO telegram_outbox (
-          source, source_id, fingerprint, listing_json, delivery_kind, status, attempt_count, created_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)`,
-      )
-      .run(
+    const insertOutbox = this.db.prepare(
+      `INSERT INTO telegram_outbox (
+        source, source_id, fingerprint, listing_json, delivery_kind, status, attempt_count, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)`,
+    );
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      insertOutbox.run(
         listing.source,
         listing.sourceId,
         fingerprint,
@@ -225,6 +241,12 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
         deliveryKind,
         created,
       );
+      this.insertIdentityKeys(listing, created);
+      this.db.exec("COMMIT;");
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
     const row = this.db
       .prepare("SELECT id FROM telegram_outbox WHERE fingerprint = ?")
       .get(fingerprint) as { id: number };
