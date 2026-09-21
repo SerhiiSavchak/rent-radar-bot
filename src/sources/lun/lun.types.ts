@@ -8,7 +8,13 @@ export const lunCardSchema = z
     downloadTime: z.string().optional(),
     price: z.number().optional(),
     currency: z.string().optional(),
-    roomCount: z.number().optional(),
+    roomCount: z.number().nullish(),
+    areaTotal: z.number().nullish(),
+    floor: z.number().nullish(),
+    floorCount: z.number().nullish(),
+    groupId: z.union([z.string(), z.number()]).nullish(),
+    similarPageIds: z.array(z.union([z.number(), z.string()])).nullish(),
+    hasDuplicates: z.boolean().nullish(),
     isOwner: z.boolean().nullable().optional(),
     withoutCommission: z.boolean().nullable().optional(),
     agency: z
@@ -32,7 +38,9 @@ export const lunCardSchema = z
       })
       .passthrough()
       .optional(),
-    images: z.array(z.object({ imageId: z.number().optional() }).passthrough()).optional(),
+    images: z
+      .array(z.object({ imageId: z.union([z.number(), z.string()]).optional() }).passthrough())
+      .optional(),
   })
   .passthrough();
 

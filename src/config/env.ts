@@ -1,6 +1,12 @@
 import { z } from "zod";
 import type { PropertyType } from "../domain/listing.ts";
 import type { SellerPolicy } from "../filters/owner-filter.ts";
+import {
+  bindingPollIntervalSeconds,
+  decideDomriaTransport,
+  domriaOfficialVolume,
+  type DomriaAcquisitionMode,
+} from "../sources/domria/domria-budget.ts";
 
 const optionalString = z.preprocess(
   (value) => (value === "" || value === undefined ? undefined : value),
@@ -65,6 +71,8 @@ const envSchema = z.object({
   DOMRIA_API_KEY: optionalString,
   DOMRIA_USE_PUBLIC_HTML_FALLBACK: booleanFromEnv(true),
   DOMRIA_MAX_INFO_PER_POLL: z.coerce.number().int().min(0).max(20).default(2),
+  /** html = production path (zero official calls). official = budget-gated API. */
+  DOMRIA_ACQUISITION: z.enum(["html", "official"]).default("html"),
   TELEGRAM_BOT_TOKEN: optionalString,
   TELEGRAM_CHAT_ID: optionalString,
   ADMIN_TELEGRAM_CHAT_ID: optionalString,
@@ -110,6 +118,7 @@ export type AppConfig = {
   domriaApiKey?: string;
   domriaUsePublicHtmlFallback: boolean;
   domriaMaxInfoPerPoll: number;
+  domriaAcquisition: DomriaAcquisitionMode;
   telegramBotToken?: string;
   telegramChatId?: string;
   adminTelegramChatId?: string;
@@ -139,7 +148,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const lunPoll = parsed.LUN_POLL_INTERVAL_SECONDS ?? parsed.POLL_INTERVAL_SECONDS;
   const officialDomria = Boolean(parsed.DOMRIA_API_KEY);
   const domriaPoll =
-    parsed.DOMRIA_POLL_INTERVAL_SECONDS ?? (officialDomria ? 10_800 : Math.max(parsed.POLL_INTERVAL_SECONDS, 300));
+    parsed.DOMRIA_POLL_INTERVAL_SECONDS ??
+    (officialDomria ? 10_800 : Math.max(parsed.POLL_INTERVAL_SECONDS, 300));
 
   const config: AppConfig = {
     nodeEnv: parsed.NODE_ENV,
@@ -166,6 +176,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     propertyTypes: parsePropertyTypes(parsed.PROPERTY_TYPES),
     domriaUsePublicHtmlFallback: parsed.DOMRIA_USE_PUBLIC_HTML_FALLBACK,
     domriaMaxInfoPerPoll: parsed.DOMRIA_MAX_INFO_PER_POLL,
+    domriaAcquisition: parsed.DOMRIA_ACQUISITION,
     databasePath: parsed.DATABASE_PATH,
     firstRunMode: parsed.FIRST_RUN_MODE,
     telegramStrictNewPublications: parsed.TELEGRAM_STRICT_NEW_PUBLICATIONS,
@@ -206,15 +217,23 @@ export function hasTelegramConfig(config: AppConfig = getConfig()): boolean {
 }
 
 /** Owner-only catalog query. False under the approved default, even if OWNER_ONLY=true. */
-export function usesOwnerOnlySourceFilter(config: Pick<AppConfig, "sellerPolicy" | "ownerOnly">): boolean {
+export function usesOwnerOnlySourceFilter(
+  config: Pick<AppConfig, "sellerPolicy" | "ownerOnly">,
+): boolean {
   return config.sellerPolicy === "owner_only" && config.ownerOnly;
 }
 
-export function estimateDomriaMonthlyRequests(config: AppConfig = getConfig()): {
+export function estimateDomriaMonthlyRequests(
+  config: AppConfig = getConfig(),
+  env: Record<string, string | undefined> = process.env,
+): {
+  acquisition: DomriaAcquisitionMode;
+  transport: "html" | "official";
   searchesPerPoll: number;
   infoPerPoll: number;
-  pollsPerDay: number;
-  requestsPerDay: number;
+  bindingIntervalSeconds: number;
+  officialRequestsPerPoll: number;
+  requestsPerHour: number;
   requestsPerMonth: number;
   freeTierHourlyLimit: number;
   freeTierMonthlyLimit: number;
@@ -223,29 +242,31 @@ export function estimateDomriaMonthlyRequests(config: AppConfig = getConfig()): 
 } {
   const searchesPerPoll = 2;
   const infoPerPoll = config.domriaMaxInfoPerPoll;
-  const pollsPerDay = 86_400 / config.domriaPollIntervalSeconds;
-  const requestsPerDay = (searchesPerPoll + infoPerPoll) * pollsPerDay;
-  const requestsPerMonth = requestsPerDay * 30;
-  const compatible = requestsPerMonth <= 1000 && (searchesPerPoll + infoPerPoll) * (3600 / config.domriaPollIntervalSeconds) <= 30;
-  return {
+  const bindingIntervalSeconds = bindingPollIntervalSeconds(config, env);
+  const decision = decideDomriaTransport({
+    mode: config.domriaAcquisition,
+    hasApiKey: Boolean(config.domriaApiKey),
+    intervalSeconds: bindingIntervalSeconds,
     searchesPerPoll,
     infoPerPoll,
-    pollsPerDay,
-    requestsPerDay,
-    requestsPerMonth,
+  });
+  const volume = domriaOfficialVolume({
+    intervalSeconds: bindingIntervalSeconds,
+    searchesPerPoll: decision.transport === "official" ? searchesPerPoll : 0,
+    infoPerPoll: decision.transport === "official" ? infoPerPoll : 0,
+  });
+  return {
+    acquisition: config.domriaAcquisition,
+    transport: decision.transport,
+    searchesPerPoll,
+    infoPerPoll,
+    bindingIntervalSeconds,
+    officialRequestsPerPoll: decision.officialRequestsPerPoll,
+    requestsPerHour: volume.requestsPerHour,
+    requestsPerMonth: volume.requestsPerMonth,
     freeTierHourlyLimit: 30,
     freeTierMonthlyLimit: 1000,
-    compatibleWithFreeTier: compatible,
-    note: officialNote(config, compatible, requestsPerMonth),
+    compatibleWithFreeTier: decision.transport === "html" || volume.compatibleWithFreeTier,
+    note: decision.reason,
   };
-}
-
-function officialNote(config: AppConfig, compatible: boolean, monthly: number): string {
-  if (!config.domriaApiKey) {
-    return "Official API is unused until DOMRIA_API_KEY is set. HTML fallback does not consume developers.ria.com quota.";
-  }
-  if (compatible) {
-    return `Estimated ${Math.round(monthly)} official API requests/month at DOMRIA_POLL_INTERVAL_SECONDS=${config.domriaPollIntervalSeconds}.`;
-  }
-  return `INCOMPATIBLE with free DIM.RIA quota (~1000/month, 30/hour). Estimated ${Math.round(monthly)} requests/month at ${config.domriaPollIntervalSeconds}s interval with ${config.domriaMaxInfoPerPoll} info calls/poll. Increase DOMRIA_POLL_INTERVAL_SECONDS.`;
 }

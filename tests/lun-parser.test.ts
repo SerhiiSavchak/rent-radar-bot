@@ -101,6 +101,51 @@ describe("LUN parser", () => {
     expect(inspection.listings).toHaveLength(0);
   });
 
+  it("keeps a card when imageId is a numeric string and records explicit cluster fields", () => {
+    const listing = parseLunCard(
+      {
+        id: 100,
+        urlRaw: "https://rieltor.ua/lvov/flats-rent/view/555/",
+        price: 12000,
+        currency: "uah",
+        isOwner: false,
+        roomCount: 2,
+        sectionId: 2,
+        header: "Тест",
+        location: [24.03, 49.84],
+        images: [{ imageId: "4242" }],
+        groupId: "grp-1",
+        similarPageIds: [100, 101],
+        hasDuplicates: true,
+        areaTotal: 48,
+        floor: 3,
+        floorCount: 9,
+        site: { internalName: "rieltor.ua", displayName: "rieltor.ua" },
+      },
+      undefined,
+    );
+    expect(listing?.images?.[0]).toContain("/4242.jpg");
+    expect(listing?.rooms).toBe(2);
+    expect(listing?.areaM2).toBe(48);
+    expect(listing?.metadata?.lunGroupId).toBe("grp-1");
+    expect(listing?.metadata?.similarPageIds).toEqual(["100", "101"]);
+    expect(listing?.metadata?.hasDuplicates).toBe(true);
+    expect(listing?.metadata?.originalHost).toBe("rieltor.ua");
+    expect(listing?.metadata?.floor).toBe(3);
+    expect(listing?.metadata?.totalFloors).toBe(9);
+    expect(listing?.sellerType).toBe("unknown");
+  });
+
+  it("treats schema-rejected cards as parser_failure, not a valid empty market", () => {
+    const inner = '{"realties":{"cards":[{"price":1}]}}';
+    const html = `<html><script>self.__next_f.push([1,"${encodeFlightString(inner)}"])</script></html>`;
+    const inspection = inspectLunHtml(html);
+    expect(inspection.rawCardCount).toBe(1);
+    expect(inspection.validatedCardCount).toBe(0);
+    expect(inspection.listings).toHaveLength(0);
+    expect(inspection.resultKind).toBe("parser_failure");
+  });
+
   it("skips an unclosed flight string without inventing success", () => {
     // No closing quote for the JS string literal — parser must not invent a payload.
     const html = `<html><script>self.__next_f.push([1,"{\\"realties\\":{\\"cards\\":[]}</script></html>`;

@@ -35,8 +35,11 @@ function classifyDomriaRole(info: DomriaInfo): {
     offerLabel,
     recognized: true,
     platformOwner: offerLabel === "від власника",
-    platformAgent: offerLabel === "від посередника" || offerLabel === "від представника власника (без комісійних)",
-    platformBusiness: offerLabel === "від забудовника" || offerLabel === "від представника забудовника",
+    platformAgent:
+      offerLabel === "від посередника" ||
+      offerLabel === "від представника власника (без комісійних)",
+    platformBusiness:
+      offerLabel === "від забудовника" || offerLabel === "від представника забудовника",
   };
 }
 
@@ -131,6 +134,14 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
   if (info.main_photo) {
     listing.images = [`https://cdn.riastatic.com/photosnew/${info.main_photo}`];
   }
+  const square = num((info as { total_square_meters?: unknown }).total_square_meters);
+  if (square !== undefined) {
+    listing.areaM2 = square;
+  }
+  const floors = num((info as { floors_count?: unknown }).floors_count);
+  if (floors !== undefined) {
+    listing.metadata = { ...listing.metadata, totalFloors: floors };
+  }
   return listing;
 }
 
@@ -160,16 +171,32 @@ export function extractInitialStateJson(html: string): unknown {
   throw new Error("DIM.RIA __INITIAL_STATE__ JSON was truncated");
 }
 
-export function parseDomriaCatalog(state: unknown, discoveredAt = new Date()): Listing[] {
+export type DomriaCatalogInspection = {
+  listings: Listing[];
+  /** True only when catalog.realtyForCatalog is an array, including an empty array. */
+  structurePresent: boolean;
+};
+
+export function inspectDomriaCatalog(
+  state: unknown,
+  discoveredAt = new Date(),
+): DomriaCatalogInspection {
   if (!state || typeof state !== "object") {
-    return [];
+    return { listings: [], structurePresent: false };
   }
   const catalog = (state as { catalog?: { realtyForCatalog?: unknown } }).catalog;
   const items = catalog?.realtyForCatalog;
   if (!Array.isArray(items)) {
-    return [];
+    return { listings: [], structurePresent: false };
   }
-  return items
-    .map((item) => parseDomriaInfo(item, discoveredAt))
-    .filter((item): item is Listing => Boolean(item));
+  return {
+    structurePresent: true,
+    listings: items
+      .map((item) => parseDomriaInfo(item, discoveredAt))
+      .filter((item): item is Listing => Boolean(item)),
+  };
+}
+
+export function parseDomriaCatalog(state: unknown, discoveredAt = new Date()): Listing[] {
+  return inspectDomriaCatalog(state, discoveredAt).listings;
 }

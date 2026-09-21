@@ -57,7 +57,9 @@ export function extractNextFlightPayloads(html: string): string[] {
 
 /** @deprecated use extractNextFlightPayloads — kept for call-site clarity in markers */
 export function extractNextFlightPayload(html: string): string | undefined {
-  return extractNextFlightPayloads(html).find((payload) => payload.includes('"realties":{"cards":['));
+  return extractNextFlightPayloads(html).find((payload) =>
+    payload.includes('"realties":{"cards":['),
+  );
 }
 
 export type LunCardsExtraction = {
@@ -134,7 +136,9 @@ export function extractLunCards(html: string): LunCard[] {
 }
 
 export function parseLunJsonLdItems(html: string): Array<Record<string, unknown>> {
-  const blocks = [...html.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)];
+  const blocks = [
+    ...html.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi),
+  ];
   for (const block of blocks) {
     const raw = block[1];
     if (!raw) {
@@ -236,8 +240,16 @@ export function parseLunCard(
       originalHost: originalListingHost(card.urlRaw),
       withoutCommission: card.withoutCommission,
       isOwner: card.isOwner,
+      ...lunProvenanceMetadata(card),
     },
   };
+  if (typeof card.roomCount === "number") {
+    listing.rooms = card.roomCount;
+  }
+  const area = finiteNumber((card as { areaTotal?: unknown }).areaTotal);
+  if (area !== undefined) {
+    listing.areaM2 = area;
+  }
   if (jsonDescription) {
     listing.description = jsonDescription;
   } else if (card.text) {
@@ -274,7 +286,14 @@ export function parseLunCard(
   }
   const imageIds = (card.images ?? [])
     .map((image) => image.imageId)
-    .filter((id): id is number => typeof id === "number")
+    .map((id) =>
+      typeof id === "number"
+        ? id
+        : typeof id === "string" && /^\d+$/.test(id)
+          ? Number(id)
+          : undefined,
+    )
+    .filter((id): id is number => id !== undefined)
     .slice(0, 5);
   if (imageIds.length > 0) {
     listing.images = imageIds.map(
@@ -321,6 +340,9 @@ export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtml
     resultKind = "parser_failure";
   } else if (!hasRscCardsMarker) {
     resultKind = "parser_failure";
+  } else if (rawCardCount > 0 && listings.length === 0) {
+    // Cards were present but none validated. That is a schema break, not an empty market.
+    resultKind = "parser_failure";
   } else if (rawCardCount === 0) {
     resultKind = "valid_empty";
   } else {
@@ -338,6 +360,49 @@ export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtml
     resultKind,
     cardsParseFailed: extracted.cardsParseFailed,
   };
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Explicit LUN cluster fields. Stored as evidence only; nothing is dropped from them. */
+function lunProvenanceMetadata(card: LunCard): Record<string, unknown> {
+  const raw = card as LunCard & {
+    groupId?: unknown;
+    similarPageIds?: unknown;
+    hasDuplicates?: unknown;
+    floor?: unknown;
+    floorCount?: unknown;
+    site?: { internalName?: string; displayName?: string };
+  };
+  const metadata: Record<string, unknown> = {};
+  if (typeof raw.groupId === "string" || typeof raw.groupId === "number") {
+    metadata.lunGroupId = String(raw.groupId);
+  }
+  if (Array.isArray(raw.similarPageIds)) {
+    const ids = raw.similarPageIds
+      .filter((item) => typeof item === "number" || typeof item === "string")
+      .map((item) => String(item));
+    if (ids.length > 0) {
+      metadata.similarPageIds = ids;
+    }
+  }
+  if (typeof raw.hasDuplicates === "boolean") {
+    metadata.hasDuplicates = raw.hasDuplicates;
+  }
+  const floor = finiteNumber(raw.floor);
+  const floorCount = finiteNumber(raw.floorCount);
+  if (floor !== undefined) {
+    metadata.floor = floor;
+  }
+  if (floorCount !== undefined) {
+    metadata.totalFloors = floorCount;
+  }
+  if (raw.site?.internalName) {
+    metadata.aggregatedSite = raw.site.internalName;
+  }
+  return metadata;
 }
 
 export function originalListingHost(urlRaw: string | undefined): string | undefined {

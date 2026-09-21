@@ -10,7 +10,8 @@ import { getConfig } from "../../config/env.ts";
 import { AppError } from "../../utils/errors.ts";
 import { headerBag, httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
-import { extractInitialStateJson, parseDomriaCatalog, parseDomriaInfo } from "./domria.parser.ts";
+import { bindingPollIntervalSeconds, decideDomriaTransport } from "./domria-budget.ts";
+import { extractInitialStateJson, inspectDomriaCatalog, parseDomriaInfo } from "./domria.parser.ts";
 import { domriaSearchResponseSchema } from "./domria.types.ts";
 
 const APARTMENTS_HTML = "https://dom.ria.com/uk/arenda-kvartir/lvov/";
@@ -22,20 +23,10 @@ export class DomriaSource implements ListingSourceAdapter {
   async healthCheck(): Promise<SourceHealth> {
     const started = Date.now();
     const config = getConfig();
-    if (config.domriaApiKey) {
-      const url = `https://developers.ria.com/dom/search?api_key=${encodeURIComponent(config.domriaApiKey)}&category=1&realty_type=2&operation_type=3&state_id=5&city_id=5`;
-      const response = await httpGet(url, { timeoutMs: config.sourceTimeoutMs, maxRetries: 0 });
-      return {
-        source: this.source,
-        healthy: response.status === 200,
-        checkedAt: new Date(),
-        latencyMs: Date.now() - started,
-        httpStatus: response.status,
-        transport: "official API",
-        message: response.status === 200 ? "DIM.RIA official API reachable" : response.bodyText.slice(0, 200),
-      };
-    }
-    const response = await httpGet(APARTMENTS_HTML, { timeoutMs: config.sourceTimeoutMs, maxRetries: 0 });
+    const response = await httpGet(APARTMENTS_HTML, {
+      timeoutMs: config.sourceTimeoutMs,
+      maxRetries: 0,
+    });
     return {
       source: this.source,
       healthy: response.status === 200,
@@ -43,9 +34,8 @@ export class DomriaSource implements ListingSourceAdapter {
       latencyMs: Date.now() - started,
       httpStatus: response.status,
       transport: "public HTML",
-      message: config.domriaApiKey
-        ? undefined
-        : "DOM.RIA live official API requires DOMRIA_API_KEY; public HTML fallback used for health",
+      message:
+        response.status === 200 ? "DIM.RIA public HTML reachable" : response.bodyText.slice(0, 200),
     };
   }
 
@@ -67,18 +57,40 @@ export class DomriaSource implements ListingSourceAdapter {
     const config = getConfig();
     const notes: string[] = [];
 
-    if (config.domriaApiKey) {
-      const api = await this.fetchOfficial(config.domriaApiKey, options, notes);
+    const decision = decideDomriaTransport({
+      mode: config.domriaAcquisition,
+      hasApiKey: Boolean(config.domriaApiKey),
+      intervalSeconds: bindingPollIntervalSeconds(config),
+      searchesPerPoll: 2,
+      infoPerPoll: config.domriaMaxInfoPerPoll,
+    });
+    notes.push(decision.reason);
+
+    if (decision.transport === "official" && config.domriaApiKey) {
+      const api = await this.fetchOfficial(
+        config.domriaApiKey,
+        options,
+        notes,
+        config.domriaMaxInfoPerPoll,
+      );
       if (api.listings.length > 0) {
-        return finish(api.listings, started, "official API", api.status, notes, options?.limit);
+        return finish(api.listings, started, "official API", api.status, notes, options?.limit, {
+          structurePresent: true,
+        });
       }
-      notes.push("Official API did not yield listings; considering public HTML fallback.");
-    } else {
-      notes.push("DOM.RIA live test requires DOMRIA_API_KEY for the official developers.ria.com API.");
+      notes.push("Official API did not yield listings; using public HTML.");
     }
 
-    if (!config.domriaUsePublicHtmlFallback) {
-      return finish([], started, "official API", undefined, notes, options?.limit, false);
+    if (!config.domriaUsePublicHtmlFallback && decision.transport !== "html") {
+      return finish([], started, "official API", undefined, notes, options?.limit, {
+        forceUnhealthy: true,
+      });
+    }
+    if (!config.domriaUsePublicHtmlFallback && config.domriaAcquisition === "html") {
+      notes.push("DOMRIA_USE_PUBLIC_HTML_FALLBACK=false disables the production HTML path.");
+      return finish([], started, "public HTML", undefined, notes, options?.limit, {
+        forceUnhealthy: true,
+      });
     }
 
     const htmlListings: Listing[] = [];
@@ -90,6 +102,9 @@ export class DomriaSource implements ListingSourceAdapter {
       pages.push(HOUSES_HTML);
     }
     let lastStatus: number | undefined;
+    let parserFailure = false;
+    let httpError = false;
+    let structurePresent = false;
     for (const page of pages) {
       const response = await httpGet(page, {
         timeoutMs: config.sourceTimeoutMs,
@@ -98,24 +113,45 @@ export class DomriaSource implements ListingSourceAdapter {
       lastStatus = response.status;
       notes.push(`${page} -> ${response.status} ${headerBag(response)}`);
       if (response.status !== 200) {
+        httpError = true;
         continue;
       }
       try {
         const state = extractInitialStateJson(response.bodyText);
-        const parsed = parseDomriaCatalog(state);
+        const parsed = inspectDomriaCatalog(state);
+        if (!parsed.structurePresent) {
+          parserFailure = true;
+          notes.push(`${page} parser_failure: catalog.realtyForCatalog missing`);
+          continue;
+        }
+        structurePresent = true;
         const perPage = Math.max(3, Math.ceil((options?.limit ?? 10) / pages.length));
-        htmlListings.push(...parsed.slice(0, perPage));
+        htmlListings.push(...parsed.listings.slice(0, perPage));
       } catch (error) {
+        parserFailure = true;
         notes.push(`HTML parse failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    return finish(htmlListings, started, "public HTML embedded JSON", lastStatus, notes, options?.limit);
+    return finish(
+      htmlListings,
+      started,
+      "public HTML embedded JSON",
+      lastStatus,
+      notes,
+      options?.limit,
+      {
+        structurePresent: structurePresent && !parserFailure,
+        parserFailure,
+        httpError,
+      },
+    );
   }
 
   private async fetchOfficial(
     apiKey: string,
     options: FetchListingsOptions | undefined,
     notes: string[],
+    infoCap: number,
   ): Promise<{ listings: Listing[]; status?: number }> {
     const searches: Array<{ label: string; url: string }> = [];
     if (options?.includeApartments !== false) {
@@ -156,7 +192,7 @@ export class DomriaSource implements ListingSourceAdapter {
         }
       }
     }
-    const uniqueIds = [...new Set(ids)].slice(0, Math.min(options?.limit ?? 8, 8));
+    const uniqueIds = [...new Set(ids)].slice(0, Math.max(0, infoCap));
     const listings: Listing[] = [];
     for (const id of uniqueIds) {
       const infoUrl = `https://developers.ria.com/dom/info/${id}?api_key=${encodeURIComponent(apiKey)}`;
@@ -183,6 +219,10 @@ export function deriveDomriaInspectResultKind(input: {
   listingCount: number;
   httpStatus?: number;
   forceUnhealthy?: boolean;
+  /** Catalog array was present. Empty array is valid_empty, missing array is parser_failure. */
+  structurePresent?: boolean;
+  parserFailure?: boolean;
+  httpError?: boolean;
 }): FetchResultKind {
   if (input.forceUnhealthy) {
     return "http_error";
@@ -190,8 +230,14 @@ export function deriveDomriaInspectResultKind(input: {
   if (input.listingCount > 0) {
     return "ok";
   }
-  if (input.httpStatus !== undefined && input.httpStatus !== 200) {
+  if (input.parserFailure) {
+    return "parser_failure";
+  }
+  if (input.httpError || (input.httpStatus !== undefined && input.httpStatus !== 200)) {
     return "http_error";
+  }
+  if (input.structurePresent) {
+    return "valid_empty";
   }
   return "parser_failure";
 }
@@ -203,15 +249,23 @@ function finish(
   status: number | undefined,
   notes: string[],
   limit?: number,
-  forceHealthy?: boolean,
+  flags: {
+    forceUnhealthy?: boolean;
+    structurePresent?: boolean;
+    parserFailure?: boolean;
+    httpError?: boolean;
+  } = {},
 ): SourceFetchResult {
   const unique = dedupe(listings).slice(0, limit ?? 10);
   const resultKind = deriveDomriaInspectResultKind({
     listingCount: unique.length,
     ...(status !== undefined ? { httpStatus: status } : {}),
-    ...(forceHealthy === false ? { forceUnhealthy: true } : {}),
+    ...(flags.forceUnhealthy ? { forceUnhealthy: true } : {}),
+    ...(flags.structurePresent ? { structurePresent: true } : {}),
+    ...(flags.parserFailure ? { parserFailure: true } : {}),
+    ...(flags.httpError ? { httpError: true } : {}),
   });
-  const healthyFinal = forceHealthy === false ? false : resultKind === "ok";
+  const healthyFinal = resultKind === "ok" || resultKind === "valid_empty";
   logger.info("domria.inspect", { transport, count: unique.length, status, resultKind });
   return {
     listings: unique,
@@ -228,9 +282,12 @@ function finish(
       resultKind,
       ...(status !== undefined ? { httpStatus: status } : {}),
       transport,
-      message: healthyFinal
-        ? `DIM.RIA returned ${unique.length} listings via ${transport}`
-        : notes[0] ?? "DIM.RIA returned no listings",
+      message:
+        resultKind === "valid_empty"
+          ? "DIM.RIA VALID_EMPTY_RESULT: catalog structure present, zero listings"
+          : healthyFinal
+            ? `DIM.RIA returned ${unique.length} listings via ${transport}`
+            : (notes[0] ?? "DIM.RIA returned no listings"),
     },
   };
 }

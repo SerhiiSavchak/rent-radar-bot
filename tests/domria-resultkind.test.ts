@@ -11,7 +11,26 @@ describe("DIM.RIA resultKind (Oracle soak regression)", () => {
   });
 
   it("does not invent valid_empty for bare empty HTML", () => {
-    expect(deriveDomriaInspectResultKind({ listingCount: 0, httpStatus: 200 })).toBe("parser_failure");
+    expect(deriveDomriaInspectResultKind({ listingCount: 0, httpStatus: 200 })).toBe(
+      "parser_failure",
+    );
+  });
+
+  it("treats a present empty catalog array as valid_empty", () => {
+    expect(
+      deriveDomriaInspectResultKind({ listingCount: 0, httpStatus: 200, structurePresent: true }),
+    ).toBe("valid_empty");
+  });
+
+  it("treats a schema/structure miss as parser_failure even on HTTP 200", () => {
+    expect(
+      deriveDomriaInspectResultKind({
+        listingCount: 0,
+        httpStatus: 200,
+        parserFailure: true,
+        structurePresent: true,
+      }),
+    ).toBe("parser_failure");
   });
 
   it("marks non-200 as http_error", () => {
@@ -88,6 +107,8 @@ describe("seller label honesty", () => {
     } as Listing;
     expect(formatSellerLabel(listing)).toContain("не підтверджено");
     expect(formatSellerLabel({ sellerType: "owner" } as Listing)).toContain("позначкою майданчика");
-    expect(formatSellerLabel({ sellerType: "owner" } as Listing)).not.toContain("platform-verified");
+    expect(formatSellerLabel({ sellerType: "owner" } as Listing)).not.toContain(
+      "platform-verified",
+    );
   });
 });

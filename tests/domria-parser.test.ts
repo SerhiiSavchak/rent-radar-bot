@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDomriaInfo } from "../src/sources/domria/domria.parser.ts";
+import { inspectDomriaCatalog, parseDomriaInfo } from "../src/sources/domria/domria.parser.ts";
 
 describe("DIM.RIA parser", () => {
   it("uses characteristic 1436 as owner evidence", () => {
@@ -84,5 +84,27 @@ describe("DIM.RIA parser", () => {
     expect(listing?.publishedAt?.toISOString()).toBe(new Date("2025-12-31T17:03:31").toISOString());
     expect(listing?.metadata?.publishedAtProvenance).toBe("domria.publishing_date");
     expect(listing?.discoveredAt.getTime()).toBeGreaterThan(listing!.publishedAt!.getTime());
+  });
+
+  it("maps named area and floor-count fields and distinguishes an empty catalog", () => {
+    const listing = parseDomriaInfo({
+      realty_id: 5,
+      beautiful_url: "realty-5.html",
+      city_name_uk: "Львів",
+      realty_type_id: 2,
+      total_square_meters: 42.5,
+      floors_count: 9,
+      characteristics_values: { "1437": 1436 },
+    });
+    expect(listing?.areaM2).toBe(42.5);
+    expect(listing?.metadata?.totalFloors).toBe(9);
+
+    const empty = inspectDomriaCatalog({ catalog: { realtyForCatalog: [] } });
+    expect(empty.structurePresent).toBe(true);
+    expect(empty.listings).toHaveLength(0);
+
+    const missing = inspectDomriaCatalog({ catalog: {} });
+    expect(missing.structurePresent).toBe(false);
+    expect(missing.listings).toHaveLength(0);
   });
 });
