@@ -1,0 +1,20 @@
+---
+description: Rental Radar project constraints for every agent task
+alwaysApply: true
+---
+
+# Rental Radar project rule
+
+- Always read `AGENTS.md` before making changes.
+- Inspect the current branch, commit, repository status, and relevant existing code before editing.
+- Never edit directly on `main`.
+- Never invent missing infrastructure or silently change product policy.
+- Keep changes minimal and task-scoped.
+- Do not modify secrets or read secret values.
+- Do not run live Telegram, browser, Oracle, or soak tests unless the user explicitly asks for them.
+- Do not deploy automatically.
+- Do not use destructive git commands such as reset --hard or checkout --.
+- Run the narrowest relevant validation first.
+- Report exact commands and exact results.
+- If the current baseline is already failing, distinguish pre-existing failures from failures introduced by the change.
+- Stop and ask for clarification if requirements conflict with `AGENTS.md`.
