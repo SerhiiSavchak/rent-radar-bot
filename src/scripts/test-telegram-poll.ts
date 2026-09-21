@@ -73,6 +73,7 @@ try {
     enableOlxBrowser: config.enableOlxBrowser,
     ownerOnly: config.ownerOnly,
     ownerAcceptSelfDeclared: config.ownerAcceptSelfDeclared,
+    sellerPolicy: config.sellerPolicy,
     firstRunMode: config.firstRunMode,
     durable: true,
   });

@@ -90,11 +90,15 @@ function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function formatPrice(listing: Listing): string {
+export function formatPrice(listing: Listing): string {
   if (!listing.price) {
-    return "n/a";
+    return "Ціна не вказана";
   }
-  return `${listing.price.amount} ${listing.price.currency}/${listing.price.period ?? "unknown"}`;
+  const currency = listing.price.currency?.trim();
+  if (!currency) {
+    return `${listing.price.amount} (валюта не вказана)`;
+  }
+  return `${listing.price.amount} ${currency}/${listing.price.period ?? "unknown"}`;
 }
 
 export function formatSellerLabel(listing: Listing): string {
@@ -110,10 +114,7 @@ export function formatSellerLabel(listing: Listing): string {
   if (listing.sellerType === "business") {
     return "Бізнес / забудовник (не власник)";
   }
-  if (listing.metadata?.ownerEvidenceLevel === "private_unknown") {
-    return "Приватний акаунт — право власності не підтверджено";
-  }
-  return "Невідомо — право власності не підтверджено";
+  return "Власник не визначений";
 }
 
 export type ListingDeliveryKindOption =

@@ -3,7 +3,7 @@
  * Missing fields stay unknown. Seller-authored text never becomes a platform label.
  */
 
-import { classifyOwner, isOwnerEligible, type OwnerEvidenceLevel } from "../../filters/owner-filter.ts";
+import { classifyOwner, isSellerEligible, type OwnerEvidenceLevel } from "../../filters/owner-filter.ts";
 import {
   hasExplicitSelfDeclaredOwnerText,
   hasMisleadingOwnerSeekingText,
@@ -161,7 +161,7 @@ export function inspectOlxOfferDetailHtml(
     ? classifyOwner({
         platformOwner: platformLabel === "owner",
         platformAgent: platformLabel === "agent",
-        platformBusiness: accountType === "business" || platformLabel === "business",
+        platformBusiness: platformLabel === "business",
         platformPrivate: accountType === "private",
         isBusiness: accountType === "business",
         agencyName: companyNameField.present && companyNameField.value ? companyNameField.value : undefined,
@@ -172,7 +172,7 @@ export function inspectOlxOfferDetailHtml(
 
   const strongerThanCatalogSelfDeclared = owner?.ownerEvidenceLevel === "platform_confirmed";
   const defaultOwnerGateWouldAccept = owner
-    ? isOwnerEligible({
+    ? isSellerEligible({
         sellerType: owner.sellerType,
         metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel },
       })

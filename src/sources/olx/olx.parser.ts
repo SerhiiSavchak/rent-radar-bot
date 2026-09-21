@@ -11,8 +11,8 @@ function readPrice(offer: OlxOffer): Listing["price"] | undefined {
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
     const amount = typeof record.value === "number" ? record.value : Number(record.value);
-    const currency = typeof record.currency === "string" ? record.currency : "UAH";
-    if (Number.isFinite(amount)) {
+    const currency = typeof record.currency === "string" ? record.currency.trim() : "";
+    if (Number.isFinite(amount) && currency) {
       return { amount, currency, period: "month" };
     }
   }
@@ -25,10 +25,12 @@ function sellerSignals(offer: OlxOffer) {
     typeof offer.user?.sellerType === "string" && offer.user.sellerType.trim()
       ? offer.user.sellerType.trim()
       : undefined;
-  const business = offer.business === true || Boolean(company);
   const extra = collectTextEvidence(`${offer.title ?? ""} ${offer.description ?? ""}`);
   if (offer.business === false) {
     extra.unshift("OLX isBusiness/business = false (private account, not proof of property ownership)");
+  }
+  if (offer.business === true) {
+    extra.unshift("OLX isBusiness/business = true (account type, not proof of agency/realtor status)");
   }
   if (userSellerType) {
     extra.push(`OLX user.sellerType = ${userSellerType}`);
@@ -37,8 +39,7 @@ function sellerSignals(offer: OlxOffer) {
   }
   return classifyOwner({
     platformPrivate: offer.business === false,
-    platformBusiness: business,
-    isBusiness: business,
+    isBusiness: offer.business === true,
     agencyName: company,
     text: `${offer.title ?? ""}\n${offer.description ?? ""}`,
     extraEvidence: extra,

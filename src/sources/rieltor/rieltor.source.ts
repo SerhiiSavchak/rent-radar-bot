@@ -6,7 +6,7 @@ import type {
   SourceFetchResult,
   SourceHealth,
 } from "../../domain/source.ts";
-import { getConfig } from "../../config/env.ts";
+import { getConfig, usesOwnerOnlySourceFilter } from "../../config/env.ts";
 import { AppError } from "../../utils/errors.ts";
 import { headerBag, httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
@@ -43,11 +43,10 @@ export class RieltorSource implements ListingSourceAdapter {
   async inspectLatest(options?: FetchListingsOptions): Promise<SourceFetchResult> {
     const started = Date.now();
     const config = getConfig();
-    // OWNER_ONLY product mode must use the platform filter; otherwise declared
-    // totals reflect the unfiltered ~700+ apartment catalogue and false TRUNCATED.
+    // Default public catalog keeps unknown sellers. f-owners=1 only for legacy owner_only.
     const effectiveOptions: FetchListingsOptions = {
       ...options,
-      preferOwners: options?.preferOwners ?? config.ownerOnly,
+      preferOwners: options?.preferOwners ?? usesOwnerOnlySourceFilter(config),
     };
     const notes: string[] = [];
     const categories: RieltorCategory[] = [];
@@ -107,6 +106,11 @@ export class RieltorSource implements ListingSourceAdapter {
     }
 
     const unique = dedupe(listings).slice(0, options?.limit ?? 10);
+    if (effectiveOptions.preferOwners !== true && declaredTotal > unique.length) {
+      notes.push(
+        `public catalog sample=${unique.length} declared≈${declaredTotal} — not exhaustive under existing page/limit bounds`,
+      );
+    }
     const resultKind = resolveRieltorInspectKind({
       parserFailure,
       httpError,

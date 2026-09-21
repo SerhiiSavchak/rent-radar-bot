@@ -77,8 +77,11 @@ npm run live:test-telegram:canary
   - `publishedAt` before the baseline, even if still inside the age window → `late_discovered` (not sent)
   - missing `publishedAt` → **Вперше помічено** (excluded when `TELEGRAM_STRICT_NEW_PUBLICATIONS=true`)
   - old / refreshed-old `publishedAt` → suppressed
-- `OWNER_ONLY=true` (default) requires platform-confirmed `sellerType=owner`.
-  `OWNER_ACCEPT_SELF_DECLARED=true` is an explicit opt-in for clean self-declared text (private account + «від власника» / «без посередників», no agency). Telegram labels those as a self-declaration, never «за позначкою майданчика».
+- `SELLER_POLICY=reject_intermediaries` (default) rejects confirmed realtor/agency/intermediary listings and keeps unknown plus self-declared sellers. Telegram unknown label is exactly **«Власник не визначений»**.
+- Existing `OWNER_ONLY=true` does **not** restore the old platform-owner-only gate. That legacy gate is only `SELLER_POLICY=owner_only`.
+- `OWNER_ACCEPT_SELF_DECLARED` is unused unless `SELLER_POLICY=owner_only`.
+- Price is parsed and displayed when present. Missing price is **«Ціна не вказана»**. There is no min/max price eligibility filter.
+- Broadening seller eligibility does not reset SQLite baselines, seen listings, or the outbox. On first run after upgrade, a one-time `seller_policy` cutover timestamp is stored so previously hidden catalog inventory is not sent as «Нова публікація».
 - Oracle VM: `scripts/oracle-telegram-test/install-systemd.sh` installs a user service/timer (start after reboot, restart on failure, one unit instance, logs + heartbeat). Secrets stay in `~/.config/rent-radar/telegram-test.env`.
 - `disabled`, `transport_blocked`, `parser_failed`, and `valid_empty` are reported per source.
 - Final summary includes `cycles_with_partial_source_coverage`.
@@ -92,5 +95,5 @@ npm run live:test-telegram:canary
 - `ENABLE_OLX` (HTTP) stays **false** by default. Oracle CloudFront 403 is `transport_blocked`, not browser success.
 - `ENABLE_OLX_BROWSER=true` wires Playwright catalog extract into collection/Telegram. There is **no** silent fallback to `api/v1/offers`.
 - Startup and final summary messages are always sent on `live:test-telegram:poll`.
-- Seller line uses «Власник — за позначкою майданчика» (not legal ownership proof).
+- Seller line uses «Власник — за позначкою майданчика» for platform-confirmed owners, a self-declaration label for listing-author claims, and exactly «Власник не визначений» when the role is unknown.
 - Dates are shown in Europe/Kyiv; raw ISO timestamps are not shown.

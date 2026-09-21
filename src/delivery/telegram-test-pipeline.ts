@@ -1,8 +1,8 @@
 import type { Listing } from "../domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
-import type { AppConfig } from "../config/env.ts";
+import { usesOwnerOnlySourceFilter, type AppConfig } from "../config/env.ts";
 import { applyListingFilters } from "../filters/listing-filter.ts";
-import { isOwnerEligible } from "../filters/owner-filter.ts";
+import { sellerDecisionBucket } from "../filters/owner-filter.ts";
 import {
   classifyListingFreshness,
   defaultMaxPublicationAgeMinutes,
@@ -20,6 +20,12 @@ export type TelegramSourceAttempt = {
   capability: string;
   ok: boolean;
   listingCount: number;
+  sellerAcceptedOwner?: number;
+  sellerAcceptedSelfDeclared?: number;
+  sellerAcceptedUnknown?: number;
+  sellerRejectedIntermediary?: number;
+  otherFilterRejected?: number;
+  acceptedCount?: number;
   resultKind?: string;
   httpStatus?: number;
   errorSafe?: string;
@@ -33,6 +39,11 @@ export type TelegramTestCycleReport = {
   endedAt: string;
   collectedRaw: number;
   acceptedFiltered: number;
+  sellerAcceptedOwner: number;
+  sellerAcceptedSelfDeclared: number;
+  sellerAcceptedUnknown: number;
+  sellerRejectedIntermediary: number;
+  otherFilterRejected: number;
   newAfterDedupe: number;
   initialInventoryCount: number;
   newlyObservedCount: number;
@@ -79,6 +90,56 @@ export type TelegramTestPipelineDeps = {
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function laterDate(a: Date | undefined, b: Date | undefined): Date | undefined {
+  if (!a) {
+    return b;
+  }
+  if (!b) {
+    return a;
+  }
+  return a.getTime() >= b.getTime() ? a : b;
+}
+
+function emptySellerStats() {
+  return {
+    sellerAcceptedOwner: 0,
+    sellerAcceptedSelfDeclared: 0,
+    sellerAcceptedUnknown: 0,
+    sellerRejectedIntermediary: 0,
+    otherFilterRejected: 0,
+    acceptedCount: 0,
+  };
+}
+
+function countSellerDecisions(
+  listings: Listing[],
+  config: AppConfig,
+): ReturnType<typeof emptySellerStats> {
+  const stats = emptySellerStats();
+  const { maxListingAgeMinutes: _ignoredAge, ...configWithoutAge } = config;
+  const filtered = applyListingFilters(listings, configWithoutAge);
+  for (const item of filtered) {
+    const bucket = sellerDecisionBucket(item.listing);
+    if (bucket === "intermediary") {
+      stats.sellerRejectedIntermediary += 1;
+      continue;
+    }
+    if (bucket === "owner") {
+      stats.sellerAcceptedOwner += 1;
+    } else if (bucket === "self_declared") {
+      stats.sellerAcceptedSelfDeclared += 1;
+    } else {
+      stats.sellerAcceptedUnknown += 1;
+    }
+    if (item.accepted && item.locationMatched) {
+      stats.acceptedCount += 1;
+    } else {
+      stats.otherFilterRejected += 1;
+    }
+  }
+  return stats;
 }
 
 function capabilityFor(source: string, enabled: boolean, config: AppConfig): string {
@@ -226,13 +287,17 @@ export async function runTelegramTestCycle(
   const strictNewPublications =
     deps.strictNewPublications ?? deps.config.telegramStrictNewPublications ?? true;
   const maxPublicationAgeMinutes = defaultMaxPublicationAgeMinutes(deps.config.maxListingAgeMinutes);
+  deps.baseline.ensureSellerPolicy?.(deps.config.sellerPolicy, now());
+  const policyCutoverAt = deps.baseline.sellerPolicyCutoverAt?.();
 
   type SourceBucket = {
     source: string;
     ok: boolean;
     listings: Listing[];
+    collectedCount: number;
   };
   const buckets: SourceBucket[] = [];
+  const sellerTotals = emptySellerStats();
 
   for (const adapter of deps.adapters) {
     const enabled =
@@ -258,24 +323,29 @@ export async function runTelegramTestCycle(
     try {
       const result: SourceFetchResult = await adapter.inspectLatest({
         limit: 10,
-        preferOwners: deps.config.ownerOnly,
+        preferOwners: usesOwnerOnlySourceFilter(deps.config),
       });
       const classified = classifySourceAttempt(result);
       // Do not drop old publishedAt here — baseline must see current inventory.
       // Freshness classifier (not MAX_LISTING_AGE filter) gates what is sent as new.
       const { maxListingAgeMinutes: _ignoredAge, ...configWithoutAge } = deps.config;
-      const filtered = applyListingFilters(result.listings, configWithoutAge).filter(
-        (item) => item.accepted && item.locationMatched,
-      );
-      const accepted = filtered
-        .map((item) => item.listing)
-        .filter(
-          (listing) =>
-            !deps.config.ownerOnly ||
-            isOwnerEligible(listing, { acceptSelfDeclared: deps.config.ownerAcceptSelfDeclared === true }),
-        );
+      const sellerStats = countSellerDecisions(result.listings, deps.config);
+      sellerTotals.sellerAcceptedOwner += sellerStats.sellerAcceptedOwner;
+      sellerTotals.sellerAcceptedSelfDeclared += sellerStats.sellerAcceptedSelfDeclared;
+      sellerTotals.sellerAcceptedUnknown += sellerStats.sellerAcceptedUnknown;
+      sellerTotals.sellerRejectedIntermediary += sellerStats.sellerRejectedIntermediary;
+      sellerTotals.otherFilterRejected += sellerStats.otherFilterRejected;
+      sellerTotals.acceptedCount += sellerStats.acceptedCount;
+      const accepted = applyListingFilters(result.listings, configWithoutAge)
+        .filter((item) => item.accepted && item.locationMatched)
+        .map((item) => item.listing);
 
-      buckets.push({ source: adapter.source, ok: classified.ok, listings: accepted });
+      buckets.push({
+        source: adapter.source,
+        ok: classified.ok,
+        listings: accepted,
+        collectedCount: result.listings.length,
+      });
       sourceAttempts.push({
         source: adapter.source,
         enabled: true,
@@ -283,6 +353,12 @@ export async function runTelegramTestCycle(
         capability,
         ok: classified.ok,
         listingCount: result.listings.length,
+        sellerAcceptedOwner: sellerStats.sellerAcceptedOwner,
+        sellerAcceptedSelfDeclared: sellerStats.sellerAcceptedSelfDeclared,
+        sellerAcceptedUnknown: sellerStats.sellerAcceptedUnknown,
+        sellerRejectedIntermediary: sellerStats.sellerRejectedIntermediary,
+        otherFilterRejected: sellerStats.otherFilterRejected,
+        acceptedCount: sellerStats.acceptedCount,
         resultKind: classified.resultKind,
         ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
         ...(classified.errorSafe ? { errorSafe: classified.errorSafe } : {}),
@@ -293,7 +369,7 @@ export async function runTelegramTestCycle(
     } catch (error) {
       const errorSafe = safeError(error);
       sourceErrors.push({ source: adapter.source, errorSafe });
-      buckets.push({ source: adapter.source, ok: false, listings: [] });
+      buckets.push({ source: adapter.source, ok: false, listings: [], collectedCount: 0 });
       sourceAttempts.push({
         source: adapter.source,
         enabled: true,
@@ -332,7 +408,7 @@ export async function runTelegramTestCycle(
   }
 
   for (const bucket of buckets) {
-    collectedRaw += bucket.listings.length;
+    collectedRaw += bucket.collectedCount;
     acceptedFiltered += bucket.listings.length;
     const attempt = sourceAttempts.find((s) => s.source === bucket.source && s.enabled);
 
@@ -375,13 +451,13 @@ export async function runTelegramTestCycle(
     newlyObservedCount += unseen.length;
 
     for (const listing of unseen) {
+      const established = deps.baseline.establishedAt(bucket.source);
+      const monitoringStartedAt = laterDate(established, policyCutoverAt);
       const freshness = classifyListingFreshness(listing, {
         maxPublicationAgeMinutes,
         strictNewPublications,
         now: now(),
-        ...(deps.baseline.establishedAt(bucket.source)
-          ? { monitoringStartedAt: deps.baseline.establishedAt(bucket.source) }
-          : {}),
+        ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
       });
       if (!freshness.deliverable) {
         if (freshness.kind === "old_publication") {
@@ -427,6 +503,11 @@ export async function runTelegramTestCycle(
     endedAt: endedAt.toISOString(),
     collectedRaw,
     acceptedFiltered,
+    sellerAcceptedOwner: sellerTotals.sellerAcceptedOwner,
+    sellerAcceptedSelfDeclared: sellerTotals.sellerAcceptedSelfDeclared,
+    sellerAcceptedUnknown: sellerTotals.sellerAcceptedUnknown,
+    sellerRejectedIntermediary: sellerTotals.sellerRejectedIntermediary,
+    otherFilterRejected: sellerTotals.otherFilterRejected,
     newAfterDedupe,
     initialInventoryCount,
     newlyObservedCount,
@@ -464,6 +545,7 @@ export function formatTelegramStartupMessage(input: {
   enableOlxBrowser: boolean;
   ownerOnly: boolean;
   ownerAcceptSelfDeclared: boolean;
+  sellerPolicy: "reject_intermediaries" | "owner_only";
   firstRunMode: "seed" | "preview" | "send";
   durable?: boolean;
 }): string {
@@ -474,15 +556,16 @@ export function formatTelegramStartupMessage(input: {
     `chat_id: ${input.chatId}`,
     `cycles: ${cyclesLabel} · interval_ms: ${input.intervalMs}`,
     `dry_run: ${input.dryRun}`,
-    `owner_only: ${input.ownerOnly}`,
-    `owner_accept_self_declared: ${input.ownerAcceptSelfDeclared}`,
+    `seller_policy: ${input.sellerPolicy}`,
+    `owner_only: ${input.ownerOnly} (ignored unless seller_policy=owner_only)`,
+    `owner_accept_self_declared: ${input.ownerAcceptSelfDeclared} (legacy owner_only opt-in)`,
     `first_run_mode: ${mode} (seed = silent per-source baseline; preview = small «Початкова добірка»)`,
     `sources: domria=${input.enableDomria} lun=${input.enableLun} rieltor=${input.enableRieltor} olx_http=${input.enableOlx} olx_browser=${input.enableOlxBrowser}`,
     "Age window is necessary but not sufficient: listings published before the silent baseline are not «Нова публікація».",
     input.durable
       ? "Dedupe, baseline, freshness and Telegram outbox persist in local SQLite. Restart does not silent-rebaseline."
       : "Dedupe + baseline are in-memory only — restart triggers silent re-baseline (no flood of historical inventory as «нове»).",
-    "Platform seller labels are not legal ownership proof. Self-declared text is labeled separately and off by default.",
+    "Confirmed intermediaries are rejected. Unknown sellers are labeled «Власник не визначений». Self-declared text is labeled as a listing claim, not platform verification.",
   ].join("\n");
 }
 

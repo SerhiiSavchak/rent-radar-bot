@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PropertyType } from "../domain/listing.ts";
+import type { SellerPolicy } from "../filters/owner-filter.ts";
 
 const optionalString = z.preprocess(
   (value) => (value === "" || value === undefined ? undefined : value),
@@ -54,6 +55,11 @@ const envSchema = z.object({
   ENABLE_RIELTOR: booleanFromEnv(true),
   OWNER_ONLY: booleanFromEnv(true),
   OWNER_ACCEPT_SELF_DECLARED: booleanFromEnv(false),
+  /**
+   * Approved default: reject confirmed intermediaries, keep unknown/self-declared.
+   * OWNER_ONLY=true does not restore the old gate unless this is owner_only.
+   */
+  SELLER_POLICY: z.enum(["reject_intermediaries", "owner_only"]).default("reject_intermediaries"),
   PROPERTY_TYPES: z.string().default("apartment,house"),
   MAX_LISTING_AGE_MINUTES: optionalPositiveInt,
   DOMRIA_API_KEY: optionalString,
@@ -93,8 +99,12 @@ export type AppConfig = {
   enableOlxBrowser: boolean;
   enableRieltor: boolean;
   ownerOnly: boolean;
-  /** Opt-in: treat clean OLX/text self-declarations as owner-eligible. Default false. */
+  /** Opt-in for the legacy owner_only policy only. Ignored by reject_intermediaries. */
   ownerAcceptSelfDeclared: boolean;
+  /**
+   * Default reject_intermediaries. OWNER_ONLY=true cannot silently restore owner_only.
+   */
+  sellerPolicy: SellerPolicy;
   propertyTypes: PropertyType[];
   maxListingAgeMinutes?: number;
   domriaApiKey?: string;
@@ -152,6 +162,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     enableRieltor: parsed.ENABLE_RIELTOR,
     ownerOnly: parsed.OWNER_ONLY,
     ownerAcceptSelfDeclared: parsed.OWNER_ACCEPT_SELF_DECLARED,
+    sellerPolicy: parsed.SELLER_POLICY,
     propertyTypes: parsePropertyTypes(parsed.PROPERTY_TYPES),
     domriaUsePublicHtmlFallback: parsed.DOMRIA_USE_PUBLIC_HTML_FALLBACK,
     domriaMaxInfoPerPoll: parsed.DOMRIA_MAX_INFO_PER_POLL,
@@ -192,6 +203,11 @@ export function resetConfigCache(): void {
 
 export function hasTelegramConfig(config: AppConfig = getConfig()): boolean {
   return Boolean(config.telegramBotToken && config.telegramChatId);
+}
+
+/** Owner-only catalog query. False under the approved default, even if OWNER_ONLY=true. */
+export function usesOwnerOnlySourceFilter(config: Pick<AppConfig, "sellerPolicy" | "ownerOnly">): boolean {
+  return config.sellerPolicy === "owner_only" && config.ownerOnly;
 }
 
 export function estimateDomriaMonthlyRequests(config: AppConfig = getConfig()): {

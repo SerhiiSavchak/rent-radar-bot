@@ -1,6 +1,6 @@
 import type { SellerConfidence, SellerType } from "../domain/listing.ts";
 import {
-  hasAgentText,
+  hasExplicitIntermediaryText,
   hasExplicitSelfDeclaredOwnerText,
   hasMisleadingOwnerSeekingText,
   hasOwnerText,
@@ -13,6 +13,8 @@ export type OwnerEvidenceLevel =
   | "intermediary"
   | "conflict";
 
+export type SellerPolicy = "reject_intermediaries" | "owner_only";
+
 export type OwnerClassification = {
   sellerType: SellerType;
   confidence: SellerConfidence;
@@ -21,8 +23,8 @@ export type OwnerClassification = {
   /** True only for platform-confirmed owners. Never set from private-account or text. */
   filterConsidersPrivateOwner: boolean;
   /**
-   * True for a clean self-declaration (private account + explicit claim, no agency).
-   * The default OWNER_ONLY gate ignores this unless OWNER_ACCEPT_SELF_DECLARED=true.
+   * True for a clean self-declaration (explicit claim, no stronger intermediary evidence).
+   * Display as a listing claim, never as platform verification.
    */
   filterConsidersSelfDeclaredOwner: boolean;
 };
@@ -42,21 +44,45 @@ export type OwnerSignals = {
 };
 
 export type OwnerEligibilityOptions = {
-  /** Default false — self-declared text never silently passes OWNER_ONLY. */
+  /** Used only by the legacy owner_only policy. */
+  acceptSelfDeclared?: boolean;
+};
+
+export type SellerEligibilityOptions = {
+  policy?: SellerPolicy;
+  /** Used only when policy is owner_only. */
   acceptSelfDeclared?: boolean;
 };
 
 function hasAgencyMarker(signals: OwnerSignals): boolean {
-  if (signals.agencyName) {
+  if (signals.agencyName && signals.agencyName.trim()) {
     return true;
   }
   const id = signals.agencyId;
   return id !== undefined && id !== null && id !== 0 && id !== "";
 }
 
+function emptyClassification(
+  sellerType: SellerType,
+  level: OwnerEvidenceLevel,
+  evidence: string[],
+  extras: Partial<OwnerClassification> = {},
+): OwnerClassification {
+  return {
+    sellerType,
+    confidence: evidence.length > 0 ? (sellerType === "owner" || sellerType === "agent" || sellerType === "business" ? "high" : "low") : "unknown",
+    sellerEvidence: evidence,
+    ownerEvidenceLevel: level,
+    filterConsidersPrivateOwner: false,
+    filterConsidersSelfDeclaredOwner: false,
+    ...extras,
+  };
+}
+
 /**
  * Owner detection is evidence-based.
  * Title/description phrases never promote sellerType to owner by themselves.
+ * Generic business/private account flags are not agency or ownership proof.
  */
 export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   const evidence = [...(signals.extraEvidence ?? [])];
@@ -71,8 +97,11 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   if (signals.platformAgent === true) {
     evidence.push("platform seller type = agent");
   }
-  if (signals.platformBusiness === true || signals.isBusiness === true) {
+  if (signals.platformBusiness === true) {
     evidence.push("platform seller type = business");
+  }
+  if (signals.isBusiness === true) {
+    evidence.push("platform account type = business (not proof of agency/realtor status)");
   }
   if (signals.offerTypeLabel) {
     evidence.push(`platform offer type = ${signals.offerTypeLabel}`);
@@ -80,7 +109,7 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   if (signals.agencyId !== undefined && signals.agencyId !== null && signals.agencyId !== 0 && signals.agencyId !== "") {
     evidence.push(`platform agency id = ${String(signals.agencyId)}`);
   }
-  if (signals.agencyName) {
+  if (signals.agencyName && signals.agencyName.trim()) {
     evidence.push(`platform agency name = ${signals.agencyName}`);
   }
   if (signals.withoutCommission === true) {
@@ -94,98 +123,53 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   } else if (text && hasOwnerText(text)) {
     evidence.push("listing text contains owner/no-intermediary phrasing");
   }
-  if (text && hasAgentText(text)) {
-    evidence.push("listing text contains agency/realtor phrasing");
+  if (text && hasExplicitIntermediaryText(text)) {
+    evidence.push("listing text contains explicit agency/realtor self-description or commission offer");
   }
 
   const uniqueEvidence = [...new Set(evidence)];
-  const business = signals.platformBusiness === true || signals.isBusiness === true;
   const agency = hasAgencyMarker(signals);
-  const agentCopy = Boolean(text && hasAgentText(text));
-  const selfDeclared =
-    hasExplicitSelfDeclaredOwnerText(text) &&
-    signals.platformPrivate === true &&
-    !business &&
-    signals.platformAgent !== true &&
-    !agentCopy &&
-    !agency;
+  const agentCopy = Boolean(text && hasExplicitIntermediaryText(text));
+  const explicitIntermediaryRole =
+    signals.platformAgent === true || signals.platformBusiness === true || agency || agentCopy;
+  const ownerClaim = hasExplicitSelfDeclaredOwnerText(text);
+  const selfDeclared = ownerClaim && !explicitIntermediaryRole;
 
-  if (business) {
-    const conflict = hasExplicitSelfDeclaredOwnerText(text);
-    return {
-      sellerType: "business",
+  if (signals.platformAgent === true) {
+    return emptyClassification("agent", ownerClaim ? "conflict" : "intermediary", uniqueEvidence, {
       confidence: "high",
-      sellerEvidence: uniqueEvidence,
-      ownerEvidenceLevel: conflict ? "conflict" : "intermediary",
-      filterConsidersPrivateOwner: false,
-      filterConsidersSelfDeclaredOwner: false,
-    };
+    });
+  }
+
+  if (signals.platformBusiness === true) {
+    return emptyClassification("business", ownerClaim ? "conflict" : "intermediary", uniqueEvidence, {
+      confidence: "high",
+    });
   }
 
   if (signals.platformOwner === true) {
-    return {
-      sellerType: "owner",
+    return emptyClassification("owner", "platform_confirmed", uniqueEvidence, {
       confidence: "high",
-      sellerEvidence: uniqueEvidence,
-      ownerEvidenceLevel: "platform_confirmed",
       filterConsidersPrivateOwner: true,
-      filterConsidersSelfDeclaredOwner: false,
-    };
-  }
-
-  if (signals.platformAgent === true) {
-    return {
-      sellerType: "agent",
-      confidence: "high",
-      sellerEvidence: uniqueEvidence,
-      ownerEvidenceLevel: hasExplicitSelfDeclaredOwnerText(text) ? "conflict" : "intermediary",
-      filterConsidersPrivateOwner: false,
-      filterConsidersSelfDeclaredOwner: false,
-    };
-  }
-
-  if (selfDeclared) {
-    return {
-      sellerType: "unknown",
-      confidence: "medium",
-      sellerEvidence: uniqueEvidence,
-      ownerEvidenceLevel: "self_declared",
-      filterConsidersPrivateOwner: false,
-      filterConsidersSelfDeclaredOwner: true,
-    };
+    });
   }
 
   if (agency || agentCopy) {
-    const conflict = hasExplicitSelfDeclaredOwnerText(text);
-    return {
-      sellerType: "unknown",
-      confidence: uniqueEvidence.length > 0 ? "low" : "unknown",
-      sellerEvidence: uniqueEvidence,
-      ownerEvidenceLevel: conflict ? "conflict" : "intermediary",
-      filterConsidersPrivateOwner: false,
-      filterConsidersSelfDeclaredOwner: false,
-    };
+    return emptyClassification("unknown", ownerClaim ? "conflict" : "intermediary", uniqueEvidence);
+  }
+
+  if (selfDeclared) {
+    return emptyClassification("unknown", "self_declared", uniqueEvidence, {
+      confidence: "medium",
+      filterConsidersSelfDeclaredOwner: true,
+    });
   }
 
   if (signals.platformPrivate === true) {
-    return {
-      sellerType: "unknown",
-      confidence: uniqueEvidence.length > 0 ? "low" : "unknown",
-      sellerEvidence: uniqueEvidence,
-      ownerEvidenceLevel: "private_unknown",
-      filterConsidersPrivateOwner: false,
-      filterConsidersSelfDeclaredOwner: false,
-    };
+    return emptyClassification("unknown", "private_unknown", uniqueEvidence);
   }
 
-  return {
-    sellerType: "unknown",
-    confidence: uniqueEvidence.length > 0 ? "low" : "unknown",
-    sellerEvidence: uniqueEvidence,
-    ownerEvidenceLevel: "private_unknown",
-    filterConsidersPrivateOwner: false,
-    filterConsidersSelfDeclaredOwner: false,
-  };
+  return emptyClassification("unknown", "private_unknown", uniqueEvidence);
 }
 
 export function isOwnerOnlyMatch(classification: Pick<OwnerClassification, "sellerType">): boolean {
@@ -193,7 +177,7 @@ export function isOwnerOnlyMatch(classification: Pick<OwnerClassification, "sell
 }
 
 /**
- * Delivery gate. Default matches OWNER_ONLY + platform-confirmed owners only.
+ * Legacy OWNER_ONLY gate: platform-confirmed owners only.
  * Self-declared listings pass only when acceptSelfDeclared is explicitly true.
  */
 export function isOwnerEligible(
@@ -210,4 +194,61 @@ export function isOwnerEligible(
     return true;
   }
   return false;
+}
+
+export function sellerRejectionReason(listing: {
+  sellerType: SellerType;
+  metadata?: Record<string, unknown> | undefined;
+}): string | undefined {
+  const level = listing.metadata?.ownerEvidenceLevel;
+  if (level === "conflict") {
+    return "explicit_intermediary_conflicts_with_owner_claim";
+  }
+  if (level === "intermediary") {
+    return "explicit_intermediary";
+  }
+  if (listing.sellerType === "agent") {
+    return "platform_agent";
+  }
+  if (listing.sellerType === "business") {
+    return "platform_business_role";
+  }
+  return undefined;
+}
+
+/**
+ * Approved delivery gate: allow confirmed owners, self-declared claims, and unknown
+ * sellers; reject only explicit realtor/agency/intermediary evidence.
+ * Legacy owner_only remains available but is never the default.
+ */
+export function isSellerEligible(
+  listing: {
+    sellerType: SellerType;
+    metadata?: Record<string, unknown> | undefined;
+  },
+  options: SellerEligibilityOptions = {},
+): boolean {
+  const policy = options.policy ?? "reject_intermediaries";
+  if (policy === "owner_only") {
+    return isOwnerEligible(listing, { acceptSelfDeclared: options.acceptSelfDeclared === true });
+  }
+  return sellerRejectionReason(listing) === undefined;
+}
+
+export type SellerDecisionBucket = "owner" | "self_declared" | "unknown" | "intermediary";
+
+export function sellerDecisionBucket(listing: {
+  sellerType: SellerType;
+  metadata?: Record<string, unknown> | undefined;
+}): SellerDecisionBucket {
+  if (sellerRejectionReason(listing)) {
+    return "intermediary";
+  }
+  if (listing.sellerType === "owner") {
+    return "owner";
+  }
+  if (listing.metadata?.ownerEvidenceLevel === "self_declared") {
+    return "self_declared";
+  }
+  return "unknown";
 }

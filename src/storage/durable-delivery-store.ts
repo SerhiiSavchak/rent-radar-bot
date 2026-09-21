@@ -189,6 +189,42 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     const rows = this.db.prepare("SELECT fingerprint FROM seen_listings").all() as SeenRow[];
     return rows.map((row) => row.fingerprint);
   }
+
+  ensureSellerPolicy(policy: string, at = new Date()): Date | undefined {
+    const stored = this.readMeta("seller_policy");
+    const storedAt = this.readMeta("seller_policy_applied_at");
+    if (stored === policy) {
+      return storedAt ? new Date(storedAt) : undefined;
+    }
+    const baselineCount = this.db.prepare("SELECT COUNT(*) AS n FROM source_baselines").get() as {
+      n: number;
+    };
+    this.writeMeta("seller_policy", policy);
+    const expandingToApproved =
+      policy === "reject_intermediaries" &&
+      (stored === "owner_only" || (!stored && Number(baselineCount.n) > 0));
+    if (expandingToApproved) {
+      this.writeMeta("seller_policy_applied_at", at.toISOString());
+      return at;
+    }
+    return storedAt ? new Date(storedAt) : undefined;
+  }
+
+  sellerPolicyCutoverAt(): Date | undefined {
+    const raw = this.readMeta("seller_policy_applied_at");
+    return raw ? new Date(raw) : undefined;
+  }
+
+  private readMeta(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  private writeMeta(key: string, value: string): void {
+    this.db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)").run(key, value);
+  }
 }
 
 export function recoverInterruptedSends(db: DatabaseSync): number {

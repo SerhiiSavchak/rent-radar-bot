@@ -13,6 +13,8 @@ export type SourceBaseline = {
   /** Touch last successful fetch without rewriting established_at. */
   recordSuccess(source: string, at?: Date): void;
   readonly survivesRestart: boolean;
+  ensureSellerPolicy?(policy: string, at?: Date): Date | undefined;
+  sellerPolicyCutoverAt?(): Date | undefined;
 };
 
 export type OutboxStatus = "pending" | "sending" | "sent" | "failed";

@@ -53,6 +53,7 @@ try {
       chatId: sink.chatId,
       dryRun: sink.dryRun,
       ownerOnly: config.ownerOnly,
+      sellerPolicy: config.sellerPolicy,
       firstRunMode: config.firstRunMode,
       enableDomria: config.enableDomria,
       enableLun: config.enableLun,

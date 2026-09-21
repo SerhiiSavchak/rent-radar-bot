@@ -159,6 +159,7 @@ export class OlxBrowserSource implements ListingSourceAdapter {
       status: mapped.httpStatus,
       transport: OLX_BROWSER_TRANSPORT,
       ownerOnly: config.ownerOnly,
+      sellerPolicy: config.sellerPolicy,
     });
     return mapped;
   }

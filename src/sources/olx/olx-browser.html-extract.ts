@@ -8,6 +8,7 @@ import {
   defaultMaxPublicationAgeMinutes,
 } from "../../delivery/listing-freshness.ts";
 import type { Listing } from "../../domain/listing.ts";
+import { isSellerEligible, sellerDecisionBucket } from "../../filters/owner-filter.ts";
 import { diagnoseOlxOfferParse, parseOlxOffer } from "./olx.parser.ts";
 import { olxOfferSchema } from "./olx.types.ts";
 
@@ -301,7 +302,10 @@ function readRegularPrice(ad: Record<string, unknown>): { value: number; currenc
     (typeof regular?.currency === "string" && regular.currency) ||
     (typeof price.currencyCode === "string" && price.currencyCode) ||
     (typeof price.currency === "string" && price.currency) ||
-    "UAH";
+    undefined;
+  if (!currency) {
+    return undefined;
+  }
   return { value: amount, currency };
 }
 
@@ -682,14 +686,16 @@ function eligibilityCounts(
     }
     if (listing.sellerType === "owner") {
       ownerEligibleCount += 1;
-    } else if (isBusiness || listing.sellerType === "business") {
-      bump(ownerRejectionReasonCounts, "business_account");
-    } else if (level === "self_declared") {
-      bump(ownerRejectionReasonCounts, "self_declared_not_in_default_owner_gate");
-    } else if (isPrivateAccount) {
-      bump(ownerRejectionReasonCounts, "private_account_not_ownership");
+    }
+    if (!isSellerEligible(listing)) {
+      bump(ownerRejectionReasonCounts, "explicit_intermediary");
     } else {
-      bump(ownerRejectionReasonCounts, "missing_platform_owner_signal");
+      const bucket = sellerDecisionBucket(listing);
+      if (bucket === "unknown") {
+        bump(ownerRejectionReasonCounts, "unknown_seller_allowed");
+      } else if (bucket === "self_declared") {
+        bump(ownerRejectionReasonCounts, "self_declared_allowed");
+      }
     }
 
     if (listing.publishedAt instanceof Date) {

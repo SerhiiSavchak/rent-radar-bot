@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { classifyOwner, isOwnerEligible } from "../src/filters/owner-filter.ts";
+import { classifyOwner, isOwnerEligible, isSellerEligible } from "../src/filters/owner-filter.ts";
 import { detectPropertyType } from "../src/filters/listing-filter.ts";
+import { hasExplicitIntermediaryText } from "../src/utils/text-evidence.ts";
 
 describe("owner classifier", () => {
   it("does not mark owner just because the title contains owner wording", () => {
@@ -22,6 +23,9 @@ describe("owner classifier", () => {
     expect(result.ownerEvidenceLevel).toBe("private_unknown");
     expect(isOwnerEligible({ sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } })).toBe(
       false,
+    );
+    expect(isSellerEligible({ sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } })).toBe(
+      true,
     );
   });
 
@@ -50,6 +54,7 @@ describe("owner classifier", () => {
     };
     expect(isOwnerEligible(listing)).toBe(false);
     expect(isOwnerEligible(listing, { acceptSelfDeclared: true })).toBe(true);
+    expect(isSellerEligible(listing)).toBe(true);
   });
 
   it("treats business + owner phrasing as conflict, not ownership", () => {
@@ -132,6 +137,9 @@ describe("owner classifier", () => {
       { sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } },
       { acceptSelfDeclared: true },
     )).toBe(false);
+    expect(isSellerEligible(
+      { sellerType: result.sellerType, metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel } },
+    )).toBe(false);
   });
 
   it("does not treat «від власника» plus owner-seeking copy as a self-declaration", () => {
@@ -159,6 +167,63 @@ describe("owner classifier", () => {
     });
     expect(result.sellerType).toBe("agent");
     expect(result.ownerEvidenceLevel).toBe("intermediary");
+  });
+
+  it("does not treat a generic business account flag as agency proof", () => {
+    const result = classifyOwner({
+      isBusiness: true,
+    });
+    expect(result.sellerType).toBe("unknown");
+    expect(result.ownerEvidenceLevel).toBe("private_unknown");
+    expect(isSellerEligible({
+      sellerType: result.sellerType,
+      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+    })).toBe(true);
+  });
+
+  it("allows a self-declaration without the legacy OWNER_ACCEPT_SELF_DECLARED opt-in", () => {
+    const result = classifyOwner({
+      text: "Здається від власника, без посередників",
+    });
+    expect(result.ownerEvidenceLevel).toBe("self_declared");
+    expect(result.sellerType).toBe("unknown");
+    expect(isSellerEligible({
+      sellerType: result.sellerType,
+      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+    })).toBe(true);
+  });
+
+  it("lets explicit intermediary evidence override an owner claim", () => {
+    const result = classifyOwner({
+      platformAgent: true,
+      text: "від власника, без комісії",
+    });
+    expect(result.ownerEvidenceLevel).toBe("conflict");
+    expect(isSellerEligible({
+      sellerType: result.sellerType,
+      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+    })).toBe(false);
+  });
+
+  it("rejects unambiguous realtor/agency copy and keeps negative phrases", () => {
+    expect(hasExplicitIntermediaryText("Я рієлтор, допоможу з орендою")).toBe(true);
+    expect(hasExplicitIntermediaryText("Агентство нерухомості Львів")).toBe(true);
+    expect(hasExplicitIntermediaryText("Комісія агентства 50%")).toBe(true);
+    expect(hasExplicitIntermediaryText("Без комісії")).toBe(false);
+    expect(hasExplicitIntermediaryText("Без рієлтора")).toBe(false);
+    expect(hasExplicitIntermediaryText("Агентствам не турбувати")).toBe(false);
+    expect(hasExplicitIntermediaryText("Рієлторам не телефонувати")).toBe(false);
+    expect(hasExplicitIntermediaryText("Приватний будинок біля парку")).toBe(false);
+    expect(hasExplicitIntermediaryText("Готовий співпрацювати з ріелторами")).toBe(false);
+
+    for (const text of ["Без комісії", "Без рієлтора", "Агентствам не турбувати", "Рієлторам не телефонувати"]) {
+      const result = classifyOwner({ text, platformPrivate: true });
+      expect(result.ownerEvidenceLevel).toBe("private_unknown");
+      expect(isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      })).toBe(true);
+    }
   });
 });
 

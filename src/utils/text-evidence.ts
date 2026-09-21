@@ -33,14 +33,28 @@ const MISLEADING_OWNER_SEEKING = [
   "власники, дзвон",
 ];
 
-const AGENT_PHRASES = [
-  "агентство",
-  "агенція",
-  "рієлтор",
-  "риелтор",
-  "realtor",
-  "комісія рієлтора",
-  "послуги рієлтора",
+/**
+ * Unambiguous intermediary self-description or an explicit brokerage commission offer.
+ * Bare substrings «рієлтор» / «агентство» / «комісія» are not enough.
+ */
+const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bя\s+рі[єе]лтор/i, label: "я рієлтор" },
+  { pattern: /\bя\s+риелтор/i, label: "я риелтор" },
+  { pattern: /\bя\s+realtor\b/i, label: "я realtor" },
+  { pattern: /\bми\s+рі[єе]лтор/i, label: "ми рієлтори" },
+  { pattern: /\bми\s+риелтор/i, label: "ми риелторы" },
+  { pattern: /агентство\s+нерухомост/i, label: "агентство нерухомості" },
+  { pattern: /агенція\s+нерухомост/i, label: "агенція нерухомості" },
+  { pattern: /агентство\s+недвижимост/i, label: "агентство недвижимости" },
+  { pattern: /комісія\s+агентств/i, label: "комісія агентства" },
+  { pattern: /комиссия\s+агентств/i, label: "комиссия агентства" },
+  { pattern: /комісія\s+рі[єе]лтор/i, label: "комісія рієлтора" },
+  { pattern: /комиссия\s+риелтор/i, label: "комиссия риелтора" },
+  { pattern: /коміс[іи]я\s+\d+\s*%/i, label: "комісія N%" },
+  { pattern: /комиссия\s+\d+\s*%/i, label: "комиссия N%" },
+  { pattern: /послуги\s+рі[єе]лтора/i, label: "послуги рієлтора" },
+  { pattern: /услуги\s+риелтора/i, label: "услуги риелтора" },
+  { pattern: /\bя\s+агент(?:ство)?\b/i, label: "я агент" },
 ];
 
 function includesPhrase(lower: string, phrase: string): boolean {
@@ -58,10 +72,8 @@ export function collectTextEvidence(text: string | undefined): string[] {
       hits.push(`listing text contains '${phrase}'`);
     }
   }
-  for (const phrase of AGENT_PHRASES) {
-    if (includesPhrase(lower, phrase)) {
-      hits.push(`listing text contains '${phrase}'`);
-    }
+  for (const hit of strongIntermediaryHits(text)) {
+    hits.push(`listing text contains explicit intermediary phrasing '${hit}'`);
   }
   for (const phrase of MISLEADING_OWNER_SEEKING) {
     if (includesPhrase(lower, phrase)) {
@@ -99,10 +111,28 @@ export function hasExplicitSelfDeclaredOwnerText(text: string | undefined): bool
   return SELF_DECLARED_OWNER_PHRASES.some((phrase) => includesPhrase(lower, phrase));
 }
 
-export function hasAgentText(text: string | undefined): boolean {
+function strongIntermediaryHits(text: string): string[] {
+  const hits: string[] = [];
+  for (const item of STRONG_INTERMEDIARY_PATTERNS) {
+    if (item.pattern.test(text)) {
+      hits.push(item.label);
+    }
+  }
+  return hits;
+}
+
+/**
+ * True only for unambiguous seller self-description or an explicit commission offer.
+ * Negative copy such as «Без комісії» / «Рієлторам не телефонувати» does not match.
+ */
+export function hasExplicitIntermediaryText(text: string | undefined): boolean {
   if (!text) {
     return false;
   }
-  const lower = text.toLowerCase();
-  return AGENT_PHRASES.some((phrase) => includesPhrase(lower, phrase));
+  return strongIntermediaryHits(text).length > 0;
+}
+
+/** @deprecated use hasExplicitIntermediaryText — bare realtor/agency substrings are not evidence. */
+export function hasAgentText(text: string | undefined): boolean {
+  return hasExplicitIntermediaryText(text);
 }

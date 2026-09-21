@@ -14,8 +14,9 @@ import { headerBag, httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
 import { inspectLunHtml } from "./lun.parser.ts";
 
-const LUN_FLATS = "https://lun.ua/rent/lviv/flats-bez-poserednykiv";
-const LUN_HOUSES = "https://lun.ua/rent/lviv/houses";
+/** Public Lviv long-term flats catalog. Not the bez-poserednykiv owner-only route. */
+export const LUN_FLATS_URL = "https://lun.ua/rent/lviv/flats";
+export const LUN_HOUSES_URL = "https://lun.ua/rent/lviv/houses";
 
 /**
  * When LUN_CAPTURE_DIR is set (prefer ~/rent-radar-runtime/...), write a bounded
@@ -85,10 +86,10 @@ export class LunSource implements ListingSourceAdapter {
     const notes: string[] = [];
     const pages: string[] = [];
     if (options?.includeApartments !== false) {
-      pages.push(LUN_FLATS);
+      pages.push(LUN_FLATS_URL);
     }
     if (options?.includeHouses !== false) {
-      pages.push(LUN_HOUSES);
+      pages.push(LUN_HOUSES_URL);
     }
 
     const listings: Listing[] = [];
