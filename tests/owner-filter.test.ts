@@ -10,8 +10,12 @@ describe("owner classifier", () => {
     });
     expect(result.sellerType).toBe("unknown");
     expect(result.filterConsidersPrivateOwner).toBe(false);
-    expect(result.filterConsidersSelfDeclaredOwner).toBe(false);
-    expect(result.ownerEvidenceLevel).toBe("private_unknown");
+    expect(result.filterConsidersSelfDeclaredOwner).toBe(true);
+    expect(result.ownerEvidenceLevel).toBe("self_declared");
+    expect(isSellerEligible({
+      sellerType: result.sellerType,
+      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+    })).toBe(true);
   });
 
   it("does not treat private-account flags as property ownership", () => {

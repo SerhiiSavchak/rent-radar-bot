@@ -7,7 +7,13 @@ export type FetchListingsOptions = {
   preferOwners?: boolean;
 };
 
-export type FetchResultKind = "ok" | "valid_empty" | "parser_failure" | "http_error" | "disabled";
+export type FetchResultKind =
+  | "ok"
+  | "valid_empty"
+  | "parser_failure"
+  | "http_error"
+  | "rate_limited"
+  | "disabled";
 
 export type SourceIntegrity = {
   httpStatus?: number | undefined;

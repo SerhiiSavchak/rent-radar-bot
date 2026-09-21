@@ -15,7 +15,8 @@ Environment=HEARTBEAT_PATH=__HEARTBEAT_PATH__
 ExecStartPre=/bin/mkdir -p __RUNTIME_DIR__
 ExecStartPre=/bin/chmod 700 __RUNTIME_DIR__
 # Force unbounded poll and keep the blocked OLX HTTP adapter off even if the env file differs.
-# ENABLE_OLX_BROWSER stays explicit in the env file only.
+# Canonical production entry. src/index.ts exits 2 and does not persist or send.
+# ENABLE_OLX_BROWSER stays explicit in the env file only. Leave it false until hosted browser acquisition passes.
 ExecStart=/usr/bin/env TELEGRAM_POLL_CYCLES=0 ENABLE_OLX=false __NODE_BIN__ --import tsx ./src/scripts/test-telegram-poll.ts
 Restart=on-failure
 RestartSec=20

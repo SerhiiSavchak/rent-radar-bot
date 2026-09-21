@@ -114,7 +114,7 @@ export function formatSellerLabel(listing: Listing): string {
   if (listing.sellerType === "business") {
     return "Бізнес / забудовник (не власник)";
   }
-  return "Власник не визначений";
+  return "Власник не підтверджено";
 }
 
 export type ListingDeliveryKindOption =

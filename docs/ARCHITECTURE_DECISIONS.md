@@ -52,8 +52,46 @@ Production acquisition is public HTML (`DOMRIA_ACQUISITION=html`). Official requ
 
 ## ADR: runtime remains undecided until OLX is classified
 
-Status: **classified. Hosting migration is still pending.**
+Status: **superseded** by the browser-runtime ADR below.
 
-OLX ordinary HTTP is `OLX_HTTP` fail: 3/3 CloudFront 403 on 2026-09-21. Stock Playwright Chromium extracted 85 real listings on 3/3 runs with HTTP 200 and no CAPTCHA bypass. Classification: `OLX_BROWSER_REQUIRED`.
+OLX ordinary HTTP is `OLX_HTTP` fail: 3/3 CloudFront 403 on 2026-09-21. Stock Playwright Chromium extracted 85 real listings on 3/3 local runs with HTTP 200 and no CAPTCHA bypass. Classification of the transport: `OLX_BROWSER_REQUIRED`. Hosted proof on the selected VM did not happen. See `OLX_HOSTED_BROWSER_BLOCKED` in `docs/RENT_RADAR_STATUS.md`.
 
-Required runtime: `BROWSER_CAPABLE_RUNTIME` (Node 22+, Playwright 1.63, matching Chromium). Cloudflare Workers cannot host that browser. This batch does not change the host. `ENABLE_OLX` stays off. `ENABLE_OLX_BROWSER` stays off until the chosen host repeats the extract.
+## ADR: browser-capable runtime required by OLX
+
+Status: **final for the requirement. Not proven on the target VM.**
+
+Ordinary Node HTTP cannot acquire OLX (CloudFront 403). The working adapter is stock Playwright plus the repository's Chromium build, with no stealth plugin, proxy, or CAPTCHA solver. The process needs a `BROWSER_CAPABLE_RUNTIME`: Node 22+, Playwright 1.63, and that Chromium. Cloudflare Workers cannot provide it.
+
+`ENABLE_OLX_BROWSER` stays false until five hosted cycles on the existing free VM succeed. This batch did not enable it.
+
+## ADR: normal OLX HTTP path is not production acquisition
+
+Status: **final**.
+
+`ENABLE_OLX` stays false. When browser mode is on, the HTTP adapter is omitted. There is no silent fallback from a browser failure to `api/v1/offers`.
+
+## ADR: exactly one canonical durable poll/delivery path
+
+Status: **final**.
+
+Production collection and Telegram delivery run only through `src/scripts/test-telegram-poll.ts`, started by `deploy/systemd/rent-radar-telegram.service` / `rent-radar-telegram.timer`, or by `npm run live:test-telegram:poll`.
+
+`src/index.ts` exits 2. `ListingMonitorService.collectNewListings()` throws. Neither writes the seen-listing table nor sends Telegram.
+
+## ADR: Telegram delivery must use persistent outbox semantics
+
+Status: **final**.
+
+Accepted listing → SQLite baseline/dedupe state → pending `telegram_outbox` row → Telegram attempt → `sent` only after success. Failure leaves the row retryable. A process restart reopens the same file and retries. A successful row is not sent again.
+
+## ADR: UNKNOWN seller is retained
+
+Status: **final**.
+
+`UNKNOWN` and self-declared wording are sent. `sellerType` stays `unknown` for both. OLX `isBusiness` is recorded and does not become `sellerType=business`. Platform `agent` / `business` and explicit intermediary text, including «Я рієлтор», are dropped. The Telegram line for an unknown role is «Власник не підтверджено».
+
+## ADR: source errors never become empty inventory
+
+Status: **final**.
+
+`ok` and `valid_empty` are the only healthy kinds. `parser_failure`, `http_error`, and `rate_limited` are unhealthy. An OLX browser crash is not `valid_empty`. A RIELTOR 429 is `rate_limited` even when an earlier page had cards. A LUN schema rejection of every card is `parser_failure`. DIM.RIA without the expected catalog structure is `parser_failure`. An empty catalog array, when the structure is present, stays `valid_empty`.

@@ -8,9 +8,10 @@ import type {
 } from "../../domain/source.ts";
 import { getConfig, usesOwnerOnlySourceFilter } from "../../config/env.ts";
 import { AppError } from "../../utils/errors.ts";
-import { headerBag, httpGet } from "../../utils/http.ts";
+import { headerBag, httpGet, type HttpResponse } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
 import { isRieltorTransportBlocked, resolveRieltorInspectKind } from "./rieltor-classify.ts";
+import { decideRieltorTransientRetry } from "./rieltor-retry.ts";
 import { buildRieltorSearchUrl, inspectRieltorHtml } from "./rieltor.parser.ts";
 import {
   RIELTOR_MAX_PAGES_PER_CATEGORY,
@@ -62,6 +63,7 @@ export class RieltorSource implements ListingSourceAdapter {
     let parserFailure = false;
     let httpError = false;
     let blocked = false;
+    let rateLimited = false;
     let sawStructure = false;
     let truncated = false;
     let extractedCardCount = 0;
@@ -87,6 +89,12 @@ export class RieltorSource implements ListingSourceAdapter {
       hasJsonLd = hasJsonLd || page.hasJsonLd;
       declaredTotal += page.declaredCount ?? 0;
       truncated = truncated || page.truncated;
+      if (page.rateLimited) {
+        rateLimited = true;
+        httpError = true;
+        notes.push(`${category}: RATE_LIMITED HTTP ${page.lastStatus ?? 429}; not a valid empty catalog`);
+        break;
+      }
       if (page.blocked) {
         blocked = true;
         httpError = true;
@@ -115,6 +123,7 @@ export class RieltorSource implements ListingSourceAdapter {
       parserFailure,
       httpError,
       blocked,
+      rateLimited,
       uniqueCount: unique.length,
       sawStructure,
     });
@@ -177,6 +186,7 @@ export class RieltorSource implements ListingSourceAdapter {
     parserFailure: boolean;
     httpError: boolean;
     blocked: boolean;
+    rateLimited: boolean;
   }> {
     const ownersOnly = options?.preferOwners === true;
     const limit = options?.limit ?? 10;
@@ -191,6 +201,7 @@ export class RieltorSource implements ListingSourceAdapter {
     let parserFailure = false;
     let httpError = false;
     let blocked = false;
+    let rateLimited = false;
 
     const maxPages = Math.min(
       RIELTOR_MAX_PAGES_PER_CATEGORY,
@@ -202,19 +213,30 @@ export class RieltorSource implements ListingSourceAdapter {
         await sleep(RIELTOR_REQUEST_GAP_MS);
       }
       const url = buildRieltorSearchUrl(category, page, ownersOnly);
-      const response = await httpGet(url, { timeoutMs, maxRetries: 0 });
-      requestCount += 1;
+      const fetched = await fetchRieltorPage(url, timeoutMs, notes);
+      requestCount += fetched.requestCount;
+      if (!fetched.response) {
+        httpError = true;
+        notes.push(`${category} page ${page}: network failure after bounded retry`);
+        break;
+      }
+      const response = fetched.response;
       lastStatus = response.status;
       notes.push(`${url} -> ${response.status} ${headerBag(response)} final=${response.url}`);
+      if (response.status === 429) {
+        rateLimited = true;
+        httpError = true;
+        notes.push(
+          `${category} page ${page}: RATE_LIMITED HTTP 429 after bounded retry; not catalog success and not a valid empty result`,
+        );
+        break;
+      }
       if (isRieltorTransportBlocked({ status: response.status, bodyText: response.bodyText })) {
         blocked = true;
         httpError = true;
         notes.push(
-          `${category} page ${page}: transport_blocked (${response.status}); HTML 200 challenge/block page is not catalog success; bounded stop, no proxy/CAPTCHA/stealth retries`,
+          `${category} page ${page}: transport_blocked (${response.status}); HTML 200 challenge/block page is not catalog success; no proxy/CAPTCHA/stealth retries`,
         );
-        // Single bounded pause before returning so the next cycle/source is spaced;
-        // do not retry the blocked request aggressively.
-        await sleep(RIELTOR_REQUEST_GAP_MS);
         break;
       }
       if (response.status !== 200) {
@@ -274,6 +296,7 @@ export class RieltorSource implements ListingSourceAdapter {
       parserFailure,
       httpError,
       blocked,
+      rateLimited,
       ...(lastStatus !== undefined ? { lastStatus } : {}),
       ...(declaredCount !== undefined ? { declaredCount } : {}),
     };
@@ -298,7 +321,10 @@ function messageFor(
   if (kind === "ok") {
     return `RIELTOR returned ${count} listings${truncation}`;
   }
-  if (status === 403 || status === 429) {
+  if (kind === "rate_limited") {
+    return `RIELTOR RATE_LIMITED HTTP ${status ?? 429}; not a valid empty catalog${truncation}`;
+  }
+  if (status === 403) {
     return `RIELTOR transport_blocked HTTP ${status} (same path/headers as soak; intermittent edge block — no code discrepancy found)${truncation}`;
   }
   return `RIELTOR HTTP error (${status ?? "n/a"})${truncation}`;
@@ -319,4 +345,44 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function fetchRieltorPage(
+  url: string,
+  timeoutMs: number,
+  notes: string[],
+): Promise<{ response?: HttpResponse; requestCount: number }> {
+  let attempt = 0;
+  let requestCount = 0;
+  for (;;) {
+    try {
+      const response = await httpGet(url, { timeoutMs, maxRetries: 0 });
+      requestCount += 1;
+      const decision = decideRieltorTransientRetry({
+        status: response.status,
+        networkError: false,
+        retryAfterHeader: response.headers["retry-after"],
+        attempt,
+      });
+      if (!decision.retry) {
+        return { response, requestCount };
+      }
+      notes.push(
+        `${url} transient HTTP ${response.status} retry in ${decision.delayMs}ms (${decision.reason}); attempt ${attempt + 1}`,
+      );
+      await sleep(decision.delayMs);
+      attempt += 1;
+    } catch (error) {
+      requestCount += 1;
+      const decision = decideRieltorTransientRetry({ networkError: true, attempt });
+      const message = error instanceof Error ? error.message : String(error);
+      if (!decision.retry) {
+        notes.push(`${url} network failure after bounded retry: ${message}`);
+        return { requestCount };
+      }
+      notes.push(`${url} network retry in ${decision.delayMs}ms (${decision.reason}): ${message}`);
+      await sleep(decision.delayMs);
+      attempt += 1;
+    }
+  }
 }

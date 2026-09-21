@@ -393,6 +393,79 @@ describe("SQLite durability and recovery", () => {
     expect(sendListing).toHaveBeenCalledTimes(1);
   });
 
+  it("retries a failed Telegram send after the process reopens the same database", async () => {
+    const path = dbPath();
+    const config = baseConfig();
+    const t0 = new Date("2026-09-17T12:00:00Z");
+    const neu = sampleListing({
+      sourceId: "restart-1",
+      url: "https://dom.ria.com/uk/realty-restart-1.html",
+      publishedAt: new Date("2026-09-17T12:30:00Z"),
+    });
+    const first = new DurableDeliveryStore(getDb(path));
+    await runTelegramTestCycle(
+      {
+        adapters: [adapter("domria", [])],
+        config,
+        sink: mockSink(okSend()),
+        dedupe: first,
+        baseline: first,
+        outbox: first,
+        now: () => t0,
+      },
+      1,
+    );
+    const failed = await runTelegramTestCycle(
+      {
+        adapters: [adapter("domria", [neu])],
+        config,
+        sink: mockSink(failSend()),
+        dedupe: first,
+        baseline: first,
+        outbox: first,
+        now: () => new Date("2026-09-17T13:00:00Z"),
+      },
+      2,
+    );
+    expect(failed.sentFailed).toBe(1);
+    expect(first.hasSeen(neu)).toBe(false);
+    closeDb();
+
+    const restarted = new DurableDeliveryStore(getDb(path));
+    const sendListing = okSend();
+    const recovered = await runTelegramTestCycle(
+      {
+        adapters: [adapter("domria", [neu])],
+        config,
+        sink: mockSink(sendListing),
+        dedupe: restarted,
+        baseline: restarted,
+        outbox: restarted,
+        now: () => new Date("2026-09-17T13:10:00Z"),
+      },
+      3,
+    );
+    expect(recovered.sentOk).toBe(1);
+    expect(sendListing).toHaveBeenCalledTimes(1);
+    expect(restarted.hasSeen(neu)).toBe(true);
+    expect(restarted.listRetryable()).toHaveLength(0);
+
+    const replay = await runTelegramTestCycle(
+      {
+        adapters: [adapter("domria", [neu])],
+        config,
+        sink: mockSink(sendListing),
+        dedupe: restarted,
+        baseline: restarted,
+        outbox: restarted,
+        now: () => new Date("2026-09-17T13:20:00Z"),
+      },
+      4,
+    );
+    expect(replay.sentOk).toBe(0);
+    expect(sendListing).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the last known baseline when a later source fetch fails", async () => {
     const path = dbPath();
     const config = baseConfig();

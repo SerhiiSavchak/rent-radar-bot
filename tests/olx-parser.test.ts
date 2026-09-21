@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isSellerEligible } from "../src/filters/owner-filter.ts";
 import { diagnoseOlxOfferParse, extractOlxUrlToken, parseOlxOffersPayload } from "../src/sources/olx/olx.parser.ts";
 import {
   buildOlxOffersUrl,
@@ -58,7 +59,9 @@ describe("OLX parser", () => {
     expect(listings[0]?.refreshedAt?.toISOString()).toBe(new Date("2026-09-14T18:22:44+03:00").toISOString());
     expect(listings[0]?.metadata?.lastRefreshTime).toBe("2026-09-14T18:22:44+03:00");
     expect(listings[0]?.metadata?.urlToken).toBe("11gqaj");
-    expect(listings[0]?.sellerType).toBe("business");
+    expect(listings[0]?.metadata?.olxIsBusiness).toBe(true);
+    expect(listings[0]?.sellerType).toBe("unknown");
+    expect(isSellerEligible(listings[0]!)).toBe(true);
   });
 
   it("accepts catalog photos as URL strings without requiring { link } objects", () => {

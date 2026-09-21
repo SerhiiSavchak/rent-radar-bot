@@ -1,17 +1,40 @@
 # Rent Radar status
 
 Date: 2026-09-21  
-Commit examined: `3fd4fbcc29e025af58215a0eb0a56989bbd8aa65` (`main`)  
-Phase: source layer closure + project truth freeze
+Branch: `cursor/source-layer-closure` (parent `dca170f`, source-layer ancestor `4342825`)  
+Phase: closure between source research and core logic
 
 Repository code is the source of truth. Older notes in `docs/SOURCE_RESEARCH.md` and `docs/PHASE_1_DECISION.md` are historical.
 
+## Source status
+
+| Source | Acquisition | Status |
+| ------ | ----------- | ------ |
+| DIM.RIA | Public HTML, repeated live from this workstation | PASS |
+| LUN | Public HTML/RSC, repeated live from this workstation | PASS |
+| RIELTOR.UA | Public HTML, 2 s request gap, one bounded 429/5xx retry | PASS |
+| OLX | Hosted browser cycles were not run. Ordinary HTTP stays off | FAIL |
+
+`SOURCE LAYER GATE: BLOCKED`. OLX has a local browser proof and no proof on the target VM. `ENABLE_OLX` and `ENABLE_OLX_BROWSER` stay false.
+
+## Canonical production path
+
+One poll/delivery path:
+
+`deploy/systemd/rent-radar-telegram.service` → `src/scripts/test-telegram-poll.ts` → `runTelegramTestCycle` (`src/delivery/telegram-test-pipeline.ts`) with `openDurableRuntime` (`src/storage/durable-runtime.ts`).
+
+Delivery order:
+
+1. listing accepted by the filters
+2. durable SQLite state and a pending `telegram_outbox` row
+3. Telegram attempt
+4. success marks the row sent
+
+If Telegram fails, the row stays retryable. Reopening the same database retries it. A later success does not send it again.
+
+`src/index.ts` exits 2 and does not collect, persist, or send. `ListingMonitorService.collectNewListings()` throws. `package.json` production poll script is `live:test-telegram:poll`. There is no cron unit besides `deploy/systemd/rent-radar-telegram.timer` (`OnBootSec=1min`), which starts that same service.
+
 ## Architecture (actual path)
-
-Two entry points exist.
-
-1. `src/index.ts` — one-shot. `ListingMonitorService.collectNewListings()` filters, then `hasSeenListing` / `saveListing`, then `output.send`. A Telegram error after `saveListing` does not retry. This is not the durable delivery path.
-2. `src/scripts/test-telegram-poll.ts` → `runTelegramTestCycle` in `src/delivery/telegram-test-pipeline.ts` — the restart-capable path. Per-source `try/catch`, SQLite baseline, freshness, and `telegram_outbox`. A failed source does not stop the others. A failed send stays retryable.
 
 | Stage             | Files                                                                        | Behavior                                                                                                                               |
 | ----------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -33,13 +56,13 @@ Two entry points exist.
 | ---------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | DIM.RIA acquisition    | PASS                         | Public HTML. 6/6 page fetches HTTP 200 on 2026-09-21 (20 flats, 8 houses). Adapter 3/3 `ok`, same 8 ids. Official API not called.             |
 | LUN acquisition        | PASS                         | After the `imageId` string fix: flats 24/24 validated, houses 24/24, adapter 3/3 `ok`.                                                        |
-| RIELTOR.UA acquisition | PASS                         | Three cycles spaced 25s: HTTP 200, `ok`, 6 real ids, coords/rooms/price/description. A back-to-back burst produced HTTP 429 and `http_error`. |
-| OLX HTTP               | FAIL                         | 3/3 CloudFront 403. `resultKind=http_error`.                                                                                                  |
-| OLX browser            | PASS as browser transport    | 3/3 stock Playwright, HTTP 200, 85 listings (48 flats + 37 houses), real ids. Classification `OLX_BROWSER_REQUIRED`.                          |
-| Seller gate            | PASS for the permissive rule | Unknown is sent. Confirmed platform agent/business is dropped. Five-way enum is not stored.                                                   |
+| RIELTOR.UA acquisition | PASS                         | 2026-09-21 20:29:31Z, 20:29:59Z, 20:30:27Z: HTTP 200, `ok`, 10 ids, 2 requests per cycle, ~2.9–3.1 s. Same ids across the three cycles. |
+| OLX HTTP               | FAIL                         | 3/3 CloudFront 403. `resultKind=http_error`. Not a production path. |
+| OLX browser            | FAIL on the target VM        | Local 3/3 Playwright PASS (85 listings) remains historical. Hosted classification this batch: `OLX_HOSTED_BROWSER_BLOCKED`. Flag stays off. |
+| Seller gate            | PASS for the permissive rule | Unknown is sent. OLX `isBusiness` stays `sellerType=unknown` and is sent. Platform agent/business and explicit «я рієлтор» drop. |
 | Cross-source dedup     | NOT IN THIS BATCH            | LUN cluster fields are stored and do not drop listings.                                                                                       |
 | Failure isolation      | PASS                         | `inspectAll` uses `Promise.allSettled`. Telegram cycle catches each adapter.                                                                  |
-| Durable outbox         | PRESENT                      | Not redesigned here. Legacy `src/index.ts` still saves before send.                                                                           |
+| Durable outbox         | PASS                         | Only production path. Failed Telegram send stays retryable across a reopened SQLite file and is not sent twice after success. |
 
 ## DIM.RIA request budget
 
@@ -68,7 +91,7 @@ A 3-hour interval with 2 searches + 2 info calls is about 960 requests/month and
 - Seller type on those 85 ads: `unknown` only.
 - Default flags stay `ENABLE_OLX=false` and `ENABLE_OLX_BROWSER=false`. Turning the browser flag on does not fall back to HTTP.
 
-Runtime requirement: `BROWSER_CAPABLE_RUNTIME`. Not migrated in this batch.
+Runtime requirement: `BROWSER_CAPABLE_RUNTIME`. The 2026-09-21 hosted attempt did not install Chromium or run a cycle. Classification of that attempt: `OLX_HOSTED_BROWSER_BLOCKED`. `ENABLE_OLX_BROWSER` stays false.
 
 Incompatible with Cloudflare Workers (no Chromium; earlier CPU measurements already rejected Workers Free). A VM must have Node 22+, Playwright, and the matching Chromium build. `PLAYWRIGHT_BROWSERS_PATH` must point at that install. This Windows run used `%LOCALAPPDATA%\ms-playwright`.
 
@@ -160,23 +183,50 @@ LUN is an aggregator/index of other platforms' listings. That is not an official
 
 - LUN: missing `realties.cards` or an unreadable array is `parser_failure`. An empty array is `valid_empty`. Cards that all fail schema used to be reported as success/empty; they are now `parser_failure`. The live flats page was in that state while `imageId` was a string.
 - DIM.RIA: missing `__INITIAL_STATE__` or missing `realtyForCatalog` is `parser_failure`. An empty catalog array is `valid_empty`. Non-200 is `http_error`.
-- RIELTOR: 403, 429, and a Cloudflare challenge are `http_error` even if an earlier page returned cards. A located catalog with zero cards is `valid_empty`.
+- RIELTOR: 403 and a Cloudflare challenge are `http_error` even if an earlier page returned cards. HTTP 429 is `rate_limited` after at most one retry, and it is not `valid_empty` or `ok`. A located catalog with zero cards is `valid_empty`.
 - OLX HTTP: API 403 stays `http_error`. An HTML 200 does not count as success.
+- OLX browser: a failed extract (`extractionOk=false`, no listings) is `parser_failure` or `http_error`, never `valid_empty`.
 - One adapter throwing does not cancel the others.
+
+## Tests
+
+2026-09-21 20:31Z: `tsc --noEmit` exit 0, eslint on the changed TypeScript files exit 0, `vitest run` 26 files, 221 tests, 0 failures.
+
+The 11 Vitest failures, plus the separate `sellerPolicy` type error, were:
+
+| Test | Class | Cause |
+| ---- | ----- | ----- |
+| owner title «від власника» | TEST_EXPECTATION_STALE | The phrase is a self-declaration. `sellerType` stays `unknown` and the listing is sent. |
+| «Я рієлтор» | PRODUCTION_CODE_BUG | JavaScript `\b` does not treat Cyrillic as a word character, so a leading «Я» never matched. |
+| Telegram unknown label (`domria-resultkind`, `telegram-test-sink`) | PRODUCTION_CODE_BUG | The label did not contain «не підтверджено». It is now exactly «Власник не підтверджено». |
+| OLX parser and four browser-extract assertions that required `sellerType=business` | TEST_EXPECTATION_STALE | `isBusiness` is an account flag, not platform realtor proof. The flag is stored. The seller stays `unknown` and is sent. |
+| OLX detail `defaultOwnerGateWouldAccept` and the delivery-gate self-declared row | TEST_EXPECTATION_STALE | Self-declared unknown listings are accepted by the default policy. Legacy `isOwnerEligible` still rejects them. |
+| `sellerPolicy` missing on the startup fixture (typecheck) | TYPE/MODEL_DRIFT | The startup message requires `sellerPolicy`. The fixture now passes `reject_intermediaries`. |
+
+## Hosted OLX attempt
+
+The only host in `~/.ssh/known_hosts` is `92.5.160.179`. SSH answered and rejected `ubuntu` and `opc` with `Permission denied (publickey)`. `~/.ssh` has no private key. `$HOME/rent-radar-phase1-oracle` is absent, so the provisioner key is not on this workstation. No browser dependency was installed on the VM. No cycle was run. Resource budget, reboot, and systemd restart were not measured.
+
+`ENABLE_OLX_BROWSER` was not turned on.
+
+## Closure live evidence (2026-09-21, this workstation)
+
+| Time (UTC) | Source | HTTP | Kind | Normalized | Notes |
+| ---------- | ------ | ---- | ---- | ---------- | ----- |
+| 20:29:05, 20:29:11, 20:29:17 | DIM.RIA adapter ×3 | 200 | ok | 10 | same ids `34690408` …; 1.4–2.2 s |
+| 20:29:18, 20:29:23, 20:29:28 | LUN adapter ×3 | 200 | ok | 10 | same ids `4725239863` …; 1.0–1.5 s |
+| 20:29:31, 20:29:59, 20:30:27 | RIELTOR ×3, 25 s apart | 200 | ok | 10 | 2 requests/cycle, ~3 s, declared catalog ≥ 777, truncated by the existing limit |
 
 ## Blockers
 
-- OLX cannot be polled with ordinary Node HTTP from this environment.
-- OLX browser acquisition needs a Chromium-capable host. Hosting was not migrated.
-- RIELTOR returns 429 if several full cycles are fired back to back. A 10-minute poll with the existing 2 s gap is inside the successful pattern; a tight retry loop is not.
+- OLX hosted browser acquisition is `OLX_HOSTED_BROWSER_BLOCKED`. The source layer is not complete.
+- The production service restart on the VM was not executed.
 - Cross-source dedup is not implemented. LUN provenance is stored only.
-- Eleven existing tests were already failing on files this batch did not change (`owner-filter`, OLX seller type vs `business`, Telegram wording `не підтверджено`). They were not edited and were not weakened.
+- RIELTOR can still return 429. The adapter now makes at most one extra attempt, waits at most 3 s, and does not wait out a long `Retry-After`.
 
-## Batch 2
+## Remaining work
 
-1. Choose a browser-capable free host and install Playwright Chromium there. Do not use Cloudflare Workers Free for the OLX leg.
-2. Turn on `ENABLE_OLX_BROWSER` only after that host repeats the 85-listing extract. Leave `ENABLE_OLX` off.
+1. Put the provisioner SSH key on the operator machine, or run the five OLX browser cycles from a host that can log into the VM.
+2. Turn on `ENABLE_OLX_BROWSER` only after those cycles return real ids with no CAPTCHA bypass. Leave `ENABLE_OLX` off.
 3. Keep DIM.RIA on `DOMRIA_ACQUISITION=html`.
-4. Map RIELTOR photos only if a stable card attribute is identified. Do not guess.
-5. Use LUN `groupId`, `similarPageIds`, `hasDuplicates`, and `urlRaw` as high-confidence dedup evidence. Do not drop fuzzy matches.
-6. Keep the permissive seller gate: unknown is sent; only confirmed intermediary evidence is dropped.
+4. Use LUN `groupId`, `similarPageIds`, `hasDuplicates`, and `urlRaw` as high-confidence dedup evidence. Do not drop fuzzy matches.

@@ -115,7 +115,7 @@ describe("Telegram formatting and splitting", () => {
     expect(text).toContain("Львів");
     expect(text).toContain("Власник — за позначкою майданчика");
     expect(formatListingTelegramHtml(sampleListing({ sellerType: "unknown" }))).toContain(
-      "не підтверджено",
+      "Власник не підтверджено",
     );
     expect(text).toContain(formatKyivDateTime(listing.publishedAt));
     expect(text).not.toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
@@ -206,6 +206,7 @@ describe("Telegram chat targeting and dry-run", () => {
       enableOlxBrowser: false,
       ownerOnly: true,
       ownerAcceptSelfDeclared: false,
+      sellerPolicy: "reject_intermediaries",
       firstRunMode: "seed",
     })).toContain("dry_run: true");
     expect(formatTelegramFinalSummary({

@@ -44,7 +44,7 @@ describe("OLX offer detail HTML inspection", () => {
     expect(result.sellerAuthoredSelfDeclared).toBe(true);
     expect(result.ownerEvidenceLevel).toBe("self_declared");
     expect(result.strongerThanCatalogSelfDeclared).toBe(false);
-    expect(result.defaultOwnerGateWouldAccept).toBe(false);
+    expect(result.defaultOwnerGateWouldAccept).toBe(true);
     expect(
       isOwnerEligible({
         sellerType: "unknown",

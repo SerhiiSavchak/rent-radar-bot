@@ -169,6 +169,13 @@ function classifySourceAttempt(result: SourceFetchResult): {
   errorSafe?: string;
 } {
   const kind = result.resultKind ?? "unknown";
+  if (kind === "rate_limited") {
+    return {
+      ok: false,
+      resultKind: "rate_limited",
+      errorSafe: result.health.message ?? `RATE_LIMITED HTTP ${result.httpStatus ?? 429}`,
+    };
+  }
   if (result.httpStatus === 403 || result.httpStatus === 429) {
     return {
       ok: false,
@@ -565,7 +572,7 @@ export function formatTelegramStartupMessage(input: {
     input.durable
       ? "Dedupe, baseline, freshness and Telegram outbox persist in local SQLite. Restart does not silent-rebaseline."
       : "Dedupe + baseline are in-memory only — restart triggers silent re-baseline (no flood of historical inventory as «нове»).",
-    "Confirmed intermediaries are rejected. Unknown sellers are labeled «Власник не визначений». Self-declared text is labeled as a listing claim, not platform verification.",
+    "Confirmed intermediaries are rejected. Unknown sellers are labeled «Власник не підтверджено». Self-declared text is labeled as a listing claim, not platform verification.",
   ].join("\n");
 }
 

@@ -36,9 +36,13 @@ export function resolveRieltorInspectKind(input: {
   parserFailure: boolean;
   httpError: boolean;
   blocked: boolean;
+  rateLimited?: boolean;
   uniqueCount: number;
   sawStructure: boolean;
 }): FetchResultKind {
+  if (input.rateLimited) {
+    return "rate_limited";
+  }
   if (input.blocked) {
     return "http_error";
   }
