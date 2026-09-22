@@ -14,12 +14,12 @@ import { isRieltorTransportBlocked, resolveRieltorInspectKind } from "./rieltor-
 import { decideRieltorTransientRetry } from "./rieltor-retry.ts";
 import { buildRieltorSearchUrl, inspectRieltorHtml } from "./rieltor.parser.ts";
 import {
-  RIELTOR_INCREMENTAL_MAX_PAGES,
   RIELTOR_NEWEST_SORT,
-  crossedRieltorPublicationBoundary,
-  finalizeRieltorCoverage,
+  assessRieltorWalk,
   formatRieltorCoverage,
+  planRieltorCategoryFetch,
   publicationRange,
+  type RieltorCatchupState,
   type RieltorIncrementalCoverage,
 } from "./rieltor-incremental.ts";
 import {
@@ -80,7 +80,8 @@ export class RieltorSource implements ListingSourceAdapter {
     let pagesFetched = 0;
     let boundaryReached = true;
     let coverageTruncated = false;
-    const nextBoundary: NonNullable<RieltorIncrementalCoverage["nextBoundary"]> = {};
+    const committedBoundary: NonNullable<RieltorIncrementalCoverage["committedBoundary"]> = {};
+    const catchup: NonNullable<RieltorIncrementalCoverage["catchup"]> = {};
 
     for (const [index, category] of categories.entries()) {
       if (index > 0) {
@@ -101,8 +102,11 @@ export class RieltorSource implements ListingSourceAdapter {
       declaredTotal += page.declaredCount ?? 0;
       boundaryReached = boundaryReached && page.boundaryReached;
       coverageTruncated = coverageTruncated || page.coverageTruncated;
-      if (page.nextBoundary) {
-        nextBoundary[category] = page.nextBoundary;
+      if (page.committed) {
+        committedBoundary[category] = page.committed;
+      }
+      if (page.catchup !== undefined) {
+        catchup[category] = page.catchup;
       }
       if (page.rateLimited) {
         rateLimited = true;
@@ -137,7 +141,8 @@ export class RieltorSource implements ListingSourceAdapter {
       coverageTruncated,
       ...(range.oldest ? { oldestObservedPublication: range.oldest } : {}),
       ...(range.newest ? { newestObservedPublication: range.newest } : {}),
-      ...(Object.keys(nextBoundary).length > 0 ? { nextBoundary } : {}),
+      ...(Object.keys(committedBoundary).length > 0 ? { committedBoundary } : {}),
+      ...(Object.keys(catchup).length > 0 ? { catchup } : {}),
     };
     if (effectiveOptions.preferOwners !== true && declaredTotal > unique.length) {
       notes.push(
@@ -152,7 +157,8 @@ export class RieltorSource implements ListingSourceAdapter {
       uniqueCount: unique.length,
       sawStructure,
     });
-    const healthy = resultKind === "ok" || resultKind === "valid_empty";
+    const healthy =
+      (resultKind === "ok" || resultKind === "valid_empty") && !coverageTruncated;
     logger.info("rieltor.inspect", {
       count: unique.length,
       status: lastStatus,
@@ -207,18 +213,28 @@ export class RieltorSource implements ListingSourceAdapter {
     declaredCount?: number;
     boundaryReached: boolean;
     coverageTruncated: boolean;
-    nextBoundary?: string;
+    committed?: string;
+    catchup?: RieltorCatchupState | null;
     parserFailure: boolean;
     httpError: boolean;
     blocked: boolean;
     rateLimited: boolean;
   }> {
     const ownersOnly = options?.preferOwners === true;
-    const watermark = options?.publicationWatermarks?.[category];
+    const committed = options?.publicationWatermarks?.[category];
+    const storedCatchup = options?.rieltorCatchup?.[category];
+    const bootstrap =
+      !committed && !storedCatchup ? options?.rieltorBootstrapTarget : undefined;
+    const plan = planRieltorCategoryFetch({
+      ...(committed ? { committedBoundary: committed.toISOString() } : {}),
+      ...(storedCatchup ? { catchup: storedCatchup } : {}),
+      ...(bootstrap ? { bootstrapTarget: bootstrap.toISOString() } : {}),
+    });
+    const stopAt = plan.stopAt ? Date.parse(plan.stopAt) : undefined;
     const listings: Listing[] = [];
+    const fetchedPages: number[] = [];
     let lastStatus: number | undefined;
     let requestCount = 0;
-    let pagesFetched = 0;
     let extractedCardCount = 0;
     let validatedCardCount = 0;
     let hasJsonLd = false;
@@ -228,16 +244,18 @@ export class RieltorSource implements ListingSourceAdapter {
     let blocked = false;
     let rateLimited = false;
     let crossed = false;
-    const maxPages = watermark ? RIELTOR_INCREMENTAL_MAX_PAGES : 1;
+    let catalogEnded = false;
+    notes.push(
+      `${category} plan=${plan.mode} pages=${plan.pages.join(",")} stopAt=${plan.stopAt ?? "none"}`,
+    );
 
-    for (let page = 1; page <= maxPages; page += 1) {
-      if (page > 1) {
+    for (const [index, page] of plan.pages.entries()) {
+      if (index > 0) {
         await sleep(RIELTOR_REQUEST_GAP_MS);
       }
       const url = buildRieltorSearchUrl(category, page, ownersOnly, RIELTOR_NEWEST_SORT);
       const fetched = await fetchRieltorPage(url, timeoutMs, notes);
       requestCount += fetched.requestCount;
-      pagesFetched += 1;
       if (!fetched.response) {
         httpError = true;
         notes.push(`${category} page ${page}: network failure after bounded retry`);
@@ -287,41 +305,55 @@ export class RieltorSource implements ListingSourceAdapter {
         parserFailure = true;
         break;
       }
+      fetchedPages.push(page);
+      if (inspection.resultKind === "valid_empty" || inspection.listings.length === 0) {
+        catalogEnded = true;
+        break;
+      }
       for (const listing of inspection.listings) {
         listings.push(listing);
-        if (crossedRieltorPublicationBoundary(listing.publishedAt, watermark)) {
+        if (
+          stopAt !== undefined &&
+          listing.publishedAt !== undefined &&
+          listing.publishedAt.getTime() <= stopAt
+        ) {
           crossed = true;
           break;
         }
       }
-      if (crossed || inspection.resultKind === "valid_empty" || inspection.listings.length === 0) {
+      if (crossed) {
         break;
       }
     }
 
-    const finalized = finalizeRieltorCoverage({
-      hadWatermark: watermark !== undefined,
-      pagesFetched,
-      boundaryReached: crossed,
-    });
     const failed = parserFailure || httpError || blocked || rateLimited;
-    const boundaryReached = failed ? false : finalized.boundaryReached;
-    const coverageTruncated = failed ? true : finalized.coverageTruncated;
     const range = publicationRange(listings);
+    const assessed = assessRieltorWalk({
+      mode: plan.mode,
+      plannedPages: plan.pages,
+      fetchedPages,
+      crossed,
+      failed,
+      catalogEnded,
+      ...(range.newest ? { newest: range.newest } : {}),
+      ...(plan.catchupTarget ? { catchupTarget: plan.catchupTarget } : {}),
+      ...(committed ? { previousCommitted: committed.toISOString() } : {}),
+    });
     return {
       listings,
       requestCount,
-      pagesFetched,
+      pagesFetched: fetchedPages.length,
       extractedCardCount,
       validatedCardCount,
       hasJsonLd,
-      boundaryReached,
-      coverageTruncated,
+      boundaryReached: assessed.boundaryReached,
+      coverageTruncated: assessed.coverageTruncated,
+      catchup: assessed.catchup,
       parserFailure,
       httpError,
       blocked,
       rateLimited,
-      ...(boundaryReached && range.newest ? { nextBoundary: range.newest } : {}),
+      ...(assessed.committed ? { committed: assessed.committed } : {}),
       ...(lastStatus !== undefined ? { lastStatus } : {}),
       ...(declaredCount !== undefined ? { declaredCount } : {}),
     };

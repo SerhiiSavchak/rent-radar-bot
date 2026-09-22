@@ -11,7 +11,7 @@ import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts"
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
 import type { TelegramTestSink } from "../src/outputs/telegram-test.sink.ts";
 import {
-  finalizeRieltorCoverage,
+  assessRieltorWalk,
   formatRieltorCoverage,
 } from "../src/sources/rieltor/rieltor-incremental.ts";
 import { closeDb, getDb } from "../src/storage/db.ts";
@@ -61,18 +61,31 @@ describe("acquired catalog cards", () => {
     expect(acquired.kept.filter((item) => item.propertyType === "house")).toHaveLength(4);
   });
 
-  it("does not claim RIELTOR coverage when the page guard is reached first", () => {
-    const coverage = finalizeRieltorCoverage({
-      hadWatermark: true,
-      pagesFetched: 3,
-      boundaryReached: false,
-      maxPages: 3,
+  it("does not claim RIELTOR coverage when the page budget is reached first", () => {
+    const coverage = assessRieltorWalk({
+      mode: "catchup",
+      plannedPages: [1, 2, 3],
+      fetchedPages: [1, 2, 3],
+      crossed: false,
+      failed: false,
+      catalogEnded: false,
+      catchupTarget: "2026-09-22T10:00:00.000Z",
     });
     expect(coverage.boundaryReached).toBe(false);
     expect(coverage.coverageTruncated).toBe(true);
-    expect(formatRieltorCoverage({ pagesFetched: 3, cardsFetched: 60, ...coverage })).toContain(
-      "coverageTruncated=true",
-    );
+    expect(coverage.committed).toBeUndefined();
+    expect(coverage.catchup).toEqual({
+      target: "2026-09-22T10:00:00.000Z",
+      resumePage: 4,
+    });
+    expect(
+      formatRieltorCoverage({
+        pagesFetched: 3,
+        cardsFetched: 60,
+        boundaryReached: false,
+        coverageTruncated: true,
+      }),
+    ).toContain("coverageTruncated=true");
   });
 });
 
@@ -163,7 +176,7 @@ describe("poller does not pass a tight catalog prefix", () => {
     const health = getDb().prepare(
       "SELECT status, last_error_safe AS errorSafe FROM source_health WHERE source = 'rieltor'",
     ).get() as { status: string; errorSafe: string | null };
-    expect(health.status).toBe("valid_empty");
+    expect(health.status).toBe("coverage_degraded");
     expect(health.errorSafe).toContain("coverageTruncated=true");
     expect(health.errorSafe).toContain("boundaryReached=false");
   });

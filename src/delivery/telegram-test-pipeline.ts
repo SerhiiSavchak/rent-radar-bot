@@ -17,7 +17,10 @@ import {
 } from "./seller-verification-hold.ts";
 import {
   formatRieltorCoverage,
+  parseRieltorCatchup,
+  rieltorCatchupKey,
   rieltorPublicationBoundaryKey,
+  serializeRieltorCatchup,
   type RieltorCategoryName,
 } from "../sources/rieltor/rieltor-incremental.ts";
 import type {
@@ -391,6 +394,7 @@ function capabilityFor(source: string, enabled: boolean, config: AppConfig): str
 
 function classifySourceAttempt(result: SourceFetchResult): {
   ok: boolean;
+  processable: boolean;
   resultKind: string;
   errorSafe?: string;
 } {
@@ -398,6 +402,7 @@ function classifySourceAttempt(result: SourceFetchResult): {
   if (kind === "rate_limited") {
     return {
       ok: false,
+      processable: false,
       resultKind: "rate_limited",
       errorSafe: result.health.message ?? `RATE_LIMITED HTTP ${result.httpStatus ?? 429}`,
     };
@@ -405,28 +410,39 @@ function classifySourceAttempt(result: SourceFetchResult): {
   if (result.httpStatus === 403 || result.httpStatus === 429) {
     return {
       ok: false,
+      processable: false,
       resultKind: "transport_blocked",
       errorSafe: `transport_blocked HTTP ${result.httpStatus} via ${result.transport}`,
     };
   }
-  if ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty") {
-    if (result.coverage?.coverageTruncated) {
-      return { ok: true, resultKind: kind, errorSafe: formatRieltorCoverage(result.coverage) };
-    }
-    return { ok: true, resultKind: kind };
-  }
   if (kind === "parser_failure") {
     return {
       ok: false,
+      processable: false,
       resultKind: kind,
       errorSafe: result.health.message ?? "parser_failure",
     };
   }
+  if (
+    result.coverage?.coverageTruncated &&
+    ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty" || kind === "ok")
+  ) {
+    return {
+      ok: false,
+      processable: true,
+      resultKind: "coverage_degraded",
+      errorSafe: formatRieltorCoverage(result.coverage),
+    };
+  }
+  if ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty") {
+    return { ok: true, processable: true, resultKind: kind };
+  }
   if (kind === "disabled") {
-    return { ok: false, resultKind: kind, errorSafe: "disabled" };
+    return { ok: false, processable: false, resultKind: kind, errorSafe: "disabled" };
   }
   return {
     ok: false,
+    processable: false,
     resultKind: kind,
     ...(result.health.message ? { errorSafe: safeError(result.health.message) } : {}),
   };
@@ -612,23 +628,60 @@ export async function runTelegramTestCycle(
         ? deps.outbox.verificationDatabase()
         : undefined;
 
-  const readRieltorWatermarks = ():
-    | Partial<Record<RieltorCategoryName, Date>>
-    | undefined => {
+  const readMetaValue = (key: string): string | undefined => {
     if (!holdDb) {
       return undefined;
     }
+    const row = holdDb.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  };
+  const readRieltorWatermarks = ():
+    | Partial<Record<RieltorCategoryName, Date>>
+    | undefined => {
     const watermarks: Partial<Record<RieltorCategoryName, Date>> = {};
     for (const category of ["apartment", "house"] as const) {
-      const row = holdDb
-        .prepare("SELECT value FROM schema_meta WHERE key = ?")
-        .get(rieltorPublicationBoundaryKey(category)) as { value: string } | undefined;
-      const parsed = row ? Date.parse(row.value) : Number.NaN;
+      const parsed = Date.parse(readMetaValue(rieltorPublicationBoundaryKey(category)) ?? "");
       if (Number.isFinite(parsed)) {
         watermarks[category] = new Date(parsed);
       }
     }
     return Object.keys(watermarks).length > 0 ? watermarks : undefined;
+  };
+  const readRieltorCatchup = ():
+    | Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>>
+    | undefined => {
+    const catchup: Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>> =
+      {};
+    for (const category of ["apartment", "house"] as const) {
+      const parsed = parseRieltorCatchup(readMetaValue(rieltorCatchupKey(category)));
+      if (parsed) {
+        catchup[category] = parsed;
+      }
+    }
+    return Object.keys(catchup).length > 0 ? catchup : undefined;
+  };
+  const readRieltorBootstrapTarget = (): Date | undefined => {
+    if (!holdDb) {
+      return undefined;
+    }
+    const row = holdDb
+      .prepare(
+        `SELECT established_at AS establishedAt, last_success_at AS lastSuccessAt
+         FROM source_baselines WHERE source = 'rieltor'`,
+      )
+      .get() as { establishedAt: string; lastSuccessAt: string | null } | undefined;
+    if (!row) {
+      return undefined;
+    }
+    const times = [Date.parse(row.establishedAt), Date.parse(row.lastSuccessAt ?? "")].filter(
+      (value) => Number.isFinite(value),
+    );
+    if (times.length === 0) {
+      return undefined;
+    }
+    return new Date(Math.min(...times));
   };
 
   type SourceBucket = {
@@ -677,9 +730,14 @@ export async function runTelegramTestCycle(
     try {
       const publicationWatermarks =
         adapter.source === "rieltor" ? readRieltorWatermarks() : undefined;
+      const rieltorCatchup = adapter.source === "rieltor" ? readRieltorCatchup() : undefined;
+      const rieltorBootstrapTarget =
+        adapter.source === "rieltor" ? readRieltorBootstrapTarget() : undefined;
       const result: SourceFetchResult = await adapter.inspectLatest({
         preferOwners: usesOwnerOnlySourceFilter(deps.config),
         ...(publicationWatermarks ? { publicationWatermarks } : {}),
+        ...(rieltorCatchup ? { rieltorCatchup } : {}),
+        ...(rieltorBootstrapTarget ? { rieltorBootstrapTarget } : {}),
       });
       const classified = classifySourceAttempt(result);
       // Do not drop old publishedAt here — baseline must see current inventory.
@@ -698,26 +756,28 @@ export async function runTelegramTestCycle(
 
       buckets.push({
         source: adapter.source,
-        ok: classified.ok,
+        ok: classified.processable,
         listings: accepted,
         raw: result.listings,
         collectedCount: result.listings.length,
       });
-      if (
-        holdDb &&
-        adapter.source === "rieltor" &&
-        classified.ok &&
-        result.coverage &&
-        !result.coverage.coverageTruncated &&
-        result.coverage.nextBoundary
-      ) {
-        const writeBoundary = holdDb.prepare(
+      if (holdDb && adapter.source === "rieltor" && result.coverage) {
+        const writeMeta = holdDb.prepare(
           "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
         );
+        const deleteMeta = holdDb.prepare("DELETE FROM schema_meta WHERE key = ?");
         for (const category of ["apartment", "house"] as const) {
-          const value = result.coverage.nextBoundary[category];
-          if (value) {
-            writeBoundary.run(rieltorPublicationBoundaryKey(category), value);
+          const committed = result.coverage.committedBoundary?.[category];
+          if (committed) {
+            writeMeta.run(rieltorPublicationBoundaryKey(category), committed);
+          }
+          if (result.coverage.catchup && category in result.coverage.catchup) {
+            const state = result.coverage.catchup[category];
+            if (state) {
+              writeMeta.run(rieltorCatchupKey(category), serializeRieltorCatchup(state));
+            } else {
+              deleteMeta.run(rieltorCatchupKey(category));
+            }
           }
         }
       }

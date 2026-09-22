@@ -167,6 +167,39 @@ CREATE TABLE IF NOT EXISTS seller_verification_holds (
 );
 CREATE INDEX IF NOT EXISTS seller_verification_holds_due_idx
   ON seller_verification_holds (next_check_at);
+
+CREATE TABLE source_health_v8 (
+  source TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN (
+    'ok',
+    'valid_empty',
+    'parser_failure',
+    'http_error',
+    'rate_limited',
+    'transport_failure',
+    'browser_failure',
+    'coverage_degraded',
+    'disabled'
+  )),
+  checked_at TEXT NOT NULL,
+  last_success_at TEXT,
+  last_failure_at TEXT,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+  last_listing_count INTEGER,
+  last_http_status INTEGER,
+  last_error_safe TEXT,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO source_health_v8 (
+  source, status, checked_at, last_success_at, last_failure_at,
+  consecutive_failures, last_listing_count, last_http_status, last_error_safe, updated_at
+)
+SELECT
+  source, status, checked_at, last_success_at, last_failure_at,
+  consecutive_failures, last_listing_count, last_http_status, last_error_safe, updated_at
+FROM source_health;
+DROP TABLE source_health;
+ALTER TABLE source_health_v8 RENAME TO source_health;
 `;
 
 const MIGRATIONS: Record<number, string> = {

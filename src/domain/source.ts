@@ -5,8 +5,17 @@ export type FetchListingsOptions = {
   includeHouses?: boolean;
   includeApartments?: boolean;
   preferOwners?: boolean;
-  /** Newest publication already covered, per RIELTOR category. */
+  /** Committed newest publication already covered, per RIELTOR category. */
   publicationWatermarks?: Partial<Record<"apartment" | "house", Date>>;
+  /** In-progress backlog cursor. Does not replace the committed watermark. */
+  rieltorCatchup?: Partial<
+    Record<"apartment" | "house", { target: string; resumePage: number }>
+  >;
+  /**
+   * Monitoring start for an existing RIELTOR baseline that has no watermark yet.
+   * A brand-new installation leaves this unset and only seeds page 1.
+   */
+  rieltorBootstrapTarget?: Date;
 };
 
 export type FetchResultKind =
@@ -45,7 +54,10 @@ export type IncrementalCoverage = {
   coverageTruncated: boolean;
   oldestObservedPublication?: string;
   newestObservedPublication?: string;
-  nextBoundary?: Partial<Record<"apartment" | "house", string>>;
+  /** Present only when this category's walk closed the gap safely. */
+  committedBoundary?: Partial<Record<"apartment" | "house", string>>;
+  /** null clears a stored cursor. Absent means that category was not updated. */
+  catchup?: Partial<Record<"apartment" | "house", { target: string; resumePage: number } | null>>;
 };
 
 export type SourceFetchResult = {

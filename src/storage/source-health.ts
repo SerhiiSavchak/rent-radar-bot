@@ -10,6 +10,7 @@ export const SOURCE_HEALTH_STATUSES = [
   "rate_limited",
   "transport_failure",
   "browser_failure",
+  "coverage_degraded",
   "disabled",
 ] as const;
 
@@ -48,7 +49,8 @@ export function isFailureSourceStatus(status: SourceHealthStatus): boolean {
     status === "http_error" ||
     status === "rate_limited" ||
     status === "transport_failure" ||
-    status === "browser_failure"
+    status === "browser_failure" ||
+    status === "coverage_degraded"
   );
 }
 
@@ -72,6 +74,9 @@ export function normalizeSourceHealthStatus(input: SourceHealthWrite): SourceHea
   }
   if (kind === "disabled") {
     return "disabled";
+  }
+  if (kind === "coverage_degraded") {
+    return "coverage_degraded";
   }
   if (kind === "rate_limited" || input.httpStatus === 429) {
     return "rate_limited";
