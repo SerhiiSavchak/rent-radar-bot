@@ -188,8 +188,8 @@ describe("persistent source health and retention", () => {
     resetConfigCache();
   });
 
-  it("migrates schema 4 to schema 5 without dropping rows, and a second migrate is a no-op", () => {
-    expect(SCHEMA_VERSION).toBe(5);
+  it("migrates schema 4 to schema 6 without dropping rows, and a second migrate is a no-op", () => {
+    expect(SCHEMA_VERSION).toBe(6);
     const path = dbPath();
     const db = new DatabaseSync(path);
     db.exec(`
@@ -222,12 +222,12 @@ describe("persistent source health and retention", () => {
     ).run();
     expect(appliedSchemaVersion(db)).toBe(4);
 
-    expect(applyMigrations(db)).toBe(5);
-    expect(appliedSchemaVersion(db)).toBe(5);
+    expect(applyMigrations(db)).toBe(6);
+    expect(appliedSchemaVersion(db)).toBe(6);
     const version = db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get() as {
       value: string;
     };
-    expect(version.value).toBe("5");
+    expect(version.value).toBe("6");
     expect(count(db, "SELECT COUNT(*) AS n FROM listings WHERE source_id = 'keep-1'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM source_baselines WHERE source = 'lun'")).toBe(1);
     expect(
@@ -248,8 +248,16 @@ describe("persistent source health and retention", () => {
       ).toBeTruthy();
     }
 
-    expect(applyMigrations(db)).toBe(5);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'external_seller_verifications'",
+        )
+        .get(),
+    ).toBeTruthy();
+    expect(applyMigrations(db)).toBe(6);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 5")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 6")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM listings WHERE source_id = 'keep-1'")).toBe(1);
     db.close();
   });

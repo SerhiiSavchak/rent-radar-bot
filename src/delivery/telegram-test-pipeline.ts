@@ -20,6 +20,14 @@ import {
   type CrossSourceDecision,
 } from "./cross-source-dedup.ts";
 import { annotateListing } from "./listing-annotations.ts";
+import {
+  createCycleRieltorSellerVerifier,
+  emptyLinkedSellerVerification,
+  type LinkedSellerDecision,
+  type LinkedSellerVerificationCounts,
+  type RieltorDetailPage,
+} from "./rieltor-detail-seller.ts";
+import { DurableDeliveryStore } from "../storage/durable-delivery-store.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
 import { isOlxCollectionEnabled } from "../collection/create-source-adapters.ts";
 import { OLX_BROWSER_TRANSPORT } from "../sources/olx/olx-browser.source.ts";
@@ -68,6 +76,8 @@ export type TelegramTestCycleReport = {
   suppressedCrossSourceDuplicate: number;
   crossSourceUncertainKept: number;
   crossSourceEvents: CrossSourceEvent[];
+  linkedSellerVerification: LinkedSellerVerificationCounts;
+  linkedSellerEvents: LinkedSellerEvent[];
   dryRun: boolean;
   chatId: string;
   deliveryMode: "inventory_seed" | "initial_preview" | "send_new";
@@ -101,6 +111,17 @@ export type TelegramTestPipelineDeps = {
   initialPreviewLimit?: number;
   /** Exclude unknown publishedAt (default true). */
   strictNewPublications?: boolean;
+  /** Test double. Production uses one non-retried HTTPS GET of the rebuilt RIELTOR detail URL. */
+  fetchRieltorDetail?: (url: string, timeoutMs: number) => Promise<RieltorDetailPage>;
+  rieltorDetailGapMs?: number;
+};
+
+export type LinkedSellerEvent = {
+  source: string;
+  sourceId: string;
+  outcome: string;
+  externalId?: string;
+  evidence?: string;
 };
 
 export type CrossSourceEvent = {
@@ -151,11 +172,46 @@ function emptySellerStats() {
   };
 }
 
+function retractAcceptedSeller(
+  listing: Listing,
+  attempts: TelegramSourceAttempt[],
+  totals: ReturnType<typeof emptySellerStats>,
+): void {
+  const attempt = attempts.find((item) => item.source === listing.source && item.enabled);
+  const decision = sellerDecisionBucket(listing);
+  if (decision === "owner") {
+    totals.sellerAcceptedOwner -= 1;
+    if (attempt?.sellerAcceptedOwner !== undefined) {
+      attempt.sellerAcceptedOwner -= 1;
+    }
+  } else if (decision === "self_declared") {
+    totals.sellerAcceptedSelfDeclared -= 1;
+    if (attempt?.sellerAcceptedSelfDeclared !== undefined) {
+      attempt.sellerAcceptedSelfDeclared -= 1;
+    }
+  } else if (decision === "unknown") {
+    totals.sellerAcceptedUnknown -= 1;
+    if (attempt?.sellerAcceptedUnknown !== undefined) {
+      attempt.sellerAcceptedUnknown -= 1;
+    }
+  }
+  totals.sellerRejectedIntermediary += 1;
+  totals.acceptedCount -= 1;
+  if (attempt) {
+    attempt.sellerRejectedIntermediary = (attempt.sellerRejectedIntermediary ?? 0) + 1;
+    if (attempt.acceptedCount !== undefined) {
+      attempt.acceptedCount -= 1;
+    }
+  }
+}
+
 function dropListingsWithConfirmedIntermediaryPeer(
   buckets: Array<{ source: string; ok: boolean; listings: Listing[] }>,
   attempts: TelegramSourceAttempt[],
   totals: ReturnType<typeof emptySellerStats>,
   fetched: Listing[],
+  linked: LinkedSellerVerificationCounts,
+  events: LinkedSellerEvent[],
 ): void {
   for (const bucket of buckets) {
     if (!bucket.ok) {
@@ -168,34 +224,82 @@ function dropListingsWithConfirmedIntermediaryPeer(
         kept.push(listing);
         continue;
       }
-      const attempt = attempts.find((item) => item.source === listing.source && item.enabled);
-      const decision = sellerDecisionBucket(listing);
-      if (decision === "owner") {
-        totals.sellerAcceptedOwner -= 1;
-        if (attempt?.sellerAcceptedOwner !== undefined) {
-          attempt.sellerAcceptedOwner -= 1;
-        }
-      } else if (decision === "self_declared") {
-        totals.sellerAcceptedSelfDeclared -= 1;
-        if (attempt?.sellerAcceptedSelfDeclared !== undefined) {
-          attempt.sellerAcceptedSelfDeclared -= 1;
-        }
-      } else if (decision === "unknown") {
-        totals.sellerAcceptedUnknown -= 1;
-        if (attempt?.sellerAcceptedUnknown !== undefined) {
-          attempt.sellerAcceptedUnknown -= 1;
-        }
-      }
-      totals.sellerRejectedIntermediary += 1;
-      totals.acceptedCount -= 1;
-      if (attempt) {
-        attempt.sellerRejectedIntermediary = (attempt.sellerRejectedIntermediary ?? 0) + 1;
-        if (attempt.acceptedCount !== undefined) {
-          attempt.acceptedCount -= 1;
-        }
+      retractAcceptedSeller(listing, attempts, totals);
+      linked.sameCycleConfirmedAgent += 1;
+      if (events.length < 30) {
+        events.push({
+          source: listing.source,
+          sourceId: listing.sourceId,
+          outcome: "same_cycle_confirmed_agent",
+          externalId: relation.sourceId,
+          evidence: `same-cycle ${relation.source} listing is a confirmed intermediary`,
+        });
       }
     }
     bucket.listings = kept;
+  }
+}
+
+function noteLinkedSeller(
+  listing: Listing,
+  decision: LinkedSellerDecision,
+  linked: LinkedSellerVerificationCounts,
+  events: LinkedSellerEvent[],
+): void {
+  if (decision.requested) {
+    linked.detailRequests += 1;
+  }
+  switch (decision.outcome) {
+    case "same_cycle_confirmed_agent":
+      linked.sameCycleConfirmedAgent += 1;
+      break;
+    case "same_cycle_resolved":
+      linked.sameCycleResolved += 1;
+      break;
+    case "cache_confirmed_agent":
+      linked.cacheConfirmedAgent += 1;
+      break;
+    case "cache_confirmed_owner":
+      linked.cacheConfirmedOwner += 1;
+      break;
+    case "cache_unknown":
+      linked.cacheUnknown += 1;
+      break;
+    case "detail_confirmed_agent":
+      linked.detailConfirmedAgent += 1;
+      break;
+    case "detail_confirmed_owner":
+      linked.detailConfirmedOwner += 1;
+      break;
+    case "detail_unknown":
+      linked.detailUnknown += 1;
+      break;
+    case "detail_rate_limited":
+      linked.detailRateLimited += 1;
+      break;
+    case "detail_transport_failure":
+      linked.detailTransportFailure += 1;
+      break;
+    case "detail_parser_failure":
+      linked.detailParserFailure += 1;
+      break;
+    case "skipped_after_rate_limit":
+      linked.skippedAfterRateLimit += 1;
+      break;
+    case "not_required":
+      linked.notRequired += 1;
+      break;
+    default:
+      break;
+  }
+  if (decision.outcome !== "not_required" && events.length < 30) {
+    events.push({
+      source: listing.source,
+      sourceId: listing.sourceId,
+      outcome: decision.outcome,
+      ...(decision.externalId ? { externalId: decision.externalId } : {}),
+      ...(decision.evidence ? { evidence: decision.evidence } : {}),
+    });
   }
 }
 
@@ -228,7 +332,12 @@ function countSellerDecisions(
   return stats;
 }
 
-const CANONICAL_HEALTH_SOURCES = ["domria", "lun", "rieltor", "olx"] as const satisfies readonly ListingSource[];
+const CANONICAL_HEALTH_SOURCES = [
+  "domria",
+  "lun",
+  "rieltor",
+  "olx",
+] as const satisfies readonly ListingSource[];
 
 function canonicalSourceEnabled(source: ListingSource, config: AppConfig): boolean {
   if (source === "domria") {
@@ -528,12 +637,37 @@ export async function runTelegramTestCycle(
     );
   }
 
+  const linkedSellerVerification = emptyLinkedSellerVerification();
+  const linkedSellerEvents: LinkedSellerEvent[] = [];
+  const fetchedListings = buckets.flatMap((bucket) => bucket.raw);
   dropListingsWithConfirmedIntermediaryPeer(
     buckets,
     sourceAttempts,
     sellerTotals,
-    buckets.flatMap((bucket) => bucket.raw),
+    fetchedListings,
+    linkedSellerVerification,
+    linkedSellerEvents,
   );
+  const verifyLinkedRieltor = createCycleRieltorSellerVerifier({
+    db:
+      deps.baseline instanceof DurableDeliveryStore
+        ? deps.baseline.verificationDatabase()
+        : undefined,
+    peers: fetchedListings,
+    now,
+    timeoutMs: deps.config.sourceTimeoutMs,
+    ...(deps.rieltorDetailGapMs !== undefined ? { gapMs: deps.rieltorDetailGapMs } : {}),
+    ...(deps.fetchRieltorDetail ? { fetchPage: deps.fetchRieltorDetail } : {}),
+  });
+  const allowLinkedRieltor = async (listing: Listing): Promise<boolean> => {
+    const decision = await verifyLinkedRieltor(listing);
+    noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);
+    if (!decision.drop) {
+      return true;
+    }
+    retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
+    return false;
+  };
 
   let sentOk = 0;
   let sentFailed = 0;
@@ -600,6 +734,9 @@ export async function runTelegramTestCycle(
               }
               continue;
             }
+          }
+          if (!(await allowLinkedRieltor(listing))) {
+            continue;
           }
           const delivered = await deliverListing(deps, listing, "initial_preview");
           if (crossSource) {
@@ -676,6 +813,10 @@ export async function runTelegramTestCycle(
         continue;
       }
 
+      if (!(await allowLinkedRieltor(listing))) {
+        continue;
+      }
+
       const deliveryKind =
         freshness.kind === "new_publication" || freshness.kind === "first_noticed"
           ? freshness.kind
@@ -725,6 +866,8 @@ export async function runTelegramTestCycle(
     suppressedCrossSourceDuplicate,
     crossSourceUncertainKept,
     crossSourceEvents,
+    linkedSellerVerification,
+    linkedSellerEvents,
     dryRun,
     chatId: deps.sink.chatId,
     deliveryMode,

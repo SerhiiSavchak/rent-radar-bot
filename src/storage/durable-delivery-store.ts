@@ -45,6 +45,11 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     recoverInterruptedSends(db);
   }
 
+  /** SQLite connection used for the linked-seller cache. Not a second database. */
+  verificationDatabase(): DatabaseSync {
+    return this.db;
+  }
+
   hasSeen(listing: Pick<Listing, "source" | "sourceId" | "url">): boolean {
     const byId = this.db
       .prepare("SELECT source FROM seen_listings WHERE source = ? AND source_id = ? LIMIT 1")
@@ -104,7 +109,9 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
       )
       .run(iso, listing.source, listing.sourceId, iso);
     this.db
-      .prepare("UPDATE seen_listings SET last_seen_at = ? WHERE canonical_url = ? AND last_seen_at < ?")
+      .prepare(
+        "UPDATE seen_listings SET last_seen_at = ? WHERE canonical_url = ? AND last_seen_at < ?",
+      )
       .run(iso, url, iso);
   }
 

@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { deleteExpiredSellerVerifications } from "../delivery/rieltor-detail-seller.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -30,6 +31,7 @@ export type StateCleanupReport = {
   crossSourceIdentitiesRemoved: number;
   sentOutboxRowsRemoved: number;
   diagnosticRowsRemoved: number;
+  externalSellerRowsRemoved: number;
   durationMs: number;
   databaseBytes?: number;
   finishedAt: string;
@@ -58,6 +60,7 @@ export function runStateCleanupIfDue(
         crossSourceIdentitiesRemoved: 0,
         sentOutboxRowsRemoved: 0,
         diagnosticRowsRemoved: 0,
+        externalSellerRowsRemoved: 0,
         durationMs: Date.now() - started,
         finishedAt: now.toISOString(),
       };
@@ -73,12 +76,15 @@ function runStateCleanup(
   started: number,
 ): StateCleanupReport {
   const seenCutoff = new Date(now.getTime() - STATE_RETENTION.seenInactiveMs).toISOString();
-  const identityCutoff = new Date(now.getTime() - STATE_RETENTION.crossSourceIdentityMs).toISOString();
+  const identityCutoff = new Date(
+    now.getTime() - STATE_RETENTION.crossSourceIdentityMs,
+  ).toISOString();
   const sentCutoff = new Date(now.getTime() - STATE_RETENTION.sentOutboxMs).toISOString();
   const finishedAt = now.toISOString();
   let seenRowsRemoved: number;
   let crossSourceIdentitiesRemoved: number;
   let sentOutboxRowsRemoved: number;
+  let externalSellerRowsRemoved: number;
 
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -128,6 +134,7 @@ function runStateCleanup(
       )
       .run(seenCutoff);
     seenRowsRemoved = changed(seen);
+    externalSellerRowsRemoved = deleteExpiredSellerVerifications(db, now);
 
     db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)").run(
       STATE_CLEANUP_META_KEY,
@@ -151,6 +158,7 @@ function runStateCleanup(
     crossSourceIdentitiesRemoved,
     sentOutboxRowsRemoved,
     diagnosticRowsRemoved: 0,
+    externalSellerRowsRemoved,
     durationMs: Date.now() - started,
     ...(databaseBytes !== undefined ? { databaseBytes } : {}),
     finishedAt,
@@ -163,8 +171,7 @@ function changed(result: { changes: number | bigint }): number {
 
 function readMeta(db: DatabaseSync, key: string): string | undefined {
   const row = db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as
-    | { value: string }
-    | undefined;
+    { value: string } | undefined;
   return row?.value;
 }
 

@@ -15,7 +15,7 @@ Status: **final** for the delivery gate. `classifyOwner` still returns `sellerTy
 | LIKELY_AGENT     | Not emitted in v1. A weak hint must stay sendable, and no current signal is classified here.                                                                                                        | SEND if it is ever emitted |
 | CONFIRMED_AGENT  | `sellerType=agent` or `business`, or `ownerEvidenceLevel` `intermediary` / `conflict` (platform role, agency id/name passed into the classifier, or explicit intermediary text such as «я рієлтор») | DROP                       |
 
-DIM.RIA `agency_id` is stored as evidence text and is not passed into `classifyOwner`, so it is not an agent drop. `user_id` is stored as `metadata.userId` and as a context note. It is not ownership proof. A private-account flag and OLX `isBusiness` are not ownership and are not an agent drop. A LUN `site.internalName` of `rieltor.ua` is provenance, not intermediary evidence. When the same poll has already fetched the linked listing and that link is an explicit `urlRaw` / external id, a confirmed intermediary on the linked listing drops the other copy too. An unknown linked listing, OLX `isBusiness` alone, a LUN `groupId`, and rooms/area/price overlap do not.
+DIM.RIA `agency_id` is stored as evidence text and is not passed into `classifyOwner`, so it is not an agent drop. `user_id` is stored as `metadata.userId` and as a context note. It is not ownership proof. A private-account flag and OLX `isBusiness` are not ownership and are not an agent drop. A LUN `site.internalName` of `rieltor.ua` is provenance, not intermediary evidence. When the same poll has already fetched the linked listing and that link is an explicit `urlRaw` / external id, a confirmed intermediary on the linked listing drops the other copy too. An unknown linked listing, OLX `isBusiness` alone, a LUN `groupId`, and rooms/area/price overlap do not. If that exact RIELTOR id is absent from the cycle, a sendable new LUN listing may trigger one rebuilt `https://rieltor.ua/{locality}/{flats-rent|houses-rent}/view/{id}/` request. Only an explicit detail role `Рієлтор` or an explicit agency name drops the copy. HTTP 429 stops further detail requests in that cycle. Confirmed verdicts are cached for 30 days in `external_seller_verifications` (schema 6). Failures are cached for 6 hours and are not treated as an agent.
 
 ## ADR: UNKNOWN seller is sent
 
@@ -115,9 +115,9 @@ Status: **final**.
 
 ## ADR: operational SQLite state is bounded and restart-safe
 
-Status: **final for schema 5**.
+Status: **final for schema 6**.
 
-SQLite stores current operations, not a historical archive. Schema 4 is the previous production shape (through `cross_source_identities`). Schema 5 adds `source_health` and the indexes used by retention. Migration is incremental: it does not rebuild or delete existing rows.
+SQLite stores current operations, not a historical archive. Schema 4 is the previous production shape (through `cross_source_identities`). Schema 5 adds `source_health` and the indexes used by retention. Schema 6 adds `external_seller_verifications` for linked RIELTOR seller checks. Migration is incremental: it does not rebuild or delete existing rows. Expired verification rows are deleted by the same 24-hour cleanup.
 
 `source_health` has one row per source: `ok`, `valid_empty`, `parser_failure`, `http_error`, `rate_limited`, `transport_failure`, `browser_failure`, `disabled`. Healthy `ok` / `valid_empty` reset `consecutive_failures` and set `last_success_at`. Failure statuses increment the streak and leave `last_success_at` in place. `disabled` does not change the streak. `parser_failure` is never stored as `valid_empty`, and only when an adapter returns that structured result. HTTP 429 is `rate_limited`. The poller's `transport_blocked` result (HTTP 403) is stored as `transport_failure`. A thrown network or adapter exception is also `transport_failure`. A thrown OLX Playwright acquisition is `browser_failure`. Each poll writes `disabled` for domria, lun, rieltor, and olx when that source's flag is off, including when `createCollectionAdapters` omits the adapter. OLX is one row: it is enabled when either `ENABLE_OLX` or `ENABLE_OLX_BROWSER` is on. Error text is truncated and redacted. Successful HTML is not stored.
 
@@ -126,6 +126,7 @@ The canonical poller runs cleanup on startup and then at most once every 24 hour
 - `seen_listings` with `last_seen_at` older than 30 days, unless a pending, sending, failed, or still-kept sent outbox row matches them
 - `cross_source_identities` older than 90 days, unless a pending, sending, failed, or sent-within-30-days outbox row matches that listing
 - `telegram_outbox` rows with status `sent` and `sent_at` older than 30 days
+- `external_seller_verifications` rows whose `expires_at` has passed
 
 Age never deletes pending, sending, or failed outbox rows, `source_baselines`, `poller_lock`, seller-policy keys, or the current `source_health` row. There is no poll-diagnostic history table and no source-health history table, so the 14-day and 30-day history windows are not applied.
 
