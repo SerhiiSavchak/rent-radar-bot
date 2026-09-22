@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
-import { assessAgainstKnown } from "../src/delivery/cross-source-dedup.ts";
+import {
+  assessAgainstKnown,
+  confirmedIntermediaryRelation,
+} from "../src/delivery/cross-source-dedup.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import { readProvenance } from "../src/domain/provenance.ts";
@@ -182,6 +185,7 @@ describe("cross-source identity", () => {
     });
     const decision = assessAgainstKnown(olx, [domria]);
     expect(decision.verdict).toBe("possible_duplicate");
+    expect(confirmedIntermediaryRelation({ ...domria, sellerType: "agent" }, [olx])).toBeUndefined();
     expect(decision.suppress).toBe(false);
     expect(decision.reasons).toContain("attribute_overlap_not_sufficient");
   });
@@ -723,5 +727,150 @@ describe("cross-source delivery", () => {
       expect.objectContaining({ source: "rieltor", sourceId: "555" }),
       expect.anything(),
     );
+  });
+
+  function rieltorCopy(
+    sourceId: string,
+    sellerType: Listing["sellerType"],
+  ): Listing {
+    return listing({
+      source: "rieltor",
+      sourceId,
+      url: `https://rieltor.ua/lvov/flats-rent/view/${sourceId}/`,
+      sellerType,
+      metadata: {
+        ownerEvidenceLevel: sellerType === "agent" ? "intermediary" : "private_unknown",
+        ...(sellerType === "agent" ? { platformRoleLabel: "Рієлтор" } : {}),
+      },
+    });
+  }
+
+  async function deliverPair(lun: Listing, other: Listing, order: Array<Listing["source"]>): Promise<{
+    sentOk: number;
+    sentSources: string[];
+    lunRejected: number;
+  }> {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batches = new Map<string, Listing[]>(order.map((source) => [source, []]));
+    const adapters = order.map((source) => adapter(source, () => batches.get(source) ?? []));
+    const flags: Record<string, string> = {};
+    if (order.includes("lun")) {
+      flags.ENABLE_LUN = "true";
+    }
+    if (order.includes("rieltor")) {
+      flags.ENABLE_RIELTOR = "true";
+    }
+    if (order.includes("olx")) {
+      flags.ENABLE_OLX = "true";
+    }
+    const config = configFor(flags);
+    const sentSources: string[] = [];
+    const sendListing = vi.fn(async (item: Listing) => {
+      sentSources.push(item.source);
+      return { ok: true, dryRun: true, attempts: 0, chatId: "1", messageCount: 1 };
+    });
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config,
+        sink: sink(sendListing),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => seededAt,
+        firstRunMode: "seed",
+      },
+      1,
+    );
+    const bySource = new Map<string, Listing>([
+      [lun.source, lun],
+      [other.source, other],
+    ]);
+    for (const source of order) {
+      const item = bySource.get(source);
+      if (item) {
+        batches.get(source)?.push(item);
+      }
+    }
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config,
+        sink: sink(sendListing),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+      },
+      2,
+    );
+    const lunAttempt = report.sourceAttempts.find((attempt) => attempt.source === "lun");
+    return {
+      sentOk: report.sentOk,
+      sentSources,
+      lunRejected: lunAttempt?.sellerRejectedIntermediary ?? 0,
+    };
+  }
+
+  it("drops a LUN copy explicitly linked to a confirmed RIELTOR agent, in either order", async () => {
+    const lun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/13064424/", "4725463684");
+    const agent = rieltorCopy("13064424", "agent");
+    expect(confirmedIntermediaryRelation(lun, [agent])?.sourceId).toBe("13064424");
+    expect(confirmedIntermediaryRelation(agent, [lun])).toBeUndefined();
+    const forward = await deliverPair(lun, agent, ["lun", "rieltor"]);
+    const reverse = await deliverPair(lun, agent, ["rieltor", "lun"]);
+    expect(forward.sentOk).toBe(0);
+    expect(forward.sentSources).not.toContain("lun");
+    expect(forward.lunRejected).toBe(1);
+    expect(reverse.sentOk).toBe(0);
+    expect(reverse.sentSources).not.toContain("lun");
+    expect(reverse.lunRejected).toBe(1);
+  });
+
+  it("keeps a LUN copy linked to a RIELTOR owner or an unknown RIELTOR listing", async () => {
+    const ownerLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/555/", "880");
+    const unknownLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/556/", "881");
+    expect(confirmedIntermediaryRelation(ownerLun, [rieltorCopy("555", "owner")])).toBeUndefined();
+    expect(confirmedIntermediaryRelation(unknownLun, [rieltorCopy("556", "unknown")])).toBeUndefined();
+    const ownerDelivery = await deliverPair(ownerLun, rieltorCopy("555", "owner"), ["lun", "rieltor"]);
+    const unknownDelivery = await deliverPair(unknownLun, rieltorCopy("556", "unknown"), ["lun", "rieltor"]);
+    expect(ownerDelivery.sentSources).toContain("lun");
+    expect(ownerDelivery.lunRejected).toBe(0);
+    expect(unknownDelivery.sentSources).toContain("lun");
+    expect(unknownDelivery.lunRejected).toBe(0);
+  });
+
+  it("does not treat OLX isBusiness or a fuzzy similar agent as intermediary evidence", async () => {
+    const lun = lunPointingAt("https://www.olx.ua/d/obyavlenie/orenda-ID11gWHG.html", "5001");
+    const business = listing({
+      source: "olx",
+      sourceId: "934944232",
+      url: "https://www.olx.ua/d/obyavlenie/orenda-ID11gWHG.html",
+      sellerType: "unknown",
+      metadata: { olxIsBusiness: true, ownerEvidenceLevel: "private_unknown" },
+    });
+    expect(confirmedIntermediaryRelation(lun, [business])).toBeUndefined();
+    const fuzzyLun = listing({
+      source: "lun",
+      sourceId: "900",
+      url: "https://lun.ua/uk/realty/900",
+      rooms: 2,
+      areaM2: 60,
+      price: { amount: 20_000, currency: "UAH", period: "month" },
+    });
+    const fuzzyAgent = listing({
+      source: "rieltor",
+      sourceId: "901",
+      url: "https://rieltor.ua/lvov/flats-rent/view/901/",
+      sellerType: "agent",
+      rooms: 2,
+      areaM2: 60,
+      price: { amount: 20_000, currency: "UAH", period: "month" },
+    });
+    expect(confirmedIntermediaryRelation(fuzzyLun, [fuzzyAgent])).toBeUndefined();
+    const delivery = await deliverPair(fuzzyLun, fuzzyAgent, ["lun", "rieltor"]);
+    expect(delivery.sentSources).toContain("lun");
+    expect(delivery.lunRejected).toBe(0);
   });
 });

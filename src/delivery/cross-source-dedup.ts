@@ -4,6 +4,7 @@ import {
   type IdentityKeyClass,
   type ProvenanceListing,
 } from "../domain/provenance.ts";
+import { sellerRejectionReason } from "../filters/owner-filter.ts";
 
 export type DedupVerdict = "unique" | "confirmed_duplicate" | "possible_duplicate";
 
@@ -172,6 +173,32 @@ export function decideFromHits(
     suppress: false,
     reasons: ["no_confirmed_relation"],
   };
+}
+
+const STRONG_CROSS_SOURCE_REASONS = new Set([
+  "explicit_external_listing_id",
+  "explicit_external_url",
+]);
+
+/**
+ * A confirmed explicit link can carry strong intermediary evidence onto the other copy.
+ * Unknown peers, OLX isBusiness, LUN group ids, and attribute overlap do not.
+ */
+export function confirmedIntermediaryRelation(
+  listing: Listing,
+  peers: Listing[],
+): { source: string; sourceId: string; reasons: string[] } | undefined {
+  for (const peer of peers) {
+    if (sameListing(listing, peer) || sellerRejectionReason(peer) === undefined) {
+      continue;
+    }
+    const decision = assessAgainstKnown(listing, [peer]);
+    const reasons = decision.reasons.filter((reason) => STRONG_CROSS_SOURCE_REASONS.has(reason));
+    if (decision.verdict === "confirmed_duplicate" && reasons.length > 0) {
+      return { source: peer.source, sourceId: peer.sourceId, reasons };
+    }
+  }
+  return undefined;
 }
 
 export function assessAgainstKnown(candidate: Listing, known: Listing[]): CrossSourceDecision {

@@ -14,7 +14,11 @@ import type {
   SourceBaseline,
   TelegramOutbox,
 } from "./delivery-ports.ts";
-import { crossSourceOf, type CrossSourceDecision } from "./cross-source-dedup.ts";
+import {
+  confirmedIntermediaryRelation,
+  crossSourceOf,
+  type CrossSourceDecision,
+} from "./cross-source-dedup.ts";
 import { annotateListing } from "./listing-annotations.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
 import { isOlxCollectionEnabled } from "../collection/create-source-adapters.ts";
@@ -145,6 +149,54 @@ function emptySellerStats() {
     otherFilterRejected: 0,
     acceptedCount: 0,
   };
+}
+
+function dropListingsWithConfirmedIntermediaryPeer(
+  buckets: Array<{ source: string; ok: boolean; listings: Listing[] }>,
+  attempts: TelegramSourceAttempt[],
+  totals: ReturnType<typeof emptySellerStats>,
+  fetched: Listing[],
+): void {
+  for (const bucket of buckets) {
+    if (!bucket.ok) {
+      continue;
+    }
+    const kept: Listing[] = [];
+    for (const listing of bucket.listings) {
+      const relation = confirmedIntermediaryRelation(listing, fetched);
+      if (!relation) {
+        kept.push(listing);
+        continue;
+      }
+      const attempt = attempts.find((item) => item.source === listing.source && item.enabled);
+      const decision = sellerDecisionBucket(listing);
+      if (decision === "owner") {
+        totals.sellerAcceptedOwner -= 1;
+        if (attempt?.sellerAcceptedOwner !== undefined) {
+          attempt.sellerAcceptedOwner -= 1;
+        }
+      } else if (decision === "self_declared") {
+        totals.sellerAcceptedSelfDeclared -= 1;
+        if (attempt?.sellerAcceptedSelfDeclared !== undefined) {
+          attempt.sellerAcceptedSelfDeclared -= 1;
+        }
+      } else if (decision === "unknown") {
+        totals.sellerAcceptedUnknown -= 1;
+        if (attempt?.sellerAcceptedUnknown !== undefined) {
+          attempt.sellerAcceptedUnknown -= 1;
+        }
+      }
+      totals.sellerRejectedIntermediary += 1;
+      totals.acceptedCount -= 1;
+      if (attempt) {
+        attempt.sellerRejectedIntermediary = (attempt.sellerRejectedIntermediary ?? 0) + 1;
+        if (attempt.acceptedCount !== undefined) {
+          attempt.acceptedCount -= 1;
+        }
+      }
+    }
+    bucket.listings = kept;
+  }
 }
 
 function countSellerDecisions(
@@ -351,6 +403,7 @@ export async function runTelegramTestCycle(
     source: string;
     ok: boolean;
     listings: Listing[];
+    raw: Listing[];
     collectedCount: number;
   };
   const buckets: SourceBucket[] = [];
@@ -413,6 +466,7 @@ export async function runTelegramTestCycle(
         source: adapter.source,
         ok: classified.ok,
         listings: accepted,
+        raw: result.listings,
         collectedCount: result.listings.length,
       });
       recordAttempt({
@@ -439,7 +493,7 @@ export async function runTelegramTestCycle(
       const errorSafe = safeError(error);
       const browserAcquisition = adapter.source === "olx" && deps.config.enableOlxBrowser;
       sourceErrors.push({ source: adapter.source, errorSafe });
-      buckets.push({ source: adapter.source, ok: false, listings: [], collectedCount: 0 });
+      buckets.push({ source: adapter.source, ok: false, listings: [], raw: [], collectedCount: 0 });
       recordAttempt({
         source: adapter.source,
         enabled: true,
@@ -473,6 +527,13 @@ export async function runTelegramTestCycle(
       now(),
     );
   }
+
+  dropListingsWithConfirmedIntermediaryPeer(
+    buckets,
+    sourceAttempts,
+    sellerTotals,
+    buckets.flatMap((bucket) => bucket.raw),
+  );
 
   let sentOk = 0;
   let sentFailed = 0;

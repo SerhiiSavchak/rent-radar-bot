@@ -15,7 +15,7 @@ Status: **final** for the delivery gate. `classifyOwner` still returns `sellerTy
 | LIKELY_AGENT     | Not emitted in v1. A weak hint must stay sendable, and no current signal is classified here.                                                                                                        | SEND if it is ever emitted |
 | CONFIRMED_AGENT  | `sellerType=agent` or `business`, or `ownerEvidenceLevel` `intermediary` / `conflict` (platform role, agency id/name passed into the classifier, or explicit intermediary text such as «я рієлтор») | DROP                       |
 
-DIM.RIA `agency_id` is stored as evidence text and is not passed into `classifyOwner`, so it is not an agent drop. `user_id` is stored as `metadata.userId` and as a context note. It is not ownership proof. A private-account flag and OLX `isBusiness` are not ownership and are not an agent drop. A LUN `site.internalName` of `rieltor.ua` is provenance, not intermediary evidence.
+DIM.RIA `agency_id` is stored as evidence text and is not passed into `classifyOwner`, so it is not an agent drop. `user_id` is stored as `metadata.userId` and as a context note. It is not ownership proof. A private-account flag and OLX `isBusiness` are not ownership and are not an agent drop. A LUN `site.internalName` of `rieltor.ua` is provenance, not intermediary evidence. When the same poll has already fetched the linked listing and that link is an explicit `urlRaw` / external id, a confirmed intermediary on the linked listing drops the other copy too. An unknown linked listing, OLX `isBusiness` alone, a LUN `groupId`, and rooms/area/price overlap do not.
 
 ## ADR: UNKNOWN seller is sent
 
@@ -42,7 +42,7 @@ What cannot suppress:
 - Title or description text. v1 does not compute text similarity.
 - Image perceptual hashing and AI/LLM similarity. They are not part of v1.
 
-An uncertain attribute overlap is reported as `possible_duplicate` with reason `attribute_overlap_not_sufficient` and is still sent.
+An uncertain attribute overlap is reported as `possible_duplicate` with reason `attribute_overlap_not_sufficient` and is still sent. The same explicit external identity can also carry a confirmed intermediary rejection onto the linked copy. `possible_duplicate` does not.
 
 ## ADR: explicit provenance outranks fuzzy similarity
 
