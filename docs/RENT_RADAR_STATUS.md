@@ -1,45 +1,71 @@
 # Rent Radar status
 
 Date: 2026-09-21  
-Commit examined: `3fd4fbcc29e025af58215a0eb0a56989bbd8aa65` (`main`)  
-Phase: source layer closure + project truth freeze
+Branch: core-logic batch on top of `a9d6eaf` (`cursor/source-layer-closure`)  
+Phase: seller evidence, provenance, and conservative cross-source dedup
+
+Issue #2 accepts the source-layer gate as already proven, including the hosted OLX cycles on the existing VM. This batch does not repeat that proof and does not change acquisition.
 
 Repository code is the source of truth. Older notes in `docs/SOURCE_RESEARCH.md` and `docs/PHASE_1_DECISION.md` are historical.
 
+## Source status
+
+| Source     | Acquisition                                                                                                               | Status                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| DIM.RIA    | Public HTML, repeated live from this workstation                                                                          | PASS                           |
+| LUN        | Public HTML/RSC, repeated live from this workstation                                                                      | PASS                           |
+| RIELTOR.UA | Public HTML, 2 s request gap, one bounded 429/5xx retry                                                                   | PASS                           |
+| OLX        | Issue #2 accepts the hosted browser proof from the preceding phase. This batch did not re-run it. Ordinary HTTP stays off | accepted, not re-measured here |
+
+`SOURCE LAYER GATE: accepted by issue #2`. This batch did not change acquisition and did not turn `ENABLE_OLX` or `ENABLE_OLX_BROWSER` on.
+
+## Canonical production path
+
+One poll/delivery path:
+
+`deploy/systemd/rent-radar-telegram.service` → `src/scripts/test-telegram-poll.ts` → `runTelegramTestCycle` (`src/delivery/telegram-test-pipeline.ts`) with `openDurableRuntime` (`src/storage/durable-runtime.ts`).
+
+Delivery order:
+
+1. listing accepted by the filters
+2. freshness gate. A late, old, or otherwise non-deliverable listing is marked seen and is not a cross-source keeper
+3. a pending `telegram_outbox` row and that listing's confirmed identity keys, committed in one SQLite transaction
+4. Telegram attempt
+5. success marks the row sent
+
+If Telegram fails, the row stays retryable. Reopening the same database retries it. A later success does not send it again. A twin can be suppressed only after that outbox row exists. `markSeen` alone does not write `cross_source_identities`.
+
+`src/index.ts` exits 2 and does not collect, persist, or send. `ListingMonitorService.collectNewListings()` throws. `package.json` production poll script is `live:test-telegram:poll`. There is no cron unit besides `deploy/systemd/rent-radar-telegram.timer` (`OnBootSec=1min`), which starts that same service.
+
 ## Architecture (actual path)
 
-Two entry points exist.
-
-1. `src/index.ts` — one-shot. `ListingMonitorService.collectNewListings()` filters, then `hasSeenListing` / `saveListing`, then `output.send`. A Telegram error after `saveListing` does not retry. This is not the durable delivery path.
-2. `src/scripts/test-telegram-poll.ts` → `runTelegramTestCycle` in `src/delivery/telegram-test-pipeline.ts` — the restart-capable path. Per-source `try/catch`, SQLite baseline, freshness, and `telegram_outbox`. A failed source does not stop the others. A failed send stays retryable.
-
-| Stage             | Files                                                                        | Behavior                                                                                                                               |
-| ----------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Source adapters   | `src/collection/create-source-adapters.ts`                                   | Domria, Lun, Rieltor on by default. OLX HTTP only if `ENABLE_OLX`. OLX browser only if `ENABLE_OLX_BROWSER`, and then HTTP is omitted. |
-| Acquisition       | `src/utils/http.ts`; OLX browser in `src/sources/olx/olx-browser.extract.ts` | Node `fetch` with timeout and bounded retries. No proxy, no CAPTCHA solver.                                                            |
-| Parse / normalize | `src/sources/*/ *.parser.ts`, `src/domain/listing.ts`                        | Zod-validated cards become `Listing`.                                                                                                  |
-| Seller filter     | `src/filters/owner-filter.ts`                                                | Default `reject_intermediaries`. Unknown sellers pass. Platform agent/business and explicit intermediary evidence drop.                |
-| Property filter   | `src/filters/property-type.ts`, `listing-filter.ts`                          | Apartment and house. Other types become `unknown` and fail the allow-list.                                                             |
-| Geo               | `src/filters/location-filter.ts`                                             | Haversine around Lviv. Default radius 15 km. Missing coordinates are excluded (`GEO_UNKNOWN_POLICY=exclude`).                          |
-| Dedup             | `src/delivery/listing-dedupe-memory.ts`, outbox fingerprint                  | Same source id / fingerprint only. No cross-source fuzzy drop.                                                                         |
-| Persistence       | `src/storage/db.ts`, `durable-delivery-store.ts`, `migrations.ts`            | Local SQLite. Outbox statuses: pending, sending, sent, failed.                                                                         |
-| Telegram          | `src/outputs/telegram.output.ts`, `telegram-test.sink.ts`                    | Durable path enqueues before send and marks sent only after success.                                                                   |
+| Stage             | Files                                                                         | Behavior                                                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Source adapters   | `src/collection/create-source-adapters.ts`                                    | Domria, Lun, Rieltor on by default. OLX HTTP only if `ENABLE_OLX`. OLX browser only if `ENABLE_OLX_BROWSER`, and then HTTP is omitted. |
+| Acquisition       | `src/utils/http.ts`; OLX browser in `src/sources/olx/olx-browser.extract.ts`  | Node `fetch` with timeout and bounded retries. No proxy, no CAPTCHA solver.                                                            |
+| Parse / normalize | `src/sources/*/ *.parser.ts`, `src/domain/listing.ts`                         | Zod-validated cards become `Listing`.                                                                                                  |
+| Seller filter     | `src/filters/owner-filter.ts`                                                 | Default `reject_intermediaries`. Unknown sellers pass. Platform agent/business and explicit intermediary evidence drop.                |
+| Property filter   | `src/filters/property-type.ts`, `listing-filter.ts`                           | Apartment and house. Other types become `unknown` and fail the allow-list.                                                             |
+| Geo               | `src/filters/location-filter.ts`                                              | Haversine around Lviv. Default radius 15 km. Missing coordinates are excluded (`GEO_UNKNOWN_POLICY=exclude`).                          |
+| Dedup             | `src/delivery/cross-source-dedup.ts`, `src/storage/durable-delivery-store.ts` | Same source id, explicit `urlRaw` identity, and LUN `groupId` can suppress. Attribute overlap and text do not.                         |
+| Persistence       | `src/storage/db.ts`, `durable-delivery-store.ts`, `migrations.ts`             | Local SQLite. Outbox statuses: pending, sending, sent, failed.                                                                         |
+| Telegram          | `src/outputs/telegram.output.ts`, `telegram-test.sink.ts`                     | Durable path enqueues before send and marks sent only after success.                                                                   |
 
 `POLL_INTERVAL_SECONDS` defaults to 120. The Telegram poller uses `TELEGRAM_POLL_INTERVAL_MS` (default 600000). `DOMRIA_POLL_INTERVAL_SECONDS` is not a separate scheduler.
 
 ## Subsystem status
 
-| Subsystem              | Status                       | Evidence                                                                                                                                      |
-| ---------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| DIM.RIA acquisition    | PASS                         | Public HTML. 6/6 page fetches HTTP 200 on 2026-09-21 (20 flats, 8 houses). Adapter 3/3 `ok`, same 8 ids. Official API not called.             |
-| LUN acquisition        | PASS                         | After the `imageId` string fix: flats 24/24 validated, houses 24/24, adapter 3/3 `ok`.                                                        |
-| RIELTOR.UA acquisition | PASS                         | Three cycles spaced 25s: HTTP 200, `ok`, 6 real ids, coords/rooms/price/description. A back-to-back burst produced HTTP 429 and `http_error`. |
-| OLX HTTP               | FAIL                         | 3/3 CloudFront 403. `resultKind=http_error`.                                                                                                  |
-| OLX browser            | PASS as browser transport    | 3/3 stock Playwright, HTTP 200, 85 listings (48 flats + 37 houses), real ids. Classification `OLX_BROWSER_REQUIRED`.                          |
-| Seller gate            | PASS for the permissive rule | Unknown is sent. Confirmed platform agent/business is dropped. Five-way enum is not stored.                                                   |
-| Cross-source dedup     | NOT IN THIS BATCH            | LUN cluster fields are stored and do not drop listings.                                                                                       |
-| Failure isolation      | PASS                         | `inspectAll` uses `Promise.allSettled`. Telegram cycle catches each adapter.                                                                  |
-| Durable outbox         | PRESENT                      | Not redesigned here. Legacy `src/index.ts` still saves before send.                                                                           |
+| Subsystem              | Status                         | Evidence                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DIM.RIA acquisition    | PASS                           | Public HTML. 6/6 page fetches HTTP 200 on 2026-09-21 (20 flats, 8 houses). Adapter 3/3 `ok`, same 8 ids. Official API not called.                                                                                                                                                                                                                                           |
+| LUN acquisition        | PASS                           | After the `imageId` string fix: flats 24/24 validated, houses 24/24, adapter 3/3 `ok`.                                                                                                                                                                                                                                                                                      |
+| RIELTOR.UA acquisition | PASS                           | 2026-09-21 20:29:31Z, 20:29:59Z, 20:30:27Z: HTTP 200, `ok`, 10 ids, 2 requests per cycle, ~2.9–3.1 s. Same ids across the three cycles.                                                                                                                                                                                                                                     |
+| OLX HTTP               | FAIL                           | 3/3 CloudFront 403. `resultKind=http_error`. Not a production path.                                                                                                                                                                                                                                                                                                         |
+| OLX browser            | PASS on the existing Oracle VM | Issue #2 accepts the hosted proof after `a9d6eaf`: five Playwright cycles, browser cleanup, all four sources together, and the canonical systemd poller survived restart and reboot. Ordinary HTTP stays off. This batch did not re-run those cycles.                                                                                                                       |
+| Seller gate            | PASS for the permissive rule   | Unknown is sent. OLX `isBusiness` stays `sellerType=unknown` and is sent. Platform agent/business and explicit «я рієлтор» drop.                                                                                                                                                                                                                                            |
+| Cross-source dedup     | PASS for the v1 hierarchy      | Explicit LUN→OLX and LUN→RIELTOR identity suppresses only after the keeper is durably queued. A late or old linked card is not a keeper, so the fresh twin is still sent. `groupId` does not match a foreign id. Similar rooms/area/price stay sendable. Identity survives reopening SQLite. Proved by `tests/cross-source-dedup.test.ts`, not by a new live overlap count. |
+| Failure isolation      | PASS                           | `inspectAll` uses `Promise.allSettled`. Telegram cycle catches each adapter.                                                                                                                                                                                                                                                                                                |
+| Durable outbox         | PASS                           | Only production path. Failed Telegram send stays retryable across a reopened SQLite file and is not sent twice after success.                                                                                                                                                                                                                                               |
 
 ## DIM.RIA request budget
 
@@ -68,7 +94,7 @@ A 3-hour interval with 2 searches + 2 info calls is about 960 requests/month and
 - Seller type on those 85 ads: `unknown` only.
 - Default flags stay `ENABLE_OLX=false` and `ENABLE_OLX_BROWSER=false`. Turning the browser flag on does not fall back to HTTP.
 
-Runtime requirement: `BROWSER_CAPABLE_RUNTIME`. Not migrated in this batch.
+Runtime requirement: `BROWSER_CAPABLE_RUNTIME`. Issue #2 accepts the hosted Oracle proof as PASS: five Playwright cycles on the existing VM, browser cleanup, four sources in one poll, and the systemd poller still running after restart and reboot. Ordinary HTTP remains `OLX_HTTP` fail and is not the production path. The repository default of `ENABLE_OLX_BROWSER` is still false, so a fresh checkout does not launch Chromium until that flag is set in the environment.
 
 Incompatible with Cloudflare Workers (no Chromium; earlier CPU measurements already rejected Workers Free). A VM must have Node 22+, Playwright, and the matching Chromium build. `PLAYWRIGHT_BROWSERS_PATH` must point at that install. This Windows run used `%LOCALAPPDATA%\ms-playwright`.
 
@@ -131,7 +157,7 @@ Observed on 2026-09-21 from LUN catalog cards (24 flats + 24 houses):
 | RIELTOR ↔ OLX directly | UNKNOWN                         | Not present in the RIELTOR card parser.                                                                                             |
 | DIM.RIA ↔ the others   | UNKNOWN                         | Catalog JSON inspected here has no external listing URL.                                                                            |
 
-LUN is an aggregator/index of other platforms' listings. That is not an official write-integration, and it is not proof that the same apartment was cross-posted by the user. The stored fields are future high-confidence dedup evidence. This batch does not drop on them.
+LUN is an aggregator/index of other platforms' listings. That is not an official write-integration. v1 drops a listing only when `urlRaw` parses to the same OLX token, RIELTOR `/view/{id}`, or DIM.RIA id as a keeper that already has a `telegram_outbox` row, or when two queued LUN cards share `groupId`. A seen, baselined, late, or old card does not become that keeper. `similarPageIds` and `hasDuplicates` stay on the record and do not drop. Image hashing and AI similarity are not implemented.
 
 ## Seller evidence
 
@@ -160,23 +186,51 @@ LUN is an aggregator/index of other platforms' listings. That is not an official
 
 - LUN: missing `realties.cards` or an unreadable array is `parser_failure`. An empty array is `valid_empty`. Cards that all fail schema used to be reported as success/empty; they are now `parser_failure`. The live flats page was in that state while `imageId` was a string.
 - DIM.RIA: missing `__INITIAL_STATE__` or missing `realtyForCatalog` is `parser_failure`. An empty catalog array is `valid_empty`. Non-200 is `http_error`.
-- RIELTOR: 403, 429, and a Cloudflare challenge are `http_error` even if an earlier page returned cards. A located catalog with zero cards is `valid_empty`.
+- RIELTOR: 403 and a Cloudflare challenge are `http_error` even if an earlier page returned cards. HTTP 429 is `rate_limited` after at most one retry, and it is not `valid_empty` or `ok`. A located catalog with zero cards is `valid_empty`.
 - OLX HTTP: API 403 stays `http_error`. An HTML 200 does not count as success.
+- OLX browser: a failed extract (`extractionOk=false`, no listings) is `parser_failure` or `http_error`, never `valid_empty`.
 - One adapter throwing does not cancel the others.
+
+## Tests
+
+2026-09-21 20:31Z (source-layer closure): `tsc --noEmit` exit 0, eslint exit 0, `vitest run` 26 files, 221 tests, 0 failures.
+
+2026-09-21 21:35Z (this core-logic batch): `npm run typecheck` exit 0, `npm run lint` exit 0, `npm test` 27 files, 236 tests, 0 failures. No live source fetch was required for this gate.
+
+2026-09-21 22:18Z (review round 1): `npm run typecheck` exit 0, `npm run lint` exit 0, `npm test` 27 files, 239 tests, 0 failures. The three new tests cover a late LUN card versus a fresh OLX twin, an old LUN card versus a later RIELTOR twin, and identity rows appearing only together with an outbox row.
+
+The 11 Vitest failures, plus the separate `sellerPolicy` type error, were:
+
+| Test                                                                               | Class                  | Cause                                                                                                                    |
+| ---------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| owner title «від власника»                                                         | TEST_EXPECTATION_STALE | The phrase is a self-declaration. `sellerType` stays `unknown` and the listing is sent.                                  |
+| «Я рієлтор»                                                                        | PRODUCTION_CODE_BUG    | JavaScript `\b` does not treat Cyrillic as a word character, so a leading «Я» never matched.                             |
+| Telegram unknown label (`domria-resultkind`, `telegram-test-sink`)                 | PRODUCTION_CODE_BUG    | The label did not contain «не підтверджено». It is now exactly «Власник не підтверджено».                                |
+| OLX parser and four browser-extract assertions that required `sellerType=business` | TEST_EXPECTATION_STALE | `isBusiness` is an account flag, not platform realtor proof. The flag is stored. The seller stays `unknown` and is sent. |
+| OLX detail `defaultOwnerGateWouldAccept` and the delivery-gate self-declared row   | TEST_EXPECTATION_STALE | Self-declared unknown listings are accepted by the default policy. Legacy `isOwnerEligible` still rejects them.          |
+| `sellerPolicy` missing on the startup fixture (typecheck)                          | TYPE/MODEL_DRIFT       | The startup message requires `sellerPolicy`. The fixture now passes `reject_intermediaries`.                             |
+
+## Hosted OLX proof
+
+Issue #2 accepts this as PASS on the existing Oracle VM after `a9d6eaf`. Five Playwright cycles passed, the browser process was cleaned up, DIM.RIA, LUN, RIELTOR.UA, and OLX ran in the same poll, and `rent-radar-telegram.service` survived restart and reboot. This core-logic batch did not SSH to the VM and did not repeat those cycles.
+
+## Closure live evidence (2026-09-21, this workstation)
+
+| Time (UTC)                   | Source                 | HTTP | Kind | Normalized | Notes                                                                           |
+| ---------------------------- | ---------------------- | ---- | ---- | ---------- | ------------------------------------------------------------------------------- |
+| 20:29:05, 20:29:11, 20:29:17 | DIM.RIA adapter ×3     | 200  | ok   | 10         | same ids `34690408` …; 1.4–2.2 s                                                |
+| 20:29:18, 20:29:23, 20:29:28 | LUN adapter ×3         | 200  | ok   | 10         | same ids `4725239863` …; 1.0–1.5 s                                              |
+| 20:29:31, 20:29:59, 20:30:27 | RIELTOR ×3, 25 s apart | 200  | ok   | 10         | 2 requests/cycle, ~3 s, declared catalog ≥ 777, truncated by the existing limit |
 
 ## Blockers
 
-- OLX cannot be polled with ordinary Node HTTP from this environment.
-- OLX browser acquisition needs a Chromium-capable host. Hosting was not migrated.
-- RIELTOR returns 429 if several full cycles are fired back to back. A 10-minute poll with the existing 2 s gap is inside the successful pattern; a tight retry loop is not.
-- Cross-source dedup is not implemented. LUN provenance is stored only.
-- Eleven existing tests were already failing on files this batch did not change (`owner-filter`, OLX seller type vs `business`, Telegram wording `не підтверджено`). They were not edited and were not weakened.
+- RIELTOR can still return 429. The adapter makes at most one extra attempt, waits at most 3 s, and does not wait out a long `Retry-After`.
+- Cross-source identity rows are not pruned. Retention cleanup is a later batch.
+- `similarPageIds` is stored and does not suppress. A shared LUN `groupId` does suppress inside LUN only.
 
-## Batch 2
+## Remaining work
 
-1. Choose a browser-capable free host and install Playwright Chromium there. Do not use Cloudflare Workers Free for the OLX leg.
-2. Turn on `ENABLE_OLX_BROWSER` only after that host repeats the 85-listing extract. Leave `ENABLE_OLX` off.
-3. Keep DIM.RIA on `DOMRIA_ACQUISITION=html`.
-4. Map RIELTOR photos only if a stable card attribute is identified. Do not guess.
-5. Use LUN `groupId`, `similarPageIds`, `hasDuplicates`, and `urlRaw` as high-confidence dedup evidence. Do not drop fuzzy matches.
-6. Keep the permissive seller gate: unknown is sent; only confirmed intermediary evidence is dropped.
+1. Keep DIM.RIA on `DOMRIA_ACQUISITION=html`.
+2. Leave paid scraping APIs, proxies, CAPTCHA solvers, and stealth tooling out.
+3. Add retention cleanup for `cross_source_identities` only when a later batch defines the policy.
+4. Do not add image hashing or AI similarity to the dedup hierarchy.

@@ -37,12 +37,20 @@ const MISLEADING_OWNER_SEEKING = [
  * Unambiguous intermediary self-description or an explicit brokerage commission offer.
  * Bare substrings «рієлтор» / «агентство» / «комісія» are not enough.
  */
+/** JS `\b` is ASCII-only, so a Cyrillic «Я» at the start of a string never matches `\bя`. */
+const CYRILLIC_WORD_START = String.raw`(?<![\p{L}\p{N}_])`;
+const CYRILLIC_WORD_END = String.raw`(?![\p{L}\p{N}_])`;
+
+function unicodePhrase(source: string): RegExp {
+  return new RegExp(`${CYRILLIC_WORD_START}(?:${source})`, "iu");
+}
+
 const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\bя\s+рі[єе]лтор/i, label: "я рієлтор" },
-  { pattern: /\bя\s+риелтор/i, label: "я риелтор" },
-  { pattern: /\bя\s+realtor\b/i, label: "я realtor" },
-  { pattern: /\bми\s+рі[єе]лтор/i, label: "ми рієлтори" },
-  { pattern: /\bми\s+риелтор/i, label: "ми риелторы" },
+  { pattern: unicodePhrase(String.raw`я\s+рі[єе]лтор`), label: "я рієлтор" },
+  { pattern: unicodePhrase(String.raw`я\s+риелтор`), label: "я риелтор" },
+  { pattern: unicodePhrase(String.raw`я\s+realtor${CYRILLIC_WORD_END}`), label: "я realtor" },
+  { pattern: unicodePhrase(String.raw`ми\s+рі[єе]лтор`), label: "ми рієлтори" },
+  { pattern: unicodePhrase(String.raw`ми\s+риелтор`), label: "ми риелторы" },
   { pattern: /агентство\s+нерухомост/i, label: "агентство нерухомості" },
   { pattern: /агенція\s+нерухомост/i, label: "агенція нерухомості" },
   { pattern: /агентство\s+недвижимост/i, label: "агентство недвижимости" },
@@ -54,7 +62,7 @@ const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = 
   { pattern: /комиссия\s+\d+\s*%/i, label: "комиссия N%" },
   { pattern: /послуги\s+рі[єе]лтора/i, label: "послуги рієлтора" },
   { pattern: /услуги\s+риелтора/i, label: "услуги риелтора" },
-  { pattern: /\bя\s+агент(?:ство)?\b/i, label: "я агент" },
+  { pattern: unicodePhrase(String.raw`я\s+агент(?:ство)?${CYRILLIC_WORD_END}`), label: "я агент" },
 ];
 
 function includesPhrase(lower: string, phrase: string): boolean {

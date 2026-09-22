@@ -151,6 +151,21 @@ describe("OLX browser result mapping", () => {
     expect(mapped.health.message).toContain("transport_blocked");
     expect(mapped.rawNotes?.some((note) => note.includes("no_http_api_fallback=true"))).toBe(true);
   });
+
+  it("does not report a browser extract failure as a valid empty catalog", () => {
+    const mapped = mapOlxBrowserExtractToFetchResult(
+      emptyOlxBrowserExtractResult({
+        extractionOk: false,
+        accessibilityOk: false,
+        notes: ["browser closed after crash"],
+      }),
+      { startedMs: Date.now() },
+    );
+    expect(mapped.resultKind).not.toBe("valid_empty");
+    expect(mapped.resultKind).toBe("parser_failure");
+    expect(mapped.health.healthy).toBe(false);
+    expect(mapped.listings).toHaveLength(0);
+  });
 });
 
 describe("end-to-end delivery gate", () => {
@@ -308,7 +323,7 @@ describe("end-to-end delivery gate", () => {
     expect(dedupe.hasSeen(olxOwner)).toBe(true);
     expect(dedupe.hasSeen(rieltorOwner)).toBe(true);
     expect(dedupe.hasSeen(olxBusiness)).toBe(false);
-    expect(dedupe.hasSeen(olxSelfDeclared)).toBe(false);
+    expect(dedupe.hasSeen(olxSelfDeclared)).toBe(true);
     expect(formatSellerLabel(olxSelfDeclared)).toContain("Самозаява");
     expect(formatSellerLabel(rieltorOwner)).toContain("за позначкою майданчика");
 

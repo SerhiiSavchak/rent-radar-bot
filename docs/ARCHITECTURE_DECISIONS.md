@@ -5,17 +5,17 @@ Only decisions supported by the current code and the live checks in `docs/RENT_R
 
 ## ADR: seller classification is evidence-based and permissive
 
-Status: **final** for the delivery gate. The five names below are conceptual. The stored fields are `sellerType` (`owner` | `agent` | `business` | `unknown`) and `metadata.ownerEvidenceLevel`.
+Status: **final** for the delivery gate. `classifyOwner` still returns `sellerType` and `ownerEvidenceLevel`. It also returns `evidenceItems` (`source`, `type`, `value`, `strength`). `sellerAssessmentFromClassification` maps that to `metadata.sellerAssessment` (`state`, `confidence`, `evidence`, `send`). Parsers copy the assessment onto the listing. The delivery gate is still `isSellerEligible`.
 
-| Conceptual state | Current code                                                                                                          | Delivery                                                |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| CONFIRMED_OWNER  | `sellerType=owner` from a platform flag (`isOwner`, characteristic 1437 = від власника, RIELTOR label `Власник`)      | SEND                                                    |
-| LIKELY_OWNER     | `ownerEvidenceLevel=self_declared`. `sellerType` stays `unknown`. Title wording alone is not a platform confirmation. | SEND                                                    |
-| UNKNOWN          | no platform role and no explicit intermediary evidence                                                                | SEND                                                    |
-| LIKELY_AGENT     | agency id/name or explicit intermediary copy. `sellerRejectionReason` is `explicit_intermediary` or `conflict`.       | DROP, because that evidence is treated as strong enough |
-| CONFIRMED_AGENT  | `sellerType=agent` or `business` from a platform role                                                                 | DROP                                                    |
+| Conceptual state | Current code                                                                                                                                                                                        | Delivery                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| CONFIRMED_OWNER  | `sellerType=owner` from a platform flag (`isOwner`, characteristic 1437 = від власника, RIELTOR label `Власник`)                                                                                    | SEND                       |
+| LIKELY_OWNER     | `ownerEvidenceLevel=self_declared`. `sellerType` stays `unknown`. Title wording alone is not a platform confirmation.                                                                               | SEND                       |
+| UNKNOWN          | no platform role and no explicit intermediary evidence. Includes OLX `isBusiness` and a LUN card whose only extra fact is `site.internalName`.                                                      | SEND                       |
+| LIKELY_AGENT     | Not emitted in v1. A weak hint must stay sendable, and no current signal is classified here.                                                                                                        | SEND if it is ever emitted |
+| CONFIRMED_AGENT  | `sellerType=agent` or `business`, or `ownerEvidenceLevel` `intermediary` / `conflict` (platform role, agency id/name passed into the classifier, or explicit intermediary text such as «я рієлтор») | DROP                       |
 
-`agency_id` on DIM.RIA and a private-account flag on OLX are not ownership and are not, by themselves, an agent drop.
+DIM.RIA `agency_id` is stored as evidence text and is not passed into `classifyOwner`, so it is not an agent drop. `user_id` is stored as `metadata.userId` and as a context note. It is not ownership proof. A private-account flag and OLX `isBusiness` are not ownership and are not an agent drop. A LUN `site.internalName` of `rieltor.ua` is provenance, not intermediary evidence.
 
 ## ADR: UNKNOWN seller is sent
 
@@ -25,13 +25,28 @@ Status: **final**.
 
 ## ADR: uncertain dedup is sent
 
-Status: **final as a rule, not implemented as cross-source matching**.
+Status: **final**. Implemented in `src/delivery/cross-source-dedup.ts`.
 
-Exact repeats of the same source id / outbox fingerprint are suppressed. LUN `hasDuplicates`, `similarPageIds`, and `groupId` are stored on the listing and do not remove it. No fuzzy cross-source drop exists. An uncertain duplicate is therefore kept.
+Only `confirmed_duplicate` suppresses delivery. `possible_duplicate` and `unique` continue. There is no opaque score.
+
+What can suppress:
+
+1. Same `source + sourceId`, or the same canonical listing URL, via the existing seen-listing store.
+2. An explicit foreign listing identity. A LUN `urlRaw` whose host is OLX, RIELTOR, or DIM.RIA is normalized (tracking query and hash removed; OLX token case kept). If that token or `/view/{id}` matches another listing's own identity, the later listing is a confirmed duplicate.
+3. A shared LUN `groupId` between two LUN listings. The key is `lun:group:{id}`. It is never compared to an OLX, RIELTOR, or DIM.RIA id.
+
+What cannot suppress:
+
+- `similarPageIds` and `hasDuplicates` are kept on the provenance record. They are not identity keys.
+- Rooms, area, and price, including the same combination on the same coordinates.
+- Title or description text. v1 does not compute text similarity.
+- Image perceptual hashing and AI/LLM similarity. They are not part of v1.
+
+An uncertain attribute overlap is reported as `possible_duplicate` with reason `attribute_overlap_not_sufficient` and is still sent.
 
 ## ADR: explicit provenance outranks fuzzy similarity
 
-Status: **final as a ranking rule. The dropper is not built.**
+Status: **final**. The dropper uses only the hierarchy above.
 
 LUN catalog cards expose platform-provided links:
 
@@ -40,7 +55,9 @@ LUN catalog cards expose platform-provided links:
 - `hasDuplicates` boolean on 26/48 true
 - `urlRaw` plus `site.internalName`: 35/48 `rieltor.ua`, 13/48 `olx.ua`
 
-Those fields outrank any future text/price similarity. Similarity alone must not drop a listing. DIM.RIA and RIELTOR cards inspected here did not expose a foreign listing id.
+`readProvenance` stores source, source listing id, canonical URL, external source name, external URL, external listing id when the URL pattern is deterministic, `groupId`, `similarPageIds`, `hasDuplicates`, and the raw site name. DIM.RIA and RIELTOR cards inspected in the source-layer batch did not expose a foreign listing id, so they contribute only their own identity.
+
+Confirmed identity rows live in SQLite table `cross_source_identities` (schema version 4). `enqueueIfNew` inserts them in the same transaction as the new `telegram_outbox` row. `markSeen` does not. A freshness rejection, a silent baseline row, or a crash before that commit cannot suppress a later twin. A failed Telegram send still leaves the keeper retryable and still suppresses the twin, because the outbox row and the identity keys committed together. Reopening the same database keeps the match. Retention cleanup is not part of this schema change.
 
 ## ADR: DIM.RIA official API cannot be consumed blindly every 10 minutes
 
@@ -52,8 +69,46 @@ Production acquisition is public HTML (`DOMRIA_ACQUISITION=html`). Official requ
 
 ## ADR: runtime remains undecided until OLX is classified
 
-Status: **classified. Hosting migration is still pending.**
+Status: **superseded** by the browser-runtime ADR below.
 
-OLX ordinary HTTP is `OLX_HTTP` fail: 3/3 CloudFront 403 on 2026-09-21. Stock Playwright Chromium extracted 85 real listings on 3/3 runs with HTTP 200 and no CAPTCHA bypass. Classification: `OLX_BROWSER_REQUIRED`.
+OLX ordinary HTTP is `OLX_HTTP` fail: 3/3 CloudFront 403 on 2026-09-21. Stock Playwright Chromium extracted 85 real listings on 3/3 local runs with HTTP 200 and no CAPTCHA bypass. Classification of the transport: `OLX_BROWSER_REQUIRED`. Hosted proof on the existing Oracle VM is PASS; see `docs/RENT_RADAR_STATUS.md`.
 
-Required runtime: `BROWSER_CAPABLE_RUNTIME` (Node 22+, Playwright 1.63, matching Chromium). Cloudflare Workers cannot host that browser. This batch does not change the host. `ENABLE_OLX` stays off. `ENABLE_OLX_BROWSER` stays off until the chosen host repeats the extract.
+## ADR: browser-capable runtime required by OLX
+
+Status: **final. Hosted proof PASS.**
+
+Ordinary Node HTTP cannot acquire OLX (CloudFront 403). The working adapter is stock Playwright plus the repository's Chromium build, with no stealth plugin, proxy, or CAPTCHA solver. The process needs a `BROWSER_CAPABLE_RUNTIME`: Node 22+, Playwright 1.63, and that Chromium. Cloudflare Workers cannot provide it.
+
+Issue #2 accepts five hosted Playwright cycles on the existing free VM, with browser cleanup, all four sources in one poll, and the systemd poller alive after restart and reboot. The repository default `ENABLE_OLX_BROWSER` remains false so a checkout does not start Chromium by itself. The accepted VM run used the browser. This batch did not change the flag and did not repeat the hosted cycles.
+
+## ADR: normal OLX HTTP path is not production acquisition
+
+Status: **final**.
+
+`ENABLE_OLX` stays false. When browser mode is on, the HTTP adapter is omitted. There is no silent fallback from a browser failure to `api/v1/offers`.
+
+## ADR: exactly one canonical durable poll/delivery path
+
+Status: **final**.
+
+Production collection and Telegram delivery run only through `src/scripts/test-telegram-poll.ts`, started by `deploy/systemd/rent-radar-telegram.service` / `rent-radar-telegram.timer`, or by `npm run live:test-telegram:poll`.
+
+`src/index.ts` exits 2. `ListingMonitorService.collectNewListings()` throws. Neither writes the seen-listing table nor sends Telegram.
+
+## ADR: Telegram delivery must use persistent outbox semantics
+
+Status: **final**.
+
+Accepted listing → SQLite baseline/dedupe state → pending `telegram_outbox` row → Telegram attempt → `sent` only after success. Failure leaves the row retryable. A process restart reopens the same file and retries. A successful row is not sent again.
+
+## ADR: UNKNOWN seller is retained
+
+Status: **final**.
+
+`UNKNOWN` and self-declared wording are sent. `sellerType` stays `unknown` for both. OLX `isBusiness` is recorded and does not become `sellerType=business`. Platform `agent` / `business` and explicit intermediary text, including «Я рієлтор», are dropped. The Telegram line for an unknown role is «Власник не підтверджено».
+
+## ADR: source errors never become empty inventory
+
+Status: **final**.
+
+`ok` and `valid_empty` are the only healthy kinds. `parser_failure`, `http_error`, and `rate_limited` are unhealthy. An OLX browser crash is not `valid_empty`. A RIELTOR 429 is `rate_limited` even when an earlier page had cards. A LUN schema rejection of every card is `parser_failure`. DIM.RIA without the expected catalog structure is `parser_failure`. An empty catalog array, when the structure is present, stays `valid_empty`.

@@ -1,17 +1,11 @@
 import type { Listing } from "../domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
 import { getConfig, hasTelegramConfig, type AppConfig } from "../config/env.ts";
-import { applyListingFilters } from "../filters/listing-filter.ts";
 import { ConsoleOutput, TelegramOutput, type ListingOutput } from "../outputs/console.output.ts";
-import { hasSeenListing, saveListing } from "../storage/listing.repository.ts";
 import { logger } from "../utils/logger.ts";
 
 export class ListingMonitorService {
-  constructor(
-    private readonly adapters: ListingSourceAdapter[],
-    private readonly config: AppConfig = getConfig(),
-    private readonly output: ListingOutput = createDefaultOutput(),
-  ) {}
+  constructor(private readonly adapters: ListingSourceAdapter[]) {}
 
   async inspectAll(): Promise<SourceFetchResult[]> {
     const settled = await Promise.allSettled(this.adapters.map((adapter) => adapter.inspectLatest()));
@@ -38,23 +32,9 @@ export class ListingMonitorService {
   }
 
   async collectNewListings(): Promise<Listing[]> {
-    const results = await this.inspectAll();
-    const fresh: Listing[] = [];
-    for (const result of results) {
-      const filtered = applyListingFilters(result.listings, this.config);
-      for (const item of filtered) {
-        if (!item.locationMatched) {
-          continue;
-        }
-        if (hasSeenListing(item.listing)) {
-          continue;
-        }
-        saveListing(item.listing);
-        fresh.push(item.listing);
-        await this.output.send(item.listing);
-      }
-    }
-    return fresh;
+    throw new Error(
+      "ListingMonitorService.collectNewListings() is disabled. Canonical production poll is src/scripts/test-telegram-poll.ts: durable state, pending outbox, then Telegram. A listing is marked sent only after delivery succeeds.",
+    );
   }
 }
 

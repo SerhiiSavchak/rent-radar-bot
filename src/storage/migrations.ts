@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const MIGRATION_1 = `
 CREATE TABLE IF NOT EXISTS listings (
@@ -72,10 +72,23 @@ ALTER TABLE poller_lock ADD COLUMN pid INTEGER;
 ALTER TABLE poller_lock ADD COLUMN starttime TEXT;
 `;
 
+const MIGRATION_4 = `
+CREATE TABLE IF NOT EXISTS cross_source_identities (
+  identity_key TEXT NOT NULL,
+  key_class TEXT NOT NULL,
+  source TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (identity_key, source, source_id)
+);
+CREATE INDEX IF NOT EXISTS cross_source_identities_key_idx ON cross_source_identities (identity_key);
+`;
+
 const MIGRATIONS: Record<number, string> = {
   1: MIGRATION_1,
   2: MIGRATION_2,
   3: MIGRATION_3,
+  4: MIGRATION_4,
 };
 
 function tableExists(db: DatabaseSync, name: string): boolean {
@@ -87,8 +100,7 @@ function tableExists(db: DatabaseSync, name: string): boolean {
 export function appliedSchemaVersion(db: DatabaseSync): number {
   if (tableExists(db, "schema_migrations")) {
     const row = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as
-      | { version: number | null }
-      | undefined;
+      { version: number | null } | undefined;
     if (row?.version) {
       return row.version;
     }

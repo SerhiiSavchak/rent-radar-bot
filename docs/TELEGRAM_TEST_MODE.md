@@ -77,7 +77,7 @@ npm run live:test-telegram:canary
   - `publishedAt` before the baseline, even if still inside the age window → `late_discovered` (not sent)
   - missing `publishedAt` → **Вперше помічено** (excluded when `TELEGRAM_STRICT_NEW_PUBLICATIONS=true`)
   - old / refreshed-old `publishedAt` → suppressed
-- `SELLER_POLICY=reject_intermediaries` (default) rejects confirmed realtor/agency/intermediary listings and keeps unknown plus self-declared sellers. Telegram unknown label is exactly **«Власник не визначений»**.
+- `SELLER_POLICY=reject_intermediaries` (default) rejects confirmed realtor/agency/intermediary listings and keeps unknown plus self-declared sellers. Telegram unknown label is exactly **«Власник не підтверджено»**.
 - Existing `OWNER_ONLY=true` does **not** restore the old platform-owner-only gate. That legacy gate is only `SELLER_POLICY=owner_only`.
 - `OWNER_ACCEPT_SELF_DECLARED` is unused unless `SELLER_POLICY=owner_only`.
 - Price is parsed and displayed when present. Missing price is **«Ціна не вказана»**. There is no min/max price eligibility filter.
@@ -95,5 +95,5 @@ npm run live:test-telegram:canary
 - `ENABLE_OLX` (HTTP) stays **false** by default. Oracle CloudFront 403 is `transport_blocked`, not browser success.
 - `ENABLE_OLX_BROWSER=true` wires Playwright catalog extract into collection/Telegram. There is **no** silent fallback to `api/v1/offers`.
 - Startup and final summary messages are always sent on `live:test-telegram:poll`.
-- Seller line uses «Власник — за позначкою майданчика» for platform-confirmed owners, a self-declaration label for listing-author claims, and exactly «Власник не визначений» when the role is unknown.
+- Seller line uses «Власник — за позначкою майданчика» for platform-confirmed owners, a self-declaration label for listing-author claims, and exactly «Власник не підтверджено» when the role is unknown.
 - Dates are shown in Europe/Kyiv; raw ISO timestamps are not shown.
