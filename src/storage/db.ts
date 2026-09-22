@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Listing } from "../domain/listing.ts";
 import { getConfig } from "../config/env.ts";
@@ -133,10 +133,29 @@ export function getRecentListings(limit = 20): StoredListing[] {
   return rows;
 }
 
+/** Checkout inventory file. Row cleanup may use it. Test reset must not. */
+export function isProtectedInventoryDatabase(databasePath: string): boolean {
+  return pathsEqual(resolve(databasePath), resolve("./data/rent-radar.sqlite"));
+}
+
+function pathsEqual(left: string, right: string): boolean {
+  if (process.platform === "win32") {
+    return left.toLowerCase() === right.toLowerCase();
+  }
+  return left === right;
+}
+
 export function resetDbForTests(databasePath: string): void {
+  if (isProtectedInventoryDatabase(databasePath)) {
+    throw new Error(
+      `Refusing to reset ${databasePath}. That path is the default inventory database (data/rent-radar.sqlite). Tests must use a temporary file.`,
+    );
+  }
   closeDb();
   db = new DatabaseSync(databasePath);
   db.exec(`
+    DROP TABLE IF EXISTS source_health;
+    DROP TABLE IF EXISTS cross_source_identities;
     DROP TABLE IF EXISTS telegram_outbox;
     DROP TABLE IF EXISTS seen_listings;
     DROP TABLE IF EXISTS source_baselines;

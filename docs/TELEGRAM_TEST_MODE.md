@@ -86,6 +86,39 @@ npm run live:test-telegram:canary
 - `disabled`, `transport_blocked`, `parser_failed`, and `valid_empty` are reported per source.
 - Final summary includes `cycles_with_partial_source_coverage`.
 
+## Persistent state
+
+Schema version was 4 and is now 5. Opening the poller applies the new migration in place. Existing rows stay.
+
+`source_health` keeps the latest attempt for each source:
+
+| Stored status | Meaning |
+| --- | --- |
+| `ok` | Listings were parsed |
+| `valid_empty` | The catalog structure was present and empty |
+| `parser_failure` | The body was not a trustworthy catalog, including a cycle report of `parser_failed` |
+| `http_error` | HTTP failure that is not a 429 and not a blocked transport |
+| `rate_limited` | HTTP 429, including a RIELTOR 429 |
+| `transport_failure` | Poller `transport_blocked`, usually HTTP 403 |
+| `browser_failure` | OLX Playwright acquisition threw |
+| `disabled` | Source turned off in config |
+
+`ok` and `valid_empty` reset the failure streak and set `last_success_at`. A later failure keeps that success time. `parser_failure` is never stored as `valid_empty`. No successful HTML is stored. Error text is shortened and redacted.
+
+The long-running poller (`npm run live:test-telegram:poll`) runs cleanup at process start and then at most once every 24 hours. The clock is `schema_meta.state_cleanup_at`, so a 10-minute poll does not repeat the delete. The one-shot command records health and does not run retention.
+
+| Data | Retention |
+| --- | --- |
+| Seen listing inactive (`last_seen_at`) | 30 days, unless an outbox row still protects it |
+| Cross-source identity | 90 days, unless a pending, sending, failed, or sent-within-30-days outbox row matches |
+| Outbox `sent` | 30 days after `sent_at` |
+| Outbox `pending`, `sending`, `failed` | Never deleted because of age |
+| Source baseline, poller lock, seller-policy cutover, current source health | Never deleted because of age |
+
+There is no poll-diagnostic history table and no per-attempt health history, so those rows are not created and not pruned. A seen row is refreshed when a later successful poll still contains that listing.
+
+`DATABASE_PATH` defaults to `./data/rent-radar.sqlite` inside the checkout. On Oracle that path may already be the live inventory database. Cleanup does not delete the file. Test reset refuses this default path. Moving the file out of the checkout is a later deployment step.
+
 ## Safety
 
 - Bot token and full `api.telegram.org/bot…` URLs are never logged.

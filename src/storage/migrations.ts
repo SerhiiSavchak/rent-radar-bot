@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 4;
+/** 4 = cross-source identities. 5 = source health and retention indexes. */
+export const SCHEMA_VERSION = 5;
 
 const MIGRATION_1 = `
 CREATE TABLE IF NOT EXISTS listings (
@@ -84,12 +85,50 @@ CREATE TABLE IF NOT EXISTS cross_source_identities (
 CREATE INDEX IF NOT EXISTS cross_source_identities_key_idx ON cross_source_identities (identity_key);
 `;
 
+const MIGRATION_5 = `
+CREATE TABLE IF NOT EXISTS source_health (
+  source TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN (
+    'ok',
+    'valid_empty',
+    'parser_failure',
+    'http_error',
+    'rate_limited',
+    'transport_failure',
+    'browser_failure',
+    'disabled'
+  )),
+  checked_at TEXT NOT NULL,
+  last_success_at TEXT,
+  last_failure_at TEXT,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+  last_listing_count INTEGER,
+  last_http_status INTEGER,
+  last_error_safe TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS seen_listings_last_seen_idx ON seen_listings (last_seen_at);
+CREATE INDEX IF NOT EXISTS telegram_outbox_status_sent_idx ON telegram_outbox (status, sent_at);
+CREATE INDEX IF NOT EXISTS telegram_outbox_source_idx ON telegram_outbox (source, source_id);
+CREATE INDEX IF NOT EXISTS cross_source_identities_created_idx ON cross_source_identities (created_at);
+CREATE INDEX IF NOT EXISTS cross_source_identities_listing_idx ON cross_source_identities (source, source_id);
+`;
+
 const MIGRATIONS: Record<number, string> = {
   1: MIGRATION_1,
   2: MIGRATION_2,
   3: MIGRATION_3,
   4: MIGRATION_4,
+  5: MIGRATION_5,
 };
+
+export function sqliteMigrationSql(version: number): string {
+  const sql = MIGRATIONS[version];
+  if (!sql) {
+    throw new Error(`Missing SQLite migration ${version}`);
+  }
+  return sql;
+}
 
 function tableExists(db: DatabaseSync, name: string): boolean {
   return Boolean(

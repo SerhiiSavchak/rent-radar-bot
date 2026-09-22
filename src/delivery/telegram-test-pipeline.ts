@@ -341,6 +341,22 @@ export async function runTelegramTestCycle(
   const buckets: SourceBucket[] = [];
   const sellerTotals = emptySellerStats();
 
+  const recordAttempt = (attempt: TelegramSourceAttempt): void => {
+    sourceAttempts.push(attempt);
+    deps.baseline.recordSourceHealth?.(
+      {
+        source: attempt.source,
+        transport: attempt.transport,
+        listingCount: attempt.listingCount,
+        ok: attempt.ok,
+        ...(attempt.resultKind !== undefined ? { resultKind: attempt.resultKind } : {}),
+        ...(attempt.httpStatus !== undefined ? { httpStatus: attempt.httpStatus } : {}),
+        ...(attempt.errorSafe !== undefined ? { errorSafe: attempt.errorSafe } : {}),
+      },
+      now(),
+    );
+  };
+
   for (const adapter of deps.adapters) {
     const enabled =
       (adapter.source === "domria" && deps.config.enableDomria) ||
@@ -350,7 +366,7 @@ export async function runTelegramTestCycle(
 
     const capability = capabilityFor(adapter.source, enabled, deps.config);
     if (!enabled) {
-      sourceAttempts.push({
+      recordAttempt({
         source: adapter.source,
         enabled: false,
         transport: "n/a",
@@ -388,7 +404,7 @@ export async function runTelegramTestCycle(
         listings: accepted,
         collectedCount: result.listings.length,
       });
-      sourceAttempts.push({
+      recordAttempt({
         source: adapter.source,
         enabled: true,
         transport: result.transport,
@@ -410,16 +426,17 @@ export async function runTelegramTestCycle(
       }
     } catch (error) {
       const errorSafe = safeError(error);
+      const browserAcquisition = adapter.source === "olx" && deps.config.enableOlxBrowser;
       sourceErrors.push({ source: adapter.source, errorSafe });
       buckets.push({ source: adapter.source, ok: false, listings: [], collectedCount: 0 });
-      sourceAttempts.push({
+      recordAttempt({
         source: adapter.source,
         enabled: true,
         transport: "n/a",
         capability,
         ok: false,
         listingCount: 0,
-        resultKind: "parser_failed",
+        resultKind: browserAcquisition ? "browser_failure" : "parser_failed",
         errorSafe,
       });
     }
@@ -465,6 +482,10 @@ export async function runTelegramTestCycle(
         attempt.baselineSkippedFailure = true;
       }
       continue;
+    }
+
+    for (const listing of bucket.listings) {
+      deps.dedupe.noteObserved?.(listing, now());
     }
 
     if (!deps.baseline.hasBaseline(bucket.source)) {

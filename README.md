@@ -57,7 +57,7 @@ See `.env.example`. Important keys:
 - `SOURCE_TIMEOUT_MS`, `POLL_INTERVAL_SECONDS` — timeouts and future polling (polling is **not** started automatically)
 - `DOMRIA_API_KEY` — official DIM.RIA API key from https://developers.ria.com
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — optional; if missing, output is console-only
-- `DATABASE_PATH` — SQLite file for deduplication
+- `DATABASE_PATH` — SQLite file for deduplication. Default `./data/rent-radar.sqlite` is inside the checkout and may already be the live inventory file. Do not delete it. Moving it outside the repository is a later deployment step.
 
 Never commit `.env`.
 

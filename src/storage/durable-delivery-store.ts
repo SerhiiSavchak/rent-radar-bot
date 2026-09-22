@@ -12,9 +12,11 @@ import {
   type OutboxItem,
   type OutboxStatus,
   type SourceBaseline,
+  type SourceHealthWrite,
   type TelegramOutbox,
 } from "../delivery/delivery-ports.ts";
 import { identityKeys, type IdentityKeyClass } from "../domain/provenance.ts";
+import { writeSourceHealth } from "./source-health.ts";
 
 type SeenRow = {
   source: string;
@@ -91,6 +93,19 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
         )
         .run(listing.source, listing.sourceId, fingerprint, url, now, now, published, refreshed);
     }
+  }
+
+  noteObserved(listing: Pick<Listing, "source" | "sourceId" | "url">, at = new Date()): void {
+    const iso = at.toISOString();
+    const url = canonicalListingUrl(listing.url);
+    this.db
+      .prepare(
+        "UPDATE seen_listings SET last_seen_at = ? WHERE source = ? AND source_id = ? AND last_seen_at < ?",
+      )
+      .run(iso, listing.source, listing.sourceId, iso);
+    this.db
+      .prepare("UPDATE seen_listings SET last_seen_at = ? WHERE canonical_url = ? AND last_seen_at < ?")
+      .run(iso, url, iso);
   }
 
   assessCrossSource(listing: Listing, peers: Listing[] = []): CrossSourceDecision {
@@ -210,6 +225,10 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     this.db
       .prepare("UPDATE source_baselines SET last_success_at = ? WHERE source = ?")
       .run(at.toISOString(), source);
+  }
+
+  recordSourceHealth(input: SourceHealthWrite, at = new Date()): void {
+    writeSourceHealth(this.db, input, at);
   }
 
   enqueueIfNew(

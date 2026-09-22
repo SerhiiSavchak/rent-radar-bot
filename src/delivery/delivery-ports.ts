@@ -4,6 +4,21 @@ export type ListingDedupe = {
   hasSeen(listing: Pick<Listing, "source" | "sourceId" | "url">): boolean;
   markSeen(listing: Pick<Listing, "source" | "sourceId" | "url">): void;
   filterUnseen(listings: Listing[]): Listing[];
+  /**
+   * Refresh last_seen_at when the row already exists.
+   * Must not insert. A new listing stays unseen until markSeen.
+   */
+  noteObserved?(listing: Pick<Listing, "source" | "sourceId" | "url">, at?: Date): void;
+};
+
+export type SourceHealthWrite = {
+  source: string;
+  resultKind?: string;
+  transport?: string;
+  httpStatus?: number;
+  errorSafe?: string;
+  listingCount?: number;
+  ok?: boolean;
 };
 
 export type SourceBaseline = {
@@ -15,6 +30,8 @@ export type SourceBaseline = {
   readonly survivesRestart: boolean;
   ensureSellerPolicy?(policy: string, at?: Date): Date | undefined;
   sellerPolicyCutoverAt?(): Date | undefined;
+  /** Latest attempt for one source. In-memory baselines omit this. */
+  recordSourceHealth?(update: SourceHealthWrite, at?: Date): void;
 };
 
 export type OutboxStatus = "pending" | "sending" | "sent" | "failed";

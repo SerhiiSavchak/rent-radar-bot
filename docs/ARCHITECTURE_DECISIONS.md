@@ -57,7 +57,7 @@ LUN catalog cards expose platform-provided links:
 
 `readProvenance` stores source, source listing id, canonical URL, external source name, external URL, external listing id when the URL pattern is deterministic, `groupId`, `similarPageIds`, `hasDuplicates`, and the raw site name. DIM.RIA and RIELTOR cards inspected in the source-layer batch did not expose a foreign listing id, so they contribute only their own identity.
 
-Confirmed identity rows live in SQLite table `cross_source_identities` (schema version 4). `enqueueIfNew` inserts them in the same transaction as the new `telegram_outbox` row. `markSeen` does not. A freshness rejection, a silent baseline row, or a crash before that commit cannot suppress a later twin. A failed Telegram send still leaves the keeper retryable and still suppresses the twin, because the outbox row and the identity keys committed together. Reopening the same database keeps the match. Retention cleanup is not part of this schema change.
+Confirmed identity rows live in SQLite table `cross_source_identities` (schema version 4). `enqueueIfNew` inserts them in the same transaction as the new `telegram_outbox` row. `markSeen` does not. A freshness rejection, a silent baseline row, or a crash before that commit cannot suppress a later twin. A failed Telegram send still leaves the keeper retryable and still suppresses the twin, because the outbox row and the identity keys committed together. Reopening the same database keeps the match. Schema 5 removes an identity row only after 90 days, and only when that listing has no pending, sending, failed, or recently sent outbox row.
 
 ## ADR: DIM.RIA official API cannot be consumed blindly every 10 minutes
 
@@ -112,3 +112,21 @@ Status: **final**.
 Status: **final**.
 
 `ok` and `valid_empty` are the only healthy kinds. `parser_failure`, `http_error`, and `rate_limited` are unhealthy. An OLX browser crash is not `valid_empty`. A RIELTOR 429 is `rate_limited` even when an earlier page had cards. A LUN schema rejection of every card is `parser_failure`. DIM.RIA without the expected catalog structure is `parser_failure`. An empty catalog array, when the structure is present, stays `valid_empty`.
+
+## ADR: operational SQLite state is bounded and restart-safe
+
+Status: **final for schema 5**.
+
+SQLite stores current operations, not a historical archive. Schema 4 is the previous production shape (through `cross_source_identities`). Schema 5 adds `source_health` and the indexes used by retention. Migration is incremental: it does not rebuild or delete existing rows.
+
+`source_health` has one row per source: `ok`, `valid_empty`, `parser_failure`, `http_error`, `rate_limited`, `transport_failure`, `browser_failure`, `disabled`. Healthy `ok` / `valid_empty` reset `consecutive_failures` and set `last_success_at`. Failure statuses increment the streak and leave `last_success_at` in place. `disabled` does not change the streak. `parser_failure` is never stored as `valid_empty`. HTTP 429 is `rate_limited`. The poller's `transport_blocked` result (HTTP 403) is stored as `transport_failure`. A thrown OLX browser acquisition is `browser_failure`. Error text is truncated and redacted. Successful HTML is not stored.
+
+The canonical poller runs cleanup on startup and then at most once every 24 hours (`schema_meta.state_cleanup_at`). One cleanup pass deletes:
+
+- `seen_listings` with `last_seen_at` older than 30 days, unless a pending, sending, failed, or still-kept sent outbox row matches them
+- `cross_source_identities` older than 90 days, unless a pending, sending, failed, or sent-within-30-days outbox row matches that listing
+- `telegram_outbox` rows with status `sent` and `sent_at` older than 30 days
+
+Age never deletes pending, sending, or failed outbox rows, `source_baselines`, `poller_lock`, seller-policy keys, or the current `source_health` row. There is no poll-diagnostic history table and no source-health history table, so the 14-day and 30-day history windows are not applied.
+
+`DATABASE_PATH` defaults to `./data/rent-radar.sqlite` inside the checkout. That file may already be the live Oracle inventory database. This batch does not move it. Cleanup deletes rows only. `resetDbForTests` refuses the default path. Deleting rows does not shrink the file; SQLite reuses free pages.

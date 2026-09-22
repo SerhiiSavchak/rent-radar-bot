@@ -10,6 +10,8 @@
  *   FIRST_RUN_MODE=seed|preview  (send→preview; default seed = silent baseline)
  *   DATABASE_PATH              local SQLite file
  *   HEARTBEAT_PATH             optional JSON heartbeat file
+ *
+ * Retention cleanup runs once on startup and then at most once every 24 hours.
  */
 
 import { dirname, join } from "node:path";
@@ -28,6 +30,7 @@ import {
 import { createCollectionAdapters } from "../collection/create-source-adapters.ts";
 import { openDurableRuntime, PollerLockError } from "../storage/durable-runtime.ts";
 import { writeHeartbeat } from "../storage/heartbeat.ts";
+import { runStateCleanupIfDue, STATE_RETENTION } from "../storage/state-retention.ts";
 
 loadDotenv();
 
@@ -91,6 +94,7 @@ try {
       firstRunMode: config.firstRunMode,
       schemaVersion: runtime.schemaVersion,
       databasePath: config.databasePath,
+      stateCleanupIntervalMs: STATE_RETENTION.cleanupIntervalMs,
       heartbeatPath,
       dedupeSurvivesRestart: true,
       baselineSurvivesRestart: true,
@@ -130,6 +134,21 @@ try {
     if (stop) {
       console.log(JSON.stringify({ message: "live:test-telegram:poll.aborted", cycle }));
       break;
+    }
+    const cleanup = runStateCleanupIfDue(runtime.db, { databasePath: config.databasePath });
+    if (cleanup.ran) {
+      console.log(
+        JSON.stringify({
+          message: "live:test-telegram:poll.cleanup",
+          seenRowsRemoved: cleanup.seenRowsRemoved,
+          crossSourceIdentitiesRemoved: cleanup.crossSourceIdentitiesRemoved,
+          sentOutboxRowsRemoved: cleanup.sentOutboxRowsRemoved,
+          diagnosticRowsRemoved: cleanup.diagnosticRowsRemoved,
+          durationMs: cleanup.durationMs,
+          ...(cleanup.databaseBytes !== undefined ? { databaseBytes: cleanup.databaseBytes } : {}),
+          finishedAt: cleanup.finishedAt,
+        }),
+      );
     }
     const report = await runTelegramTestCycle(
       {

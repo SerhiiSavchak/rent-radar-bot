@@ -222,15 +222,19 @@ Issue #2 accepts this as PASS on the existing Oracle VM after `a9d6eaf`. Five Pl
 | 20:29:18, 20:29:23, 20:29:28 | LUN adapter ×3         | 200  | ok   | 10         | same ids `4725239863` …; 1.0–1.5 s                                              |
 | 20:29:31, 20:29:59, 20:30:27 | RIELTOR ×3, 25 s apart | 200  | ok   | 10         | 2 requests/cycle, ~3 s, declared catalog ≥ 777, truncated by the existing limit |
 
+## Persistent state
+
+Schema 5 adds one `source_health` row per source and retention indexes. The canonical poller cleans once at startup and then at most once every 24 hours. Inactive seen listings (30 days), sent outbox rows (30 days), and cross-source identities (90 days) can be removed. Pending, sending, and failed outbox rows, source baselines, the poller lock, and seller-policy cutover state are not removed because of age. `DATABASE_PATH` still defaults to `./data/rent-radar.sqlite` inside the checkout. This batch does not move that file.
+
 ## Blockers
 
 - RIELTOR can still return 429. The adapter makes at most one extra attempt, waits at most 3 s, and does not wait out a long `Retry-After`.
-- Cross-source identity rows are not pruned. Retention cleanup is a later batch.
 - `similarPageIds` is stored and does not suppress. A shared LUN `groupId` does suppress inside LUN only.
+- The live SQLite file may still sit at `data/rent-radar.sqlite` inside the Oracle checkout. Moving it is a deployment task. Do not delete that file.
 
 ## Remaining work
 
 1. Keep DIM.RIA on `DOMRIA_ACQUISITION=html`.
 2. Leave paid scraping APIs, proxies, CAPTCHA solvers, and stealth tooling out.
-3. Add retention cleanup for `cross_source_identities` only when a later batch defines the policy.
+3. Relocate the live SQLite file outside the checkout only in the deployment batch.
 4. Do not add image hashing or AI similarity to the dedup hierarchy.
