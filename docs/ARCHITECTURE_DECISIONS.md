@@ -130,4 +130,8 @@ The canonical poller runs cleanup on startup and then at most once every 24 hour
 
 Age never deletes pending, sending, or failed outbox rows, `source_baselines`, `poller_lock`, seller-policy keys, or the current `source_health` row. There is no poll-diagnostic history table and no source-health history table, so the 14-day and 30-day history windows are not applied.
 
+## ADR: poll sample is the fetched catalog response, not a global prefix of 10
+
+Status: **open**. Live probes on 2026-09-22 showed the public responses are not newest-first. A global `limit: 10` kept five LUN cards per category out of 24 already parsed, dropped every RIELTOR house after the apartment prefix, and left same-day OLX cards at browser positions 15 and 28 uncollected. The poll now requests `catalogSampleLimit()` (80 cards per apartment/house category). LUN and DIM.RIA already download one URL per category, so the higher limit only keeps cards from that response. OLX stays on one browser page and splits the sample across property types so houses are not discarded after the apartments. RIELTOR uses its existing cap of two pages per category, because page 2 of the flats catalog contained same-day cards; it does not add a third page. That sample is still not the declared RIELTOR catalog (hundreds of cards, unstable order), so this does not by itself prove that every new listing is collected.
+
 `DATABASE_PATH` defaults to `./data/rent-radar.sqlite` inside the checkout. That file may already be the live Oracle inventory database. This batch does not move it. Cleanup deletes rows only. `resetDbForTests` refuses the default path. Deleting rows does not shrink the file; SQLite reuses free pages.

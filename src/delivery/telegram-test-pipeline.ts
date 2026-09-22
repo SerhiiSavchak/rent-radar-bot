@@ -8,6 +8,7 @@ import {
   defaultMaxPublicationAgeMinutes,
   withFirstSeenAt,
 } from "./listing-freshness.ts";
+import { catalogSampleLimit } from "./catalog-sample.ts";
 import type {
   ListingDedupe,
   OutboxItem,
@@ -638,7 +639,7 @@ export async function runTelegramTestCycle(
 
     try {
       const result: SourceFetchResult = await adapter.inspectLatest({
-        limit: 10,
+        limit: catalogSampleLimit(),
         preferOwners: usesOwnerOnlySourceFilter(deps.config),
       });
       const classified = classifySourceAttempt(result);

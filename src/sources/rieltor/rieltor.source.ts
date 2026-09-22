@@ -20,6 +20,24 @@ import {
   type RieltorCategory,
 } from "./rieltor.types.ts";
 
+/**
+ * Split a total sample across categories and stay inside the existing 2-page cap.
+ * A global slice of 10 kept only the first apartments and dropped the house page
+ * that had already been downloaded. Page 2 of flats contained same-day cards, so
+ * the poll window uses both existing pages instead of adding a third.
+ */
+export function rieltorCategoryWindow(
+  totalLimit: number,
+  categoryCount: number,
+): { pages: number; keep: number } {
+  const perCategory = Math.max(1, Math.ceil(totalLimit / Math.max(1, categoryCount)));
+  const pages = Math.min(
+    RIELTOR_MAX_PAGES_PER_CATEGORY,
+    Math.max(1, Math.ceil(perCategory / RIELTOR_PAGE_SIZE)),
+  );
+  return { pages, keep: Math.min(perCategory, pages * RIELTOR_PAGE_SIZE) };
+}
+
 export class RieltorSource implements ListingSourceAdapter {
   readonly source = "rieltor" as const;
 
@@ -58,6 +76,8 @@ export class RieltorSource implements ListingSourceAdapter {
       categories.push("house");
     }
 
+    const window = rieltorCategoryWindow(options?.limit ?? 10, categories.length);
+    const categoryOptions: FetchListingsOptions = { ...effectiveOptions, limit: window.keep };
     const listings: Listing[] = [];
     let lastStatus: number | undefined;
     let parserFailure = false;
@@ -78,7 +98,7 @@ export class RieltorSource implements ListingSourceAdapter {
       }
       const page = await this.fetchCategoryPages(
         category,
-        effectiveOptions,
+        categoryOptions,
         notes,
         config.sourceTimeoutMs,
       );
@@ -110,10 +130,10 @@ export class RieltorSource implements ListingSourceAdapter {
         continue;
       }
       sawStructure = true;
-      listings.push(...page.listings);
+      listings.push(...page.listings.slice(0, window.keep));
     }
 
-    const unique = dedupe(listings).slice(0, options?.limit ?? 10);
+    const unique = dedupe(listings).slice(0, window.keep * Math.max(1, categories.length));
     if (effectiveOptions.preferOwners !== true && declaredTotal > unique.length) {
       notes.push(
         `public catalog sample=${unique.length} declared≈${declaredTotal} — not exhaustive under existing page/limit bounds`,
