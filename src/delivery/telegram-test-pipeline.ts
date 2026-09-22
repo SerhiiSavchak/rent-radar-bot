@@ -1,4 +1,4 @@
-import type { Listing } from "../domain/listing.ts";
+import type { Listing, ListingSource } from "../domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
 import { usesOwnerOnlySourceFilter, type AppConfig } from "../config/env.ts";
 import { applyListingFilters } from "../filters/listing-filter.ts";
@@ -174,6 +174,21 @@ function countSellerDecisions(
     }
   }
   return stats;
+}
+
+const CANONICAL_HEALTH_SOURCES = ["domria", "lun", "rieltor", "olx"] as const satisfies readonly ListingSource[];
+
+function canonicalSourceEnabled(source: ListingSource, config: AppConfig): boolean {
+  if (source === "domria") {
+    return config.enableDomria;
+  }
+  if (source === "lun") {
+    return config.enableLun;
+  }
+  if (source === "rieltor") {
+    return config.enableRieltor;
+  }
+  return isOlxCollectionEnabled(config);
 }
 
 function capabilityFor(source: string, enabled: boolean, config: AppConfig): string {
@@ -358,11 +373,7 @@ export async function runTelegramTestCycle(
   };
 
   for (const adapter of deps.adapters) {
-    const enabled =
-      (adapter.source === "domria" && deps.config.enableDomria) ||
-      (adapter.source === "lun" && deps.config.enableLun) ||
-      (adapter.source === "olx" && isOlxCollectionEnabled(deps.config)) ||
-      (adapter.source === "rieltor" && deps.config.enableRieltor);
+    const enabled = canonicalSourceEnabled(adapter.source, deps.config);
 
     const capability = capabilityFor(adapter.source, enabled, deps.config);
     if (!enabled) {
@@ -436,10 +447,31 @@ export async function runTelegramTestCycle(
         capability,
         ok: false,
         listingCount: 0,
-        resultKind: browserAcquisition ? "browser_failure" : "parser_failed",
+        resultKind: browserAcquisition ? "browser_failure" : "transport_failure",
         errorSafe,
       });
     }
+  }
+
+  // Production only builds adapters for enabled sources. A flag that flips off
+  // must still replace a previous ok/failure row, without fetching that source.
+  for (const source of CANONICAL_HEALTH_SOURCES) {
+    if (canonicalSourceEnabled(source, deps.config)) {
+      continue;
+    }
+    if (sourceAttempts.some((attempt) => attempt.source === source)) {
+      continue;
+    }
+    deps.baseline.recordSourceHealth?.(
+      {
+        source,
+        transport: "n/a",
+        listingCount: 0,
+        ok: false,
+        resultKind: "disabled",
+      },
+      now(),
+    );
   }
 
   let sentOk = 0;

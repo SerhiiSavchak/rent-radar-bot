@@ -65,7 +65,7 @@ export function normalizeSourceHealthStatus(input: SourceHealthWrite): SourceHea
   if (kind === "parser_failed") {
     return input.source === "olx" && input.transport === PLAYWRIGHT_TRANSPORT
       ? "browser_failure"
-      : "parser_failure";
+      : "transport_failure";
   }
   if (kind === "browser_failure") {
     return "browser_failure";

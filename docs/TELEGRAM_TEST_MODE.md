@@ -83,7 +83,7 @@ npm run live:test-telegram:canary
 - Price is parsed and displayed when present. Missing price is **«Ціна не вказана»**. There is no min/max price eligibility filter.
 - Broadening seller eligibility does not reset SQLite baselines, seen listings, or the outbox. On first run after upgrade, a one-time `seller_policy` cutover timestamp is stored so previously hidden catalog inventory is not sent as «Нова публікація».
 - Oracle VM: `scripts/oracle-telegram-test/install-systemd.sh` installs a user service/timer (start after reboot, restart on failure, one unit instance, logs + heartbeat). Secrets stay in `~/.config/rent-radar/telegram-test.env`.
-- `disabled`, `transport_blocked`, `parser_failed`, and `valid_empty` are reported per source.
+- `disabled`, `transport_blocked`, `parser_failure`, `transport_failure`, `browser_failure`, and `valid_empty` are reported per source. A thrown fetch is `transport_failure`, or `browser_failure` for OLX Playwright.
 - Final summary includes `cycles_with_partial_source_coverage`.
 
 ## Persistent state
@@ -96,12 +96,12 @@ Schema version was 4 and is now 5. Opening the poller applies the new migration 
 | --- | --- |
 | `ok` | Listings were parsed |
 | `valid_empty` | The catalog structure was present and empty |
-| `parser_failure` | The body was not a trustworthy catalog, including a cycle report of `parser_failed` |
+| `parser_failure` | The adapter inspected content and rejected the catalog structure |
 | `http_error` | HTTP failure that is not a 429 and not a blocked transport |
 | `rate_limited` | HTTP 429, including a RIELTOR 429 |
-| `transport_failure` | Poller `transport_blocked`, usually HTTP 403 |
+| `transport_failure` | `transport_blocked` (usually HTTP 403), or a thrown network/adapter error |
 | `browser_failure` | OLX Playwright acquisition threw |
-| `disabled` | Source turned off in config |
+| `disabled` | Config flag is off. Written even when no adapter is constructed. OLX is disabled only when both OLX flags are off |
 
 `ok` and `valid_empty` reset the failure streak and set `last_success_at`. A later failure keeps that success time. `parser_failure` is never stored as `valid_empty`. No successful HTML is stored. Error text is shortened and redacted.
 

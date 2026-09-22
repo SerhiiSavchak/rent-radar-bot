@@ -92,4 +92,4 @@ npm run live:olx:browser-extract
 - Failed Telegram sends stay retryable; `sent` is recorded only after Telegram confirms success.
 - Concurrent pollers are rejected (script flock + SQLite lock).
 - RIELTOR intermittent HTTP 403 is classified as `transport_blocked` when request path/headers match soak (owners filter) — not a silent empty market.
-- Source failures (`disabled` / `transport_blocked` / `parser_failed` / `valid_empty`) are reported distinctly; final summary includes partial coverage.
+- Source failures (`disabled` / `transport_blocked` / `parser_failure` / `transport_failure` / `browser_failure` / `valid_empty`) are reported distinctly; final summary includes partial coverage.

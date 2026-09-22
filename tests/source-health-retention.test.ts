@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createCollectionAdapters } from "../src/collection/create-source-adapters.ts";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import type { Listing } from "../src/domain/listing.ts";
@@ -327,6 +328,13 @@ describe("persistent source health and retention", () => {
         transport: "stock_playwright_chromium",
       }),
     ).toBe("browser_failure");
+    expect(
+      normalizeSourceHealthStatus({
+        source: "domria",
+        resultKind: "parser_failed",
+        errorSafe: "socket hang up",
+      }),
+    ).toBe("transport_failure");
   });
 
   it("keeps source health across reopen and does not let one source overwrite another", () => {
@@ -549,7 +557,8 @@ describe("persistent source health and retention", () => {
     );
     expect(readSourceHealth(getDb(), "olx")?.status).toBe("disabled");
     expect(readSourceHealth(getDb(), "olx")?.consecutiveFailures).toBe(0);
-    expect(readSourceHealth(getDb(), "domria")?.status).toBe("parser_failure");
+    expect(readSourceHealth(getDb(), "domria")?.status).toBe("transport_failure");
+    expect(readSourceHealth(getDb(), "domria")?.status).not.toBe("parser_failure");
     expect(readSourceHealth(getDb(), "domria")?.lastErrorSafe).toContain("socket hang up");
 
     closeDb();
@@ -572,6 +581,97 @@ describe("persistent source health and retention", () => {
     expect(browser?.lastErrorSafe).toContain("playwright crashed");
     expect(browser?.consecutiveFailures).toBe(1);
     expect(browser?.lastSuccessAt).toBeNull();
+  });
+
+  it("replaces a previous ok row with disabled when production omits the adapter", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const lunListing = sampleListing({
+      source: "lun",
+      sourceId: "lun-1",
+      url: "https://lun.ua/uk/realty/lun-1",
+    });
+    const inspectLatest = vi.fn(async (): Promise<SourceFetchResult> => ({
+      listings: [lunListing],
+      transport: "test",
+      dataKind: "MOCK DATA",
+      resultKind: "ok",
+      httpStatus: 200,
+      health: {
+        source: "lun",
+        healthy: true,
+        checkedAt: new Date("2026-09-22T12:00:00.000Z"),
+        resultKind: "ok",
+        httpStatus: 200,
+      },
+    }));
+    const lunAdapter: ListingSourceAdapter = {
+      source: "lun",
+      fetchLatest: async () => [lunListing],
+      inspectLatest,
+      healthCheck: async () => ({
+        source: "lun",
+        healthy: true,
+        checkedAt: new Date("2026-09-22T12:00:00.000Z"),
+      }),
+    };
+    const enabledConfig = testConfig({
+      ENABLE_DOMRIA: "false",
+      ENABLE_LUN: "true",
+      ENABLE_RIELTOR: "false",
+      ENABLE_OLX: "false",
+      ENABLE_OLX_BROWSER: "false",
+    });
+    const enabledAdapters = createCollectionAdapters(enabledConfig, { lun: lunAdapter });
+    expect(enabledAdapters.map((item) => item.source)).toEqual(["lun"]);
+    const checkedAt = new Date("2026-09-22T12:00:00.000Z");
+    await runTelegramTestCycle(
+      {
+        adapters: enabledAdapters,
+        config: enabledConfig,
+        sink: sink(okSend()),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => checkedAt,
+      },
+      1,
+    );
+    expect(inspectLatest).toHaveBeenCalledTimes(1);
+    expect(readSourceHealth(getDb(), "lun")?.status).toBe("ok");
+
+    const disabledConfig = testConfig({
+      ENABLE_DOMRIA: "false",
+      ENABLE_LUN: "false",
+      ENABLE_RIELTOR: "false",
+      ENABLE_OLX: "false",
+      ENABLE_OLX_BROWSER: "false",
+    });
+    const disabledAdapters = createCollectionAdapters(disabledConfig, { lun: lunAdapter });
+    expect(disabledAdapters).toEqual([]);
+    const disabledAt = new Date("2026-09-22T13:00:00.000Z");
+    await runTelegramTestCycle(
+      {
+        adapters: disabledAdapters,
+        config: disabledConfig,
+        sink: sink(okSend()),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => disabledAt,
+      },
+      2,
+    );
+    expect(inspectLatest).toHaveBeenCalledTimes(1);
+    const lun = readSourceHealth(getDb(), "lun");
+    expect(lun?.status).toBe("disabled");
+    expect(lun?.checkedAt).toBe(disabledAt.toISOString());
+    expect(lun?.lastSuccessAt).toBe(checkedAt.toISOString());
+    expect(readSourceHealth(getDb(), "domria")?.status).toBe("disabled");
+    expect(readSourceHealth(getDb(), "rieltor")?.status).toBe("disabled");
+    expect(readSourceHealth(getDb(), "olx")?.status).toBe("disabled");
+    expect(count(getDb(), "SELECT COUNT(*) AS n FROM source_health WHERE source = 'olx'")).toBe(1);
+    expect(count(getDb(), "SELECT COUNT(*) AS n FROM source_health WHERE source = 'lun'")).toBe(1);
   });
 
   it("increments the failure streak from the poll and keeps the last success after relapse", async () => {
