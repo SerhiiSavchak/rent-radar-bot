@@ -392,6 +392,23 @@ function capabilityFor(source: string, enabled: boolean, config: AppConfig): str
   return "http";
 }
 
+function coverageDiagnostic(coverage: NonNullable<SourceFetchResult["coverage"]>): string {
+  const rieltorWalk =
+    coverage.catchup !== undefined ||
+    coverage.committedBoundary !== undefined ||
+    coverage.oldestObservedPublication !== undefined ||
+    coverage.newestObservedPublication !== undefined;
+  if (rieltorWalk) {
+    return formatRieltorCoverage(coverage);
+  }
+  return [
+    "acquired_response_cap",
+    `cardsFetched=${coverage.cardsFetched}`,
+    `boundaryReached=${coverage.boundaryReached}`,
+    `coverageTruncated=${coverage.coverageTruncated}`,
+  ].join(" ");
+}
+
 function classifySourceAttempt(result: SourceFetchResult): {
   ok: boolean;
   processable: boolean;
@@ -431,7 +448,7 @@ function classifySourceAttempt(result: SourceFetchResult): {
       ok: false,
       processable: true,
       resultKind: "coverage_degraded",
-      errorSafe: formatRieltorCoverage(result.coverage),
+      errorSafe: coverageDiagnostic(result.coverage),
     };
   }
   if ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty") {
@@ -1043,7 +1060,10 @@ export async function runTelegramTestCycle(
     }
 
     // Baseline already exists — only consider unseen + freshness.
-    deps.baseline.recordSuccess(bucket.source, now());
+    // An incomplete scan must not move the last complete monitoring timestamp.
+    if (attempt?.resultKind !== "coverage_degraded") {
+      deps.baseline.recordSuccess(bucket.source, now());
+    }
     const unseen = deps.dedupe.filterUnseen(bucket.listings).map((l) => withFirstSeenAt(l, now()));
     newAfterDedupe += unseen.length;
     newlyObservedCount += unseen.length;

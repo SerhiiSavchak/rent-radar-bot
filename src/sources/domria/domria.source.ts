@@ -13,7 +13,7 @@ import { logger } from "../../utils/logger.ts";
 import { bindingPollIntervalSeconds, decideDomriaTransport } from "./domria-budget.ts";
 import { extractInitialStateJson, inspectDomriaCatalog, parseDomriaInfo } from "./domria.parser.ts";
 import { domriaSearchResponseSchema } from "./domria.types.ts";
-import { keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
+import { coverageForAcquiredCards, keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
 
 const APARTMENTS_HTML = "https://dom.ria.com/uk/arenda-kvartir/lvov/";
 const HOUSES_HTML = "https://dom.ria.com/uk/arenda-domov/lvov/";
@@ -269,13 +269,16 @@ function finish(
     ...(flags.parserFailure ? { parserFailure: true } : {}),
     ...(flags.httpError ? { httpError: true } : {}),
   });
-  const healthyFinal = resultKind === "ok" || resultKind === "valid_empty";
+  const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
+  const healthyFinal =
+    (resultKind === "ok" || resultKind === "valid_empty") && !acquired.truncated;
   logger.info("domria.inspect", { transport, count: unique.length, status, resultKind });
   return {
     listings: unique,
     transport,
     dataKind: "LIVE DATA",
     resultKind,
+    ...(capCoverage ? { coverage: capCoverage } : {}),
     ...(status !== undefined ? { httpStatus: status } : {}),
     rawNotes: notes,
     health: {

@@ -13,7 +13,7 @@ import { AppError } from "../../utils/errors.ts";
 import { headerBag, httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
 import { inspectLunHtml } from "./lun.parser.ts";
-import { ACQUIRED_RESPONSE_CAP_PER_CATEGORY } from "../../delivery/catalog-sample.ts";
+import { coverageForAcquiredCards, keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
 
 /** Public Lviv long-term flats catalog. Not the bez-poserednykiv owner-only route. */
 export const LUN_FLATS_URL = "https://lun.ua/rent/lviv/flats";
@@ -135,15 +135,16 @@ export class LunSource implements ListingSourceAdapter {
         continue;
       }
       sawStructure = true;
-      if (inspection.listings.length > ACQUIRED_RESPONSE_CAP_PER_CATEGORY) {
-        notes.push(
-          `${page} acquired-response cap kept ${ACQUIRED_RESPONSE_CAP_PER_CATEGORY} of ${inspection.listings.length}`,
-        );
-      }
-      listings.push(...inspection.listings.slice(0, ACQUIRED_RESPONSE_CAP_PER_CATEGORY));
+      listings.push(...inspection.listings);
     }
 
-    const unique = dedupe(listings);
+    const acquired = keepAcquiredByCategory(dedupe(listings));
+    const unique = acquired.kept;
+    if (acquired.truncated) {
+      notes.push(
+        `acquired-response cap kept ${unique.length} cards; a normal first page is below the cap`,
+      );
+    }
     // Partial success: if any page yielded listings, prefer ok over masking as parser_failure.
     const resultKind =
       unique.length > 0
@@ -155,13 +156,15 @@ export class LunSource implements ListingSourceAdapter {
             : sawStructure
               ? "valid_empty"
               : "http_error";
-    const healthy = resultKind === "ok" || resultKind === "valid_empty";
+    const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
+    const healthy = (resultKind === "ok" || resultKind === "valid_empty") && !acquired.truncated;
     logger.info("lun.inspect", { count: unique.length, status: lastStatus, resultKind });
     return {
       listings: unique,
       transport: "embedded JSON (Next.js RSC cards + JSON-LD)",
       dataKind: "LIVE DATA",
       resultKind,
+      ...(capCoverage ? { coverage: capCoverage } : {}),
       ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
       rawNotes: notes,
       integrity: {

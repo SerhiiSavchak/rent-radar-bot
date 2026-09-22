@@ -12,7 +12,7 @@ import type {
   SourceHealth,
 } from "../../domain/source.ts";
 import { getConfig } from "../../config/env.ts";
-import { keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
+import { coverageForAcquiredCards, keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
 import { AppError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import {
@@ -78,7 +78,8 @@ export function mapOlxBrowserExtractToFetchResult(
     resultKind = "parser_failure";
   }
 
-  const healthy = resultKind === "ok" || resultKind === "valid_empty";
+  const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
+  const healthy = (resultKind === "ok" || resultKind === "valid_empty") && !acquired.truncated;
   const notes = [
     `transport=${OLX_BROWSER_TRANSPORT}`,
     "no_http_api_fallback=true",
@@ -96,6 +97,7 @@ export function mapOlxBrowserExtractToFetchResult(
     transport: OLX_BROWSER_TRANSPORT,
     dataKind: "LIVE DATA",
     resultKind,
+    ...(capCoverage ? { coverage: capCoverage } : {}),
     rawNotes: notes,
     ...(reportedStatus !== undefined ? { httpStatus: reportedStatus } : {}),
     health: {
@@ -108,9 +110,11 @@ export function mapOlxBrowserExtractToFetchResult(
       ...(reportedStatus !== undefined ? { httpStatus: reportedStatus } : {}),
       message: healthy
         ? `OLX browser extract returned ${unique.length} listings`
-        : blockedWithoutExtract
-          ? `OLX browser transport_blocked HTTP ${blockedStatus} — not an HTTP API success and not a catalog extract`
-          : `OLX browser extract did not return listings (${resultKind})`,
+        : acquired.truncated
+          ? `OLX browser extract kept ${unique.length} listings after the acquired-response cap`
+          : blockedWithoutExtract
+            ? `OLX browser transport_blocked HTTP ${blockedStatus} — not an HTTP API success and not a catalog extract`
+            : `OLX browser extract did not return listings (${resultKind})`,
     },
   };
 }
