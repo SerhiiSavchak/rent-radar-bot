@@ -5,7 +5,13 @@ import {
   type CrossSourceDecision,
   type IdentityHit,
 } from "../delivery/cross-source-dedup.ts";
-import { transientNextDelayMs } from "../delivery/telegram-delivery.ts";
+import {
+  channelPauseDelayMs,
+  TELEGRAM_PAUSE_FAILURES_KEY,
+  TELEGRAM_PAUSE_REASON_KEY,
+  TELEGRAM_PAUSE_UNTIL_KEY,
+  transientNextDelayMs,
+} from "../delivery/telegram-delivery.ts";
 import {
   canonicalListingUrl,
   listingFingerprint,
@@ -374,6 +380,31 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     return raw ? new Date(raw) : undefined;
   }
 
+  telegramPauseActive(at = new Date()): boolean {
+    const until = this.readMeta(TELEGRAM_PAUSE_UNTIL_KEY);
+    return until !== undefined && Date.parse(until) > at.getTime();
+  }
+
+  /** Durable channel pause. Survives restart. Does not mark any source unhealthy. */
+  noteOperatorChannelFailure(
+    at: Date,
+    reason: string,
+  ): { until: string; delayMs: number; failures: number } {
+    const failures = Number(this.readMeta(TELEGRAM_PAUSE_FAILURES_KEY) ?? "0") + 1;
+    const delayMs = channelPauseDelayMs(Number.isFinite(failures) ? failures : 1);
+    const until = new Date(at.getTime() + delayMs).toISOString();
+    this.writeMeta(TELEGRAM_PAUSE_UNTIL_KEY, until);
+    this.writeMeta(TELEGRAM_PAUSE_REASON_KEY, reason.slice(0, 80));
+    this.writeMeta(TELEGRAM_PAUSE_FAILURES_KEY, String(failures));
+    return { until, delayMs, failures };
+  }
+
+  clearTelegramPause(): void {
+    this.db
+      .prepare("DELETE FROM schema_meta WHERE key IN (?, ?, ?)")
+      .run(TELEGRAM_PAUSE_UNTIL_KEY, TELEGRAM_PAUSE_REASON_KEY, TELEGRAM_PAUSE_FAILURES_KEY);
+  }
+
   private readMeta(key: string): string | undefined {
     const row = this.db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as
       { value: string } | undefined;
@@ -436,7 +467,9 @@ function rowToOutboxItem(row: OutboxRow): OutboxItem {
     attemptCount: row.attempt_count,
     ...(row.last_attempt_at ? { lastAttemptAt: row.last_attempt_at } : {}),
     ...(row.last_error ? { lastError: row.last_error } : {}),
-    ...(row.error_class === "transient" || row.error_class === "permanent"
+    ...(row.error_class === "transient" ||
+    row.error_class === "permanent" ||
+    row.error_class === "operator_action"
       ? { errorClass: row.error_class }
       : {}),
     ...(row.next_attempt_at ? { nextAttemptAt: row.next_attempt_at } : {}),

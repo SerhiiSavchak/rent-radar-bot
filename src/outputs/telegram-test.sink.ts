@@ -38,6 +38,7 @@ export type TelegramSendResult = {
   messageCount: number;
   errorSafe?: string;
   errorClass?: TelegramErrorClass;
+  failureReason?: string;
   retryAfterMs?: number;
   parseError?: boolean;
   bodies?: string[];
@@ -332,6 +333,9 @@ export class TelegramTestSink {
           messageCount: i,
           ...(chunkResult.errorSafe !== undefined ? { errorSafe: chunkResult.errorSafe } : {}),
           ...(chunkResult.errorClass !== undefined ? { errorClass: chunkResult.errorClass } : {}),
+          ...(chunkResult.failureReason !== undefined
+            ? { failureReason: chunkResult.failureReason }
+            : {}),
           ...(chunkResult.retryAfterMs !== undefined
             ? { retryAfterMs: chunkResult.retryAfterMs }
             : {}),
@@ -352,6 +356,7 @@ export class TelegramTestSink {
     status?: number;
     errorSafe?: string;
     errorClass?: TelegramErrorClass;
+    failureReason?: string;
     retryAfterMs?: number;
     parseError?: boolean;
   }> {
@@ -359,6 +364,7 @@ export class TelegramTestSink {
     let lastStatus: number | undefined;
     let lastError: string | undefined;
     let lastClass: TelegramErrorClass | undefined;
+    let lastReason: string | undefined;
     let lastRetryAfterMs: number | undefined;
     let lastParseError = false;
 
@@ -388,6 +394,7 @@ export class TelegramTestSink {
         );
         const classified = classifyTelegramFailure(response.status, rawBody);
         lastClass = classified.errorClass;
+        lastReason = classified.reason;
         lastParseError = classified.parseError;
         if (response.status === 429) {
           const retryAfterMs = readTelegramRetryAfterMs(
@@ -415,6 +422,7 @@ export class TelegramTestSink {
           this.options.botToken,
         );
         lastClass = "transient";
+        lastReason = "network";
         lastParseError = false;
         if (attempt < this.options.maxRetries) {
           await this.sleep(Math.min(8_000, 500 * 2 ** attempt));
@@ -429,6 +437,7 @@ export class TelegramTestSink {
       ...(lastStatus !== undefined ? { status: lastStatus } : {}),
       ...(lastError !== undefined ? { errorSafe: lastError } : {}),
       ...(lastClass !== undefined ? { errorClass: lastClass } : {}),
+      ...(lastReason !== undefined ? { failureReason: lastReason } : {}),
       ...(lastRetryAfterMs !== undefined ? { retryAfterMs: lastRetryAfterMs } : {}),
       ...(lastParseError ? { parseError: true } : {}),
     };

@@ -35,7 +35,7 @@ export type SourceBaseline = {
 };
 
 export type OutboxStatus = "pending" | "sending" | "sent" | "failed";
-export type OutboxErrorClass = "transient" | "permanent";
+export type OutboxErrorClass = "transient" | "permanent" | "operator_action";
 
 export type OutboxItem = {
   id: number;

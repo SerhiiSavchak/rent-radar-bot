@@ -109,15 +109,15 @@ export async function runTelegramCanary(deps: {
   }
 
   const result = await deps.sink.sendText(message);
-  if (!result.ok) {
+  if (!result.ok || result.dryRun || deps.sink.dryRun) {
     return {
       sent: false,
       alreadySent: false,
-      dryRun: result.dryRun,
+      dryRun: result.dryRun || deps.sink.dryRun,
       chatId: deps.sink.chatId,
       databasePath: deps.databasePath,
       message,
-      ...(result.errorSafe ? { errorSafe: result.errorSafe } : {}),
+      ...(!result.ok && result.errorSafe ? { errorSafe: result.errorSafe } : {}),
     };
   }
 

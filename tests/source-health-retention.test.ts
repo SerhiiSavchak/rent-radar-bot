@@ -107,7 +107,7 @@ function testConfig(overrides: Record<string, string> = {}) {
 function sink(sendListing: TelegramTestSink["sendListing"]): TelegramTestSink {
   return {
     chatId: "1",
-    dryRun: true,
+    dryRun: false,
     sendListing,
     sendText: async () => ({ ok: true, dryRun: true, attempts: 0, chatId: "1", messageCount: 1 }),
   } as unknown as TelegramTestSink;

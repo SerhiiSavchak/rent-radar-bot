@@ -3,8 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
+import { CANARY_META_KEY, runTelegramCanary } from "../src/delivery/telegram-canary.ts";
 import {
+  channelPauseDelayMs,
   classifyTelegramFailure,
+  TELEGRAM_PAUSE_FAILURES_KEY,
+  TELEGRAM_PAUSE_UNTIL_KEY,
   transientNextDelayMs,
 } from "../src/delivery/telegram-delivery.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
@@ -134,11 +138,21 @@ describe("telegram delivery hardening", () => {
     expect(classifyTelegramFailure(undefined, "").errorClass).toBe("transient");
     expect(classifyTelegramFailure(500, "down").errorClass).toBe("transient");
     expect(classifyTelegramFailure(429, "rate").errorClass).toBe("transient");
-    expect(classifyTelegramFailure(403, "Forbidden: bot was blocked").reason).toBe("forbidden");
-    expect(classifyTelegramFailure(400, "Bad Request: chat not found").reason).toBe(
-      "chat_not_found",
-    );
-    expect(classifyTelegramFailure(401, "Unauthorized").reason).toBe("unauthorized");
+    expect(classifyTelegramFailure(403, "Forbidden: bot was blocked")).toMatchObject({
+      errorClass: "operator_action",
+      reason: "forbidden",
+    });
+    expect(classifyTelegramFailure(400, "Bad Request: chat not found")).toMatchObject({
+      errorClass: "operator_action",
+      reason: "chat_not_found",
+    });
+    expect(classifyTelegramFailure(401, "Unauthorized")).toMatchObject({
+      errorClass: "operator_action",
+      reason: "unauthorized",
+    });
+    expect(channelPauseDelayMs(1)).toBe(10 * 60 * 1000);
+    expect(channelPauseDelayMs(2)).toBe(20 * 60 * 1000);
+    expect(channelPauseDelayMs(8)).toBe(6 * 60 * 60 * 1000);
     expect(classifyTelegramFailure(400, "Bad Request: can't parse entities").parseError).toBe(true);
     expect(classifyTelegramFailure(400, "Bad Request: message is too long").errorClass).toBe(
       "permanent",
@@ -378,7 +392,7 @@ describe("telegram delivery hardening", () => {
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { text: string };
       if (body.text.includes("realty-a")) {
-        return jsonResponse(403, "Forbidden: bot was blocked by the user");
+        return jsonResponse(400, "Bad Request: message is too long");
       }
       return jsonResponse(200, "{}");
     });
@@ -416,6 +430,7 @@ describe("telegram delivery hardening", () => {
     expect(store.listRetryable(20, new Date(sendAt.getTime() + 24 * 60 * 60 * 1000))).toHaveLength(
       0,
     );
+    expect(meta(TELEGRAM_PAUSE_UNTIL_KEY)).toBeUndefined();
   });
 
   it("falls back from a parse error to plain text and keeps the row sent", async () => {
@@ -501,9 +516,10 @@ describe("telegram delivery hardening", () => {
       botToken: "1:token",
       chatId: "listing",
       testMode: true,
-      dryRun: true,
+      dryRun: false,
       timeoutMs: 1000,
       maxRetries: 0,
+      fetchImpl: (async () => jsonResponse(200, "{}")) as unknown as typeof fetch,
     });
     const first = await runTelegramTestCycle(
       {
@@ -772,4 +788,409 @@ describe("telegram delivery hardening", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(getDb().prepare("SELECT COUNT(*) AS n FROM telegram_outbox").get()).toEqual({ n: 0 });
   });
+
+  it("does not persist delivery, seen, or identity for a dry-run listing", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [sourceAdapter("domria", () => batch)];
+    await seed(store, adapters);
+    const item = listing();
+    batch.push(item);
+    const fetchImpl = vi.fn();
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: config(),
+        sink: new TelegramTestSink({
+          botToken: "1:token",
+          chatId: "listing",
+          testMode: true,
+          dryRun: true,
+          timeoutMs: 1000,
+          maxRetries: 0,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        }),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => sendAt,
+      },
+      2,
+    );
+    expect(report.sentOk).toBe(1);
+    expect(report.dryRun).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(store.hasSeen(item)).toBe(false);
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM telegram_outbox").get()).toEqual({ n: 0 });
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM cross_source_identities").get()).toEqual({
+      n: 0,
+    });
+  });
+
+  it("leaves an existing retry row unchanged during dry-run", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const item = listing();
+    const adapters = [sourceAdapter("domria", () => [])];
+    await seed(store, adapters);
+    const enqueued = store.enqueueIfNew(item, "new_publication");
+    expect(store.claimForSend(enqueued.id, sendAt)).toBe(true);
+    store.markFailed(enqueued.id, "telegram 503", sendAt, { errorClass: "transient" });
+    const before = outboxRow(item.sourceId);
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: config(),
+        sink: new TelegramTestSink({
+          botToken: "1:token",
+          chatId: "listing",
+          testMode: true,
+          dryRun: true,
+          timeoutMs: 1000,
+          maxRetries: 0,
+        }),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(sendAt.getTime() + 3 * 60 * 1000),
+      },
+      2,
+    );
+    expect(report.dryRun).toBe(true);
+    expect(outboxRow(item.sourceId)).toEqual(before);
+    expect(store.hasSeen(item)).toBe(false);
+  });
+
+  it("does not consume the canary marker or an admin incident during dry-run", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const db = getDb(path);
+    const dry = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "listing",
+      testMode: true,
+      dryRun: true,
+      timeoutMs: 1000,
+      maxRetries: 0,
+    });
+    const preview = await runTelegramCanary({
+      env: {
+        TELEGRAM_TEST_MODE: "true",
+        TELEGRAM_CANARY: "true",
+        TELEGRAM_BOT_TOKEN: "1:token",
+        TELEGRAM_CHAT_ID: "listing",
+      },
+      sink: dry,
+      db,
+      databasePath: path,
+      now: () => sendAt,
+    });
+    expect(preview.sent).toBe(false);
+    expect(preview.alreadySent).toBe(false);
+    expect(meta(CANARY_META_KEY)).toBeUndefined();
+
+    const appConfig = config({ ADMIN_TELEGRAM_CHAT_ID: "admin" });
+    const failing = [sourceAdapter("domria", () => [], "parser_failure")];
+    for (const minute of [0, 10, 20]) {
+      await runTelegramTestCycle(
+        {
+          adapters: failing,
+          config: appConfig,
+          sink: dry,
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => new Date(sendAt.getTime() + minute * 60 * 1000),
+        },
+        minute / 10 + 1,
+      );
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM source_admin_alerts").get()).toEqual({ n: 0 });
+    const fetchImpl = vi.fn(async () => jsonResponse(200, "{}"));
+    const live = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "listing",
+      testMode: true,
+      dryRun: false,
+      timeoutMs: 1000,
+      maxRetries: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const incident = await runTelegramTestCycle(
+      {
+        adapters: failing,
+        config: appConfig,
+        sink: live,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date("2026-09-22T10:40:00.000Z"),
+      },
+      4,
+    );
+    expect(incident.adminAlertsSent).toBe(1);
+    expect(alertOpen("domria")).toBe(1);
+
+    const healthy = [sourceAdapter("domria", () => [], "valid_empty")];
+    const dryRecovery = await runTelegramTestCycle(
+      {
+        adapters: healthy,
+        config: appConfig,
+        sink: dry,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date("2026-09-22T10:50:00.000Z"),
+      },
+      5,
+    );
+    expect(dryRecovery.adminAlertsSent).toBe(0);
+    expect(alertOpen("domria")).toBe(1);
+    const recovery = await runTelegramTestCycle(
+      {
+        adapters: healthy,
+        config: appConfig,
+        sink: live,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date("2026-09-22T11:00:00.000Z"),
+      },
+      6,
+    );
+    expect(recovery.adminAlertsSent).toBe(1);
+    expect(alertOpen("domria")).toBe(0);
+
+    const sent = await runTelegramCanary({
+      env: {
+        TELEGRAM_TEST_MODE: "true",
+        TELEGRAM_CANARY: "true",
+        TELEGRAM_BOT_TOKEN: "1:token",
+        TELEGRAM_CHAT_ID: "listing",
+      },
+      sink: live,
+      db,
+      databasePath: path,
+      now: () => sendAt,
+    });
+    expect(sent.sent).toBe(true);
+    expect(meta(CANARY_META_KEY)).toBe(sendAt.toISOString());
+    expect(fetchImpl).toHaveBeenCalled();
+  });
+
+  it("pauses the channel on operator-action failures and still queues new listings", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [sourceAdapter("domria", () => batch)];
+    await seed(store, adapters);
+    batch.push(
+      listing({ sourceId: "blocked", url: "https://dom.ria.com/uk/realty-blocked.html" }),
+      listing({ sourceId: "later", url: "https://dom.ria.com/uk/realty-later.html" }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(401, JSON.stringify({ ok: false, description: "Unauthorized" })),
+    );
+    const sink = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "listing",
+      testMode: true,
+      dryRun: false,
+      timeoutMs: 1000,
+      maxRetries: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const failed = await runTelegramTestCycle(
+      {
+        adapters,
+        config: config(),
+        sink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => sendAt,
+      },
+      2,
+    );
+    expect(failed.sentOk).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(outboxRow("blocked")).toMatchObject({ status: "failed", errorClass: "operator_action" });
+    expect(outboxRow("later")).toMatchObject({ status: "pending", errorClass: null });
+    expect(store.hasSeen(batch[0]!)).toBe(false);
+    expect(store.hasSeen(batch[1]!)).toBe(false);
+    const until = meta(TELEGRAM_PAUSE_UNTIL_KEY);
+    expect(Date.parse(String(until)) - sendAt.getTime()).toBe(channelPauseDelayMs(1));
+    closeDb();
+    const reopened = new DurableDeliveryStore(getDb(path));
+    expect(reopened.telegramPauseActive(new Date(sendAt.getTime() + 60 * 1000))).toBe(true);
+    expect(meta(TELEGRAM_PAUSE_UNTIL_KEY)).toBe(until);
+
+    const during = await runTelegramTestCycle(
+      {
+        adapters,
+        config: config(),
+        sink,
+        dedupe: reopened,
+        baseline: reopened,
+        outbox: reopened,
+        now: () => new Date(sendAt.getTime() + 5 * 60 * 1000),
+      },
+      3,
+    );
+    expect(during.sentOk).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(outboxRow("later")?.status).toBe("pending");
+    const health = getDb()
+      .prepare("SELECT status FROM source_health WHERE source = 'domria'")
+      .get() as { status: string };
+    expect(health.status).toBe("ok");
+  });
+
+  it("probes once after the pause and clears it only when Telegram accepts", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const adapters = [sourceAdapter("domria", () => [])];
+    await seed(store, adapters);
+    const first = listing({ sourceId: "probe", url: "https://dom.ria.com/uk/realty-probe.html" });
+    const second = listing({ sourceId: "next", url: "https://dom.ria.com/uk/realty-next.html" });
+    store.enqueueIfNew(first, "new_publication");
+    store.enqueueIfNew(second, "new_publication");
+    store.noteOperatorChannelFailure(new Date(sendAt.getTime() - 60_000), "forbidden");
+    getDb()
+      .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
+      .run(new Date(sendAt.getTime() - 1000).toISOString(), TELEGRAM_PAUSE_UNTIL_KEY);
+    let permit = false;
+    const fetchImpl = vi.fn(async () => {
+      if (!permit) {
+        return jsonResponse(403, "Forbidden: bot was blocked by the user");
+      }
+      return jsonResponse(200, "{}");
+    });
+    const sink = new TelegramTestSink({
+      botToken: "1:token",
+      chatId: "listing",
+      testMode: true,
+      dryRun: false,
+      timeoutMs: 1000,
+      maxRetries: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const probe = await runTelegramTestCycle(
+      {
+        adapters,
+        config: config(),
+        sink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => sendAt,
+      },
+      2,
+    );
+    expect(probe.sentFailed).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(outboxRow("probe")).toMatchObject({ status: "failed", errorClass: "operator_action" });
+    expect(outboxRow("next")?.status).toBe("pending");
+    expect(meta(TELEGRAM_PAUSE_FAILURES_KEY)).toBe("2");
+    expect(Date.parse(String(meta(TELEGRAM_PAUSE_UNTIL_KEY))) - sendAt.getTime()).toBe(
+      channelPauseDelayMs(2),
+    );
+
+    permit = true;
+    getDb()
+      .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
+      .run(new Date(sendAt.getTime() + 20 * 60 * 1000 - 1000).toISOString(), TELEGRAM_PAUSE_UNTIL_KEY);
+    const recovered = await runTelegramTestCycle(
+      {
+        adapters,
+        config: config(),
+        sink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(sendAt.getTime() + 20 * 60 * 1000),
+      },
+      3,
+    );
+    expect(recovered.sentOk).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(meta(TELEGRAM_PAUSE_UNTIL_KEY)).toBeUndefined();
+    expect(outboxRow("probe")?.status).toBe("sent");
+    expect(outboxRow("next")?.status).toBe("sent");
+  });
+
+  it("keeps a chat-not-found failure on the same channel pause", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [sourceAdapter("domria", () => batch)];
+    await seed(store, adapters);
+    batch.push(listing({ sourceId: "missing-chat", url: "https://dom.ria.com/uk/realty-chat.html" }));
+    const fetchImpl = vi.fn(async () => jsonResponse(400, "Bad Request: chat not found"));
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config: config(),
+        sink: new TelegramTestSink({
+          botToken: "1:token",
+          chatId: "listing",
+          testMode: true,
+          dryRun: false,
+          timeoutMs: 1000,
+          maxRetries: 0,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        }),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => sendAt,
+      },
+      2,
+    );
+    expect(outboxRow("missing-chat")).toMatchObject({
+      status: "failed",
+      errorClass: "operator_action",
+    });
+    expect(store.telegramPauseActive(sendAt)).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
+
+function meta(key: string): string | undefined {
+  const row = getDb().prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value;
+}
+
+function alertOpen(source: string): number {
+  const row = getDb()
+    .prepare("SELECT incident_open AS incidentOpen FROM source_admin_alerts WHERE source = ?")
+    .get(source) as { incidentOpen: number } | undefined;
+  return row?.incidentOpen ?? 0;
+}
+
+function outboxRow(sourceId: string):
+  | {
+      status: string;
+      errorClass: string | null;
+      attemptCount: number;
+      nextAttemptAt: string | null;
+    }
+  | undefined {
+  return getDb()
+    .prepare(
+      `SELECT status, error_class AS errorClass, attempt_count AS attemptCount,
+              next_attempt_at AS nextAttemptAt
+       FROM telegram_outbox WHERE source_id = ?`,
+    )
+    .get(sourceId) as
+    | {
+        status: string;
+        errorClass: string | null;
+        attemptCount: number;
+        nextAttemptAt: string | null;
+      }
+    | undefined;
+}

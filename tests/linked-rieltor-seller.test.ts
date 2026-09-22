@@ -115,7 +115,7 @@ describe("linked RIELTOR seller verification", () => {
   function sink(): TelegramTestSink {
     return {
       chatId: "1",
-      dryRun: true,
+      dryRun: false,
       sendListing: async () => ({
         ok: true,
         dryRun: true,

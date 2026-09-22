@@ -432,14 +432,48 @@ function resolveFirstRunMode(config: AppConfig, override?: "seed" | "preview"): 
 
 type DeliveryKind = OutboxItem["deliveryKind"];
 
+type DeliveryOutcome = {
+  dryRun: boolean;
+  sentOk: number;
+  sentFailed: number;
+  sendErrors: string[];
+  pauseChannel: boolean;
+};
+
+function idleDelivery(dryRun: boolean): DeliveryOutcome {
+  return { dryRun, sentOk: 0, sentFailed: 0, sendErrors: [], pauseChannel: false };
+}
+
 async function deliverListing(
   deps: TelegramTestPipelineDeps,
   listing: Listing,
   deliveryKind: DeliveryKind,
   existingId?: number,
-): Promise<{ dryRun: boolean; sentOk: number; sentFailed: number; sendErrors: string[] }> {
+  mode: "send" | "queue" = "send",
+): Promise<DeliveryOutcome> {
+  if (deps.sink.dryRun === true) {
+    try {
+      await deps.sink.sendListing(listing, { deliveryKind });
+    } catch (error) {
+      return { ...idleDelivery(true), sendErrors: [safeError(error)] };
+    }
+    return { dryRun: true, sentOk: 1, sentFailed: 0, sendErrors: [], pauseChannel: false };
+  }
+
   const outbox = deps.outbox;
   const at = (deps.now ?? (() => new Date()))();
+  const store = outbox instanceof DurableDeliveryStore ? outbox : undefined;
+  if (mode === "queue") {
+    if (!outbox || existingId !== undefined) {
+      return idleDelivery(false);
+    }
+    const enqueued = outbox.enqueueIfNew(listing, deliveryKind);
+    if (enqueued.duplicate && enqueued.status === "sent") {
+      deps.dedupe.markSeen(listing);
+    }
+    return idleDelivery(false);
+  }
+
   let id = existingId;
   if (outbox) {
     if (id === undefined) {
@@ -448,14 +482,14 @@ async function deliverListing(
         if (enqueued.status === "sent") {
           deps.dedupe.markSeen(listing);
         }
-        return { dryRun: false, sentOk: 0, sentFailed: 0, sendErrors: [] };
+        return idleDelivery(false);
       }
       id = enqueued.id;
     }
     // The outbox row exists. Identity may suppress a twin only from here on.
     crossSourceOf(deps.dedupe)?.rememberCrossSource(listing);
     if (!outbox.claimForSend(id)) {
-      return { dryRun: false, sentOk: 0, sentFailed: 0, sendErrors: [] };
+      return idleDelivery(false);
     }
   }
 
@@ -465,13 +499,20 @@ async function deliverListing(
       if (outbox && id !== undefined) {
         outbox.markSent(id);
       }
+      store?.clearTelegramPause();
       deps.dedupe.markSeen(listing);
-      return { dryRun: result.dryRun, sentOk: 1, sentFailed: 0, sendErrors: [] };
+      return { dryRun: result.dryRun, sentOk: 1, sentFailed: 0, sendErrors: [], pauseChannel: false };
     }
+    const errorClass = result.errorClass ?? "transient";
+    const pauseChannel = errorClass === "operator_action";
+    const pause = pauseChannel
+      ? store?.noteOperatorChannelFailure(at, result.failureReason ?? "operator_action")
+      : undefined;
+    const retryAfterMs = pause?.delayMs ?? result.retryAfterMs;
     if (outbox && id !== undefined) {
       outbox.markFailed(id, result.errorSafe ?? "telegram send failed", at, {
-        errorClass: result.errorClass ?? "transient",
-        ...(result.retryAfterMs !== undefined ? { retryAfterMs: result.retryAfterMs } : {}),
+        errorClass,
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       });
     }
     return {
@@ -479,13 +520,14 @@ async function deliverListing(
       sentOk: 0,
       sentFailed: 1,
       sendErrors: result.errorSafe ? [result.errorSafe] : [],
+      pauseChannel,
     };
   } catch (error) {
     const errorSafe = safeError(error);
     if (outbox && id !== undefined) {
       outbox.markFailed(id, errorSafe, at, { errorClass: "transient" });
     }
-    return { dryRun: false, sentOk: 0, sentFailed: 1, sendErrors: [errorSafe] };
+    return { dryRun: false, sentOk: 0, sentFailed: 1, sendErrors: [errorSafe], pauseChannel: false };
   }
 }
 
@@ -494,7 +536,7 @@ async function notifySourceAdmins(
   at: Date,
 ): Promise<{ sent: number; errors: string[] }> {
   const adminChatId = deps.config.adminTelegramChatId;
-  if (!adminChatId || !(deps.baseline instanceof DurableDeliveryStore)) {
+  if (!adminChatId || !(deps.baseline instanceof DurableDeliveryStore) || deps.sink.dryRun === true) {
     return { sent: 0, errors: [] };
   }
   try {
@@ -715,6 +757,22 @@ export async function runTelegramTestCycle(
   let sentOk = 0;
   let sentFailed = 0;
   const dryRun = deps.sink.dryRun === true;
+  const deliveryStore = deps.outbox instanceof DurableDeliveryStore ? deps.outbox : undefined;
+  let pauseChannel = deliveryStore?.telegramPauseActive(now()) ?? false;
+  const handoff = async (
+    listing: Listing,
+    deliveryKind: DeliveryKind,
+    existingId?: number,
+  ): Promise<DeliveryOutcome> => {
+    if (!dryRun && pauseChannel) {
+      return deliverListing(deps, listing, deliveryKind, existingId, "queue");
+    }
+    const delivered = await deliverListing(deps, listing, deliveryKind, existingId);
+    if (delivered.pauseChannel) {
+      pauseChannel = true;
+    }
+    return delivered;
+  };
   let initialInventoryCount = 0;
   let newlyObservedCount = 0;
   let suppressedOld = 0;
@@ -732,12 +790,15 @@ export async function runTelegramTestCycle(
   let usedPreview = false;
   let usedSeed = false;
 
-  if (deps.outbox) {
+  if (deps.outbox && !pauseChannel) {
     for (const item of deps.outbox.listRetryable(20, now())) {
-      const delivered = await deliverListing(deps, item.listing, item.deliveryKind, item.id);
+      const delivered = await handoff(item.listing, item.deliveryKind, item.id);
       sentOk += delivered.sentOk;
       sentFailed += delivered.sentFailed;
       sendErrors.push(...delivered.sendErrors);
+      if (pauseChannel) {
+        break;
+      }
     }
   }
 
@@ -781,7 +842,7 @@ export async function runTelegramTestCycle(
           if (!(await allowLinkedRieltor(listing))) {
             continue;
           }
-          const delivered = await deliverListing(deps, listing, "initial_preview");
+          const delivered = await handoff(listing, "initial_preview");
           if (crossSource) {
             crossSourcePeers.push(listing);
           }
@@ -864,7 +925,7 @@ export async function runTelegramTestCycle(
         freshness.kind === "new_publication" || freshness.kind === "first_noticed"
           ? freshness.kind
           : "first_noticed";
-      const delivered = await deliverListing(deps, listing, deliveryKind);
+      const delivered = await handoff(listing, deliveryKind);
       if (crossSource) {
         crossSourcePeers.push(listing);
       }

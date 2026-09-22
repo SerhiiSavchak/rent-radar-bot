@@ -599,9 +599,10 @@ describe("in-memory dedupe + pipeline", () => {
       botToken: "1:token",
       chatId: "55",
       testMode: true,
-      dryRun: true,
+      dryRun: false,
       timeoutMs: 1000,
       maxRetries: 0,
+      fetchImpl: (async () => new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown as typeof fetch,
     });
     const report2 = await runTelegramTestCycle(
       { adapters: [adapter("lun", [seed, good])], config, sink: sinkOk, dedupe, baseline, now: () => t1 },
