@@ -99,7 +99,7 @@ Production collection and Telegram delivery run only through `src/scripts/test-t
 
 Status: **final**.
 
-Accepted listing → SQLite baseline/dedupe state → pending `telegram_outbox` row → Telegram attempt → `sent` only after success. Failure leaves the row retryable. A process restart reopens the same file and retries. A successful row is not sent again.
+Accepted listing → SQLite `telegram_outbox` row `pending` → `sending` → `sent` only after the Bot API confirms success. A transient failure becomes `failed` with `next_attempt_at` (2 minutes, doubling, capped at 6 hours; Telegram `retry_after` can extend that). A permanent failure (`401`, `403`, invalid chat, other non-parse `400`) stays `failed` and is not polled again. `sending` rows return to `pending` on reopen. Age never deletes an undelivered row. Telegram has no send idempotency key: a crash after Telegram accepts a message and before `markSent` commits can duplicate that one message. No-loss is preferred over claiming exactly-once. An HTML entity parse error is retried once as plain text. `ADMIN_TELEGRAM_CHAT_ID` receives one source alert after 3 consecutive failures and one recovery when that source is healthy again. A failed admin send does not stop listing delivery.
 
 ## ADR: UNKNOWN seller is retained
 
@@ -115,9 +115,9 @@ Status: **final**.
 
 ## ADR: operational SQLite state is bounded and restart-safe
 
-Status: **final for schema 6**.
+Status: **final for schema 7**.
 
-SQLite stores current operations, not a historical archive. Schema 4 is the previous production shape (through `cross_source_identities`). Schema 5 adds `source_health` and the indexes used by retention. Schema 6 adds `external_seller_verifications` for linked RIELTOR seller checks. Migration is incremental: it does not rebuild or delete existing rows. Expired verification rows are deleted by the same 24-hour cleanup.
+SQLite stores current operations, not a historical archive. Schema 4 is the previous production shape (through `cross_source_identities`). Schema 5 adds `source_health` and the indexes used by retention. Schema 6 adds `external_seller_verifications` for linked RIELTOR seller checks. Schema 7 adds outbox retry scheduling (`next_attempt_at`, `error_class`) and `source_admin_alerts`. Migration is incremental: it does not rebuild or delete existing rows. Expired verification rows are deleted by the same 24-hour cleanup. Alert rows are current incident state, not a history log.
 
 `source_health` has one row per source: `ok`, `valid_empty`, `parser_failure`, `http_error`, `rate_limited`, `transport_failure`, `browser_failure`, `disabled`. Healthy `ok` / `valid_empty` reset `consecutive_failures` and set `last_success_at`. Failure statuses increment the streak and leave `last_success_at` in place. `disabled` does not change the streak. `parser_failure` is never stored as `valid_empty`, and only when an adapter returns that structured result. HTTP 429 is `rate_limited`. The poller's `transport_blocked` result (HTTP 403) is stored as `transport_failure`. A thrown network or adapter exception is also `transport_failure`. A thrown OLX Playwright acquisition is `browser_failure`. Each poll writes `disabled` for domria, lun, rieltor, and olx when that source's flag is off, including when `createCollectionAdapters` omits the adapter. OLX is one row: it is enabled when either `ENABLE_OLX` or `ENABLE_OLX_BROWSER` is on. Error text is truncated and redacted. Successful HTML is not stored.
 

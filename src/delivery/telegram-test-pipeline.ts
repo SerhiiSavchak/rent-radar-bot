@@ -27,6 +27,7 @@ import {
   type LinkedSellerVerificationCounts,
   type RieltorDetailPage,
 } from "./rieltor-detail-seller.ts";
+import { dispatchSourceAdminAlerts } from "./source-admin-alerts.ts";
 import { DurableDeliveryStore } from "../storage/durable-delivery-store.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
 import { isOlxCollectionEnabled } from "../collection/create-source-adapters.ts";
@@ -84,6 +85,8 @@ export type TelegramTestCycleReport = {
   sourceAttempts: TelegramSourceAttempt[];
   sourceErrors: Array<{ source: string; errorSafe: string }>;
   sendErrors: string[];
+  adminAlertsSent: number;
+  adminAlertErrors: string[];
   zeroResult: boolean;
   zeroEligibleListings: boolean;
   hasSourceFailures: boolean;
@@ -436,6 +439,7 @@ async function deliverListing(
   existingId?: number,
 ): Promise<{ dryRun: boolean; sentOk: number; sentFailed: number; sendErrors: string[] }> {
   const outbox = deps.outbox;
+  const at = (deps.now ?? (() => new Date()))();
   let id = existingId;
   if (outbox) {
     if (id === undefined) {
@@ -465,7 +469,10 @@ async function deliverListing(
       return { dryRun: result.dryRun, sentOk: 1, sentFailed: 0, sendErrors: [] };
     }
     if (outbox && id !== undefined) {
-      outbox.markFailed(id, result.errorSafe ?? "telegram send failed");
+      outbox.markFailed(id, result.errorSafe ?? "telegram send failed", at, {
+        errorClass: result.errorClass ?? "transient",
+        ...(result.retryAfterMs !== undefined ? { retryAfterMs: result.retryAfterMs } : {}),
+      });
     }
     return {
       dryRun: result.dryRun,
@@ -476,9 +483,45 @@ async function deliverListing(
   } catch (error) {
     const errorSafe = safeError(error);
     if (outbox && id !== undefined) {
-      outbox.markFailed(id, errorSafe);
+      outbox.markFailed(id, errorSafe, at, { errorClass: "transient" });
     }
     return { dryRun: false, sentOk: 0, sentFailed: 1, sendErrors: [errorSafe] };
+  }
+}
+
+async function notifySourceAdmins(
+  deps: TelegramTestPipelineDeps,
+  at: Date,
+): Promise<{ sent: number; errors: string[] }> {
+  const adminChatId = deps.config.adminTelegramChatId;
+  if (!adminChatId || !(deps.baseline instanceof DurableDeliveryStore)) {
+    return { sent: 0, errors: [] };
+  }
+  try {
+    const report = await dispatchSourceAdminAlerts(
+      deps.baseline.verificationDatabase(),
+      at,
+      async (text) => {
+        if (typeof deps.sink.sendAdminText === "function") {
+          const result = await deps.sink.sendAdminText(adminChatId, text);
+          return {
+            ok: result.ok,
+            ...(result.errorSafe ? { errorSafe: result.errorSafe } : {}),
+          };
+        }
+        if (adminChatId === deps.sink.chatId) {
+          const result = await deps.sink.sendText(text);
+          return {
+            ok: result.ok,
+            ...(result.errorSafe ? { errorSafe: result.errorSafe } : {}),
+          };
+        }
+        return { ok: false, errorSafe: "admin sender unavailable" };
+      },
+    );
+    return { sent: report.sent, errors: report.errors };
+  } catch (error) {
+    return { sent: 0, errors: [safeError(error)] };
   }
 }
 
@@ -690,7 +733,7 @@ export async function runTelegramTestCycle(
   let usedSeed = false;
 
   if (deps.outbox) {
-    for (const item of deps.outbox.listRetryable(20)) {
+    for (const item of deps.outbox.listRetryable(20, now())) {
       const delivered = await deliverListing(deps, item.listing, item.deliveryKind, item.id);
       sentOk += delivered.sentOk;
       sentFailed += delivered.sentFailed;
@@ -838,6 +881,7 @@ export async function runTelegramTestCycle(
       : "send_new";
 
   const endedAt = now();
+  const adminAlerts = await notifySourceAdmins(deps, endedAt);
   const enabledAttempts = sourceAttempts.filter((s) => s.enabled);
   const hasSourceFailures = enabledAttempts.some((s) => !s.ok);
   const partialCoverage =
@@ -874,6 +918,8 @@ export async function runTelegramTestCycle(
     sourceAttempts,
     sourceErrors,
     sendErrors,
+    adminAlertsSent: adminAlerts.sent,
+    adminAlertErrors: adminAlerts.errors,
     zeroResult: newlyObservedCount === 0 && sentOk === 0,
     zeroEligibleListings: newlyObservedCount === 0 && sentOk === 0 && !hasSourceFailures,
     hasSourceFailures,

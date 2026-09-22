@@ -5,10 +5,12 @@ import {
   type CrossSourceDecision,
   type IdentityHit,
 } from "../delivery/cross-source-dedup.ts";
+import { transientNextDelayMs } from "../delivery/telegram-delivery.ts";
 import {
   canonicalListingUrl,
   listingFingerprint,
   type ListingDedupe,
+  type OutboxErrorClass,
   type OutboxItem,
   type OutboxStatus,
   type SourceBaseline,
@@ -36,6 +38,8 @@ type OutboxRow = {
   attempt_count: number;
   last_attempt_at: string | null;
   last_error: string | null;
+  error_class: string | null;
+  next_attempt_at: string | null;
 };
 
 export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, TelegramOutbox {
@@ -291,29 +295,52 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
   markSent(id: number, at = new Date()): void {
     this.db
       .prepare(
-        "UPDATE telegram_outbox SET status = 'sent', sent_at = ?, last_error = NULL WHERE id = ? AND status = 'sending'",
+        `UPDATE telegram_outbox
+         SET status = 'sent', sent_at = ?, last_error = NULL, error_class = NULL, next_attempt_at = NULL
+         WHERE id = ? AND status = 'sending'`,
       )
       .run(at.toISOString(), id);
   }
 
-  markFailed(id: number, error: string, at = new Date()): void {
+  markFailed(
+    id: number,
+    error: string,
+    at = new Date(),
+    details?: { errorClass?: OutboxErrorClass; retryAfterMs?: number },
+  ): void {
+    const errorClass = details?.errorClass ?? "transient";
+    const attempt = this.db
+      .prepare("SELECT attempt_count AS attemptCount FROM telegram_outbox WHERE id = ?")
+      .get(id) as { attemptCount: number } | undefined;
+    const nextAttemptAt =
+      errorClass === "permanent"
+        ? null
+        : new Date(
+            at.getTime() +
+              transientNextDelayMs(attempt?.attemptCount ?? 1, details?.retryAfterMs ?? 0),
+          ).toISOString();
     this.db
       .prepare(
-        "UPDATE telegram_outbox SET status = 'failed', last_attempt_at = ?, last_error = ? WHERE id = ? AND status = 'sending'",
+        `UPDATE telegram_outbox
+         SET status = 'failed', last_attempt_at = ?, last_error = ?, error_class = ?, next_attempt_at = ?
+         WHERE id = ? AND status = 'sending'`,
       )
-      .run(at.toISOString(), error.slice(0, 400), id);
+      .run(at.toISOString(), error.slice(0, 400), errorClass, nextAttemptAt, id);
   }
 
-  listRetryable(limit = 50): OutboxItem[] {
+  listRetryable(limit = 50, at = new Date()): OutboxItem[] {
     const rows = this.db
       .prepare(
-        `SELECT id, source, source_id, fingerprint, listing_json, delivery_kind, status, attempt_count, last_attempt_at, last_error
+        `SELECT id, source, source_id, fingerprint, listing_json, delivery_kind, status,
+                attempt_count, last_attempt_at, last_error, error_class, next_attempt_at
          FROM telegram_outbox
          WHERE status IN ('pending', 'failed')
+           AND COALESCE(error_class, 'transient') != 'permanent'
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
          ORDER BY id ASC
          LIMIT ?`,
       )
-      .all(limit) as OutboxRow[];
+      .all(at.toISOString(), limit) as OutboxRow[];
     return rows.map(rowToOutboxItem);
   }
 
@@ -362,7 +389,9 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
 
 export function recoverInterruptedSends(db: DatabaseSync): number {
   const result = db
-    .prepare("UPDATE telegram_outbox SET status = 'pending' WHERE status = 'sending'")
+    .prepare(
+      "UPDATE telegram_outbox SET status = 'pending', next_attempt_at = NULL WHERE status = 'sending'",
+    )
     .run();
   return Number(result.changes);
 }
@@ -407,5 +436,9 @@ function rowToOutboxItem(row: OutboxRow): OutboxItem {
     attemptCount: row.attempt_count,
     ...(row.last_attempt_at ? { lastAttemptAt: row.last_attempt_at } : {}),
     ...(row.last_error ? { lastError: row.last_error } : {}),
+    ...(row.error_class === "transient" || row.error_class === "permanent"
+      ? { errorClass: row.error_class }
+      : {}),
+    ...(row.next_attempt_at ? { nextAttemptAt: row.next_attempt_at } : {}),
   };
 }

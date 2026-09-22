@@ -14,6 +14,7 @@ Optional:
 
 ```bash
 TELEGRAM_DRY_RUN=true          # format only, no HTTP send
+ADMIN_TELEGRAM_CHAT_ID=        # source alerts; omit to disable. Same id as TELEGRAM_CHAT_ID is allowed.
 TELEGRAM_POLL_CYCLES=6         # 0 = unbounded (systemd)
 TELEGRAM_POLL_INTERVAL_MS=600000
 FIRST_RUN_MODE=seed            # default: cycle 1 seeds inventory without listing sends
@@ -65,7 +66,8 @@ npm run live:test-telegram:canary
 - Live `live:test-telegram*` scripts persist baseline, seen IDs/fingerprints, freshness timestamps, and a Telegram outbox in **local SQLite** (`DATABASE_PATH`). No paid external store.
 - First successful fetch per source is a **silent seed**. Restart reuses `established_at`; it does not silent-rebaseline.
 - A listing first seen after downtime is classified against the persisted baseline (`late_discovered` vs new publication).
-- Telegram outbox: `pending` → `sending` → `sent` only after the Bot API confirms success. Failed rows stay retryable. `sending` rows recover to `pending` on reopen.
+- Telegram outbox: `pending` → `sending` → `sent` only after the Bot API confirms success. Transient failures (`network`, timeout, `429`, `5xx`) stay retryable after `next_attempt_at` (2 minutes, doubling, cap 6 hours; `retry_after` can push that later). A `429` longer than 3 seconds is not retried inside the same request. Permanent failures (`401`, `403`, chat not found, other non-parse `400`) are not retried. `sending` rows recover to `pending` on reopen. Undelivered rows are not deleted by age. A crash after Telegram accepts a message and before `sent` is committed can duplicate that message; delivery prefers no loss over exactly-once. An HTML parse error is sent once more as plain text.
+- `ADMIN_TELEGRAM_CHAT_ID` gets one alert after 3 consecutive source failures and one recovery alert when that source is `ok` or `valid_empty` again. `disabled` is not an incident. A failed admin send waits 6 hours and does not stop listing delivery.
 - Duplicate cycles cannot send the same fingerprint twice. Concurrent pollers are rejected by a SQLite lock keyed by OS boot id + pid + starttime. A lock from a previous boot is stolen immediately; a live owner on this boot is not.
 - A failed source fetch does **not** delete the last known baseline.
 - In-memory stores remain in unit tests to document the old restart-rebaseline behaviour.
@@ -92,28 +94,28 @@ Schema version was 4 and is now 5. Opening the poller applies the new migration 
 
 `source_health` keeps the latest attempt for each source:
 
-| Stored status | Meaning |
-| --- | --- |
-| `ok` | Listings were parsed |
-| `valid_empty` | The catalog structure was present and empty |
-| `parser_failure` | The adapter inspected content and rejected the catalog structure |
-| `http_error` | HTTP failure that is not a 429 and not a blocked transport |
-| `rate_limited` | HTTP 429, including a RIELTOR 429 |
-| `transport_failure` | `transport_blocked` (usually HTTP 403), or a thrown network/adapter error |
-| `browser_failure` | OLX Playwright acquisition threw |
-| `disabled` | Config flag is off. Written even when no adapter is constructed. OLX is disabled only when both OLX flags are off |
+| Stored status       | Meaning                                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ok`                | Listings were parsed                                                                                              |
+| `valid_empty`       | The catalog structure was present and empty                                                                       |
+| `parser_failure`    | The adapter inspected content and rejected the catalog structure                                                  |
+| `http_error`        | HTTP failure that is not a 429 and not a blocked transport                                                        |
+| `rate_limited`      | HTTP 429, including a RIELTOR 429                                                                                 |
+| `transport_failure` | `transport_blocked` (usually HTTP 403), or a thrown network/adapter error                                         |
+| `browser_failure`   | OLX Playwright acquisition threw                                                                                  |
+| `disabled`          | Config flag is off. Written even when no adapter is constructed. OLX is disabled only when both OLX flags are off |
 
 `ok` and `valid_empty` reset the failure streak and set `last_success_at`. A later failure keeps that success time. `parser_failure` is never stored as `valid_empty`. No successful HTML is stored. Error text is shortened and redacted.
 
 The long-running poller (`npm run live:test-telegram:poll`) runs cleanup at process start and then at most once every 24 hours. The clock is `schema_meta.state_cleanup_at`, so a 10-minute poll does not repeat the delete. The one-shot command records health and does not run retention.
 
-| Data | Retention |
-| --- | --- |
-| Seen listing inactive (`last_seen_at`) | 30 days, unless an outbox row still protects it |
-| Cross-source identity | 90 days, unless a pending, sending, failed, or sent-within-30-days outbox row matches |
-| Outbox `sent` | 30 days after `sent_at` |
-| Outbox `pending`, `sending`, `failed` | Never deleted because of age |
-| Source baseline, poller lock, seller-policy cutover, current source health | Never deleted because of age |
+| Data                                                                       | Retention                                                                             |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Seen listing inactive (`last_seen_at`)                                     | 30 days, unless an outbox row still protects it                                       |
+| Cross-source identity                                                      | 90 days, unless a pending, sending, failed, or sent-within-30-days outbox row matches |
+| Outbox `sent`                                                              | 30 days after `sent_at`                                                               |
+| Outbox `pending`, `sending`, `failed`                                      | Never deleted because of age                                                          |
+| Source baseline, poller lock, seller-policy cutover, current source health | Never deleted because of age                                                          |
 
 There is no poll-diagnostic history table and no per-attempt health history, so those rows are not created and not pruned. A seen row is refreshed when a later successful poll still contains that listing.
 

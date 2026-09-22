@@ -452,7 +452,10 @@ describe("cross-source delivery", () => {
     expect(failed.sentFailed).toBe(1);
     expect(failed.suppressedCrossSourceDuplicate).toBe(1);
     expect(store.hasSeen(lun)).toBe(false);
-    const recovered = await runTelegramTestCycle(deps, 2);
+    const recovered = await runTelegramTestCycle(
+      { ...deps, now: () => new Date(now.getTime() + 3 * 60 * 1000) },
+      2,
+    );
     expect(recovered.sentOk).toBe(1);
     expect(recovered.sentFailed).toBe(0);
     expect(sendListing).toHaveBeenNthCalledWith(

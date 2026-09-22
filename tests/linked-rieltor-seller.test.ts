@@ -920,7 +920,7 @@ describe("linked RIELTOR seller verification", () => {
          source, status, checked_at, consecutive_failures, updated_at
        ) VALUES ('lun', 'ok', ?, 0, ?)`,
     ).run(now.toISOString(), now.toISOString());
-    expect(applyMigrations(db)).toBe(6);
+    expect(applyMigrations(db)).toBe(7);
     expect(
       (
         db.prepare("SELECT status FROM source_health WHERE source = 'lun'").get() as {

@@ -35,6 +35,7 @@ export type SourceBaseline = {
 };
 
 export type OutboxStatus = "pending" | "sending" | "sent" | "failed";
+export type OutboxErrorClass = "transient" | "permanent";
 
 export type OutboxItem = {
   id: number;
@@ -47,6 +48,8 @@ export type OutboxItem = {
   attemptCount: number;
   lastAttemptAt?: string;
   lastError?: string;
+  errorClass?: OutboxErrorClass;
+  nextAttemptAt?: string;
 };
 
 export type TelegramOutbox = {
@@ -56,8 +59,13 @@ export type TelegramOutbox = {
   ): { id: number; status: OutboxStatus; duplicate: boolean };
   claimForSend(id: number, at?: Date): boolean;
   markSent(id: number, at?: Date): void;
-  markFailed(id: number, error: string, at?: Date): void;
-  listRetryable(limit?: number): OutboxItem[];
+  markFailed(
+    id: number,
+    error: string,
+    at?: Date,
+    details?: { errorClass?: OutboxErrorClass; retryAfterMs?: number },
+  ): void;
+  listRetryable(limit?: number, at?: Date): OutboxItem[];
 };
 
 export function listingFingerprint(listing: Pick<Listing, "source" | "sourceId" | "url">): string {

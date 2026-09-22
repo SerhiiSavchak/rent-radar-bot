@@ -1,3 +1,10 @@
+import {
+  classifyTelegramFailure,
+  fitTelegramMessage,
+  IN_PROCESS_RETRY_AFTER_CAP_MS,
+  readTelegramRetryAfterMs,
+  type TelegramErrorClass,
+} from "../delivery/telegram-delivery.ts";
 import type { Listing } from "../domain/listing.ts";
 
 /** Telegram Bot API hard limit for sendMessage text. */
@@ -30,6 +37,9 @@ export type TelegramSendResult = {
   chatId: string;
   messageCount: number;
   errorSafe?: string;
+  errorClass?: TelegramErrorClass;
+  retryAfterMs?: number;
+  parseError?: boolean;
   bodies?: string[];
 };
 
@@ -81,7 +91,10 @@ export function redactTelegramSecrets(text: string, botToken?: string): string {
   if (botToken && botToken.length > 0) {
     out = out.split(botToken).join("[TELEGRAM_BOT_TOKEN_REDACTED]");
   }
-  out = out.replace(/api\.telegram\.org\/bot[^/\s"']+/gi, "api.telegram.org/bot[TELEGRAM_BOT_TOKEN_REDACTED]");
+  out = out.replace(
+    /api\.telegram\.org\/bot[^/\s"']+/gi,
+    "api.telegram.org/bot[TELEGRAM_BOT_TOKEN_REDACTED]",
+  );
   out = out.replace(/bot\d+:[A-Za-z0-9_-]{20,}/g, "bot[TELEGRAM_BOT_TOKEN_REDACTED]");
   return out;
 }
@@ -118,11 +131,7 @@ export function formatSellerLabel(listing: Listing): string {
 }
 
 export type ListingDeliveryKindOption =
-  | "initial_preview"
-  | "new_publication"
-  | "first_noticed"
-  | "initial_inventory"
-  | "newly_observed";
+  "initial_preview" | "new_publication" | "first_noticed" | "initial_inventory" | "newly_observed";
 
 /** @deprecated use ListingDeliveryKindOption */
 export type ListingObservationKind = ListingDeliveryKindOption;
@@ -161,7 +170,10 @@ function headlineFor(kind: ListingDeliveryKindOption | undefined): string {
 
 export function formatListingTelegramHtml(
   listing: Listing,
-  options?: { deliveryKind?: ListingDeliveryKindOption; observationKind?: ListingDeliveryKindOption },
+  options?: {
+    deliveryKind?: ListingDeliveryKindOption;
+    observationKind?: ListingDeliveryKindOption;
+  },
 ): string {
   const cityArea = [listing.location.city, listing.location.district, listing.location.raw]
     .filter((item): item is string => Boolean(item))
@@ -177,7 +189,7 @@ export function formatListingTelegramHtml(
   const firstSeenLine = listing.firstSeenAt
     ? `Вперше помічено ботом: ${formatKyivDateTime(listing.firstSeenAt)} (Київ)`
     : undefined;
-  return [
+  const html = [
     headlineFor(kind),
     "",
     escapeHtml(listing.title),
@@ -192,6 +204,18 @@ export function formatListingTelegramHtml(
     "",
     escapeHtml(listing.url),
   ].join("\n");
+  return fitTelegramMessage(html);
+}
+
+export function formatListingTelegramPlain(
+  listing: Listing,
+  options?: {
+    deliveryKind?: ListingDeliveryKindOption;
+    observationKind?: ListingDeliveryKindOption;
+  },
+): string {
+  const html = formatListingTelegramHtml(listing, options);
+  return fitTelegramMessage(html.replaceAll(/<\/?b>/g, ""));
 }
 
 /**
@@ -247,43 +271,7 @@ export class TelegramTestSink {
   }
 
   async sendText(text: string): Promise<TelegramSendResult> {
-    this.assertAllowed();
-    const chunks = splitTelegramMessage(text);
-    if (this.options.dryRun) {
-      return {
-        ok: true,
-        dryRun: true,
-        attempts: 0,
-        chatId: this.options.chatId,
-        messageCount: chunks.length,
-        bodies: chunks,
-      };
-    }
-
-    let attempts = 0;
-    for (let i = 0; i < chunks.length; i += 1) {
-      const chunk = chunks[i]!;
-      const chunkResult = await this.sendChunk(chunk);
-      attempts += chunkResult.attempts;
-      if (!chunkResult.ok) {
-        return {
-          ok: false,
-          dryRun: false,
-          ...(chunkResult.status !== undefined ? { status: chunkResult.status } : {}),
-          attempts,
-          chatId: this.options.chatId,
-          messageCount: i,
-          ...(chunkResult.errorSafe !== undefined ? { errorSafe: chunkResult.errorSafe } : {}),
-        };
-      }
-    }
-    return {
-      ok: true,
-      dryRun: false,
-      attempts,
-      chatId: this.options.chatId,
-      messageCount: chunks.length,
-    };
+    return this.sendPrepared(text, this.options.chatId, true);
   }
 
   async sendListing(
@@ -293,13 +281,86 @@ export class TelegramTestSink {
       observationKind?: ListingDeliveryKindOption;
     },
   ): Promise<TelegramSendResult> {
-    return this.sendText(formatListingTelegramHtml(listing, options));
+    const htmlResult = await this.sendText(formatListingTelegramHtml(listing, options));
+    if (htmlResult.ok || !htmlResult.parseError) {
+      return htmlResult;
+    }
+    const plain = await this.sendPlainText(formatListingTelegramPlain(listing, options));
+    return { ...plain, attempts: htmlResult.attempts + plain.attempts };
   }
 
-  private async sendChunk(text: string): Promise<{ ok: boolean; attempts: number; status?: number; errorSafe?: string }> {
+  async sendAdminText(chatId: string, text: string): Promise<TelegramSendResult> {
+    return this.sendPlainText(fitTelegramMessage(text), chatId);
+  }
+
+  private async sendPlainText(
+    text: string,
+    chatId = this.options.chatId,
+  ): Promise<TelegramSendResult> {
+    return this.sendPrepared(text, chatId, false);
+  }
+
+  private async sendPrepared(
+    text: string,
+    chatId: string,
+    html: boolean,
+  ): Promise<TelegramSendResult> {
+    this.assertAllowed();
+    const chunks = splitTelegramMessage(text);
+    if (this.options.dryRun) {
+      return {
+        ok: true,
+        dryRun: true,
+        attempts: 0,
+        chatId,
+        messageCount: chunks.length,
+        bodies: chunks,
+      };
+    }
+    let attempts = 0;
+    for (let i = 0; i < chunks.length; i += 1) {
+      const chunk = chunks[i]!;
+      const chunkResult = await this.sendChunk(chunk, chatId, html);
+      attempts += chunkResult.attempts;
+      if (!chunkResult.ok) {
+        return {
+          ok: false,
+          dryRun: false,
+          ...(chunkResult.status !== undefined ? { status: chunkResult.status } : {}),
+          attempts,
+          chatId,
+          messageCount: i,
+          ...(chunkResult.errorSafe !== undefined ? { errorSafe: chunkResult.errorSafe } : {}),
+          ...(chunkResult.errorClass !== undefined ? { errorClass: chunkResult.errorClass } : {}),
+          ...(chunkResult.retryAfterMs !== undefined
+            ? { retryAfterMs: chunkResult.retryAfterMs }
+            : {}),
+          ...(chunkResult.parseError ? { parseError: true } : {}),
+        };
+      }
+    }
+    return { ok: true, dryRun: false, attempts, chatId, messageCount: chunks.length };
+  }
+
+  private async sendChunk(
+    text: string,
+    chatId: string,
+    html: boolean,
+  ): Promise<{
+    ok: boolean;
+    attempts: number;
+    status?: number;
+    errorSafe?: string;
+    errorClass?: TelegramErrorClass;
+    retryAfterMs?: number;
+    parseError?: boolean;
+  }> {
     let attempts = 0;
     let lastStatus: number | undefined;
     let lastError: string | undefined;
+    let lastClass: TelegramErrorClass | undefined;
+    let lastRetryAfterMs: number | undefined;
+    let lastParseError = false;
 
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt += 1) {
       attempts += 1;
@@ -309,9 +370,9 @@ export class TelegramTestSink {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            chat_id: this.options.chatId,
+            chat_id: chatId,
             text,
-            parse_mode: "HTML",
+            ...(html ? { parse_mode: "HTML" as const } : {}),
             disable_web_page_preview: true,
           }),
           signal: AbortSignal.timeout(this.options.timeoutMs),
@@ -325,25 +386,36 @@ export class TelegramTestSink {
           `Telegram HTTP ${response.status}: ${rawBody.slice(0, 200)}`,
           this.options.botToken,
         );
-
-        if (response.status === 429 || response.status >= 500) {
-          const retryAfterHeader = response.headers.get("retry-after");
-          const retryAfterSec = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-          const backoffMs = Number.isFinite(retryAfterSec)
-            ? Math.max(250, retryAfterSec * 1000)
-            : Math.min(8_000, 500 * 2 ** attempt);
-          if (attempt < this.options.maxRetries) {
-            await this.sleep(backoffMs);
+        const classified = classifyTelegramFailure(response.status, rawBody);
+        lastClass = classified.errorClass;
+        lastParseError = classified.parseError;
+        if (response.status === 429) {
+          const retryAfterMs = readTelegramRetryAfterMs(
+            response.headers.get("retry-after"),
+            rawBody,
+          );
+          lastRetryAfterMs = retryAfterMs;
+          const shortEnough =
+            retryAfterMs !== undefined && retryAfterMs <= IN_PROCESS_RETRY_AFTER_CAP_MS;
+          const unspecified = retryAfterMs === undefined;
+          if ((shortEnough || unspecified) && attempt < this.options.maxRetries) {
+            await this.sleep(shortEnough ? retryAfterMs : Math.min(8_000, 500 * 2 ** attempt));
             continue;
           }
+          break;
         }
-        // 4xx other than 429: do not retry endlessly
+        if (response.status >= 500 && attempt < this.options.maxRetries) {
+          await this.sleep(Math.min(8_000, 500 * 2 ** attempt));
+          continue;
+        }
         break;
       } catch (error) {
         lastError = redactTelegramSecrets(
           error instanceof Error ? error.message : String(error),
           this.options.botToken,
         );
+        lastClass = "transient";
+        lastParseError = false;
         if (attempt < this.options.maxRetries) {
           await this.sleep(Math.min(8_000, 500 * 2 ** attempt));
           continue;
@@ -356,6 +428,9 @@ export class TelegramTestSink {
       attempts,
       ...(lastStatus !== undefined ? { status: lastStatus } : {}),
       ...(lastError !== undefined ? { errorSafe: lastError } : {}),
+      ...(lastClass !== undefined ? { errorClass: lastClass } : {}),
+      ...(lastRetryAfterMs !== undefined ? { retryAfterMs: lastRetryAfterMs } : {}),
+      ...(lastParseError ? { parseError: true } : {}),
     };
   }
 }
