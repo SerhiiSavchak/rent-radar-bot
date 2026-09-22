@@ -802,6 +802,12 @@ describe("cross-source delivery", () => {
         baseline: store,
         outbox: store,
         now: () => now,
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url: string) => ({
+          status: 200,
+          finalUrl: url,
+          bodyText: `<div class="offer-view-rieltor-position">Користувач</div>`,
+        }),
       },
       2,
     );

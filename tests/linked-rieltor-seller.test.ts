@@ -5,7 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
-import { canonicalRieltorDetailTarget } from "../src/delivery/rieltor-detail-seller.ts";
+import {
+  canonicalRieltorDetailTarget,
+  trustedRieltorFinalUrl,
+} from "../src/delivery/rieltor-detail-seller.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
 import type { TelegramTestSink } from "../src/outputs/telegram-test.sink.ts";
@@ -45,8 +48,8 @@ function lunLinked(sourceId: string, originalUrl: string): Listing {
   });
 }
 
-function page(html: string, status = 200) {
-  return { status, finalUrl: "https://rieltor.ua/lvov/flats-rent/view/1/", bodyText: html };
+function page(html: string, status = 200, finalUrl = "https://rieltor.ua/lvov/flats-rent/view/1/") {
+  return { status, finalUrl, bodyText: html };
 }
 
 const realtorHtml = `<div class="offer-view-rieltor-position">Рієлтор</div>`;
@@ -176,6 +179,33 @@ describe("linked RIELTOR seller verification", () => {
     });
   });
 
+  it("trusts a redirect only when it is still the same RIELTOR listing", () => {
+    const requested = "https://rieltor.ua/lvov/flats-rent/view/13065183/";
+    expect(trustedRieltorFinalUrl("https://rieltor.ua/lvov/flats-rent/view/999/", requested)).toBe(
+      false,
+    );
+    expect(trustedRieltorFinalUrl("https://rieltor.ua/", requested)).toBe(false);
+    expect(trustedRieltorFinalUrl("https://rieltor.ua/lvov/flats-rent/", requested)).toBe(false);
+    expect(
+      trustedRieltorFinalUrl("https://evil.example/lvov/flats-rent/view/13065183/", requested),
+    ).toBe(false);
+    expect(
+      trustedRieltorFinalUrl("https://www.rieltor.ua/lvov/flats-rent/view/13065183/", requested),
+    ).toBe(true);
+    expect(
+      trustedRieltorFinalUrl(
+        "https://rieltor.ua/lvov/flats-rent/view/13065183/?utm=1#x",
+        requested,
+      ),
+    ).toBe(true);
+    expect(
+      trustedRieltorFinalUrl(
+        "https://www.rieltor.ua/lvov/flats-rent/view/13065183/?utm=1",
+        requested,
+      ),
+    ).toBe(true);
+  });
+
   it("drops a LUN copy when the out-of-sample RIELTOR page says Рієлтор or names an agency", async () => {
     for (const [sourceId, html, externalId] of [
       ["4725862679", realtorHtml, "13065183"],
@@ -235,7 +265,7 @@ describe("linked RIELTOR seller verification", () => {
         outbox: store,
         now: () => now,
         rieltorDetailGapMs: 0,
-        fetchRieltorDetail: async () => page(ownerHtml),
+        fetchRieltorDetail: async (url) => page(ownerHtml, 200, url),
       },
       2,
     );
@@ -259,7 +289,7 @@ describe("linked RIELTOR seller verification", () => {
         outbox: store2,
         now: () => now,
         rieltorDetailGapMs: 0,
-        fetchRieltorDetail: async () => page(ambiguousHtml),
+        fetchRieltorDetail: async (url) => page(ambiguousHtml, 200, url),
       },
       2,
     );
@@ -289,9 +319,9 @@ describe("linked RIELTOR seller verification", () => {
         outbox: store,
         now: () => now,
         rieltorDetailGapMs: 0,
-        fetchRieltorDetail: async () => {
+        fetchRieltorDetail: async (url) => {
           calls += 1;
-          return page("nope", 429);
+          return page("nope", 429, url);
         },
       },
       2,
@@ -308,7 +338,7 @@ describe("linked RIELTOR seller verification", () => {
     const cases = [
       {
         name: "403",
-        fetch: async () => page("blocked", 403),
+        fetch: async (url: string) => page("blocked", 403, url),
         outcome: "detailTransportFailure" as const,
       },
       {
@@ -323,7 +353,7 @@ describe("linked RIELTOR seller verification", () => {
       },
       {
         name: "parser",
-        fetch: async () => page(brokenHtml),
+        fetch: async (url: string) => page(brokenHtml, 200, url),
         outcome: "detailParserFailure" as const,
       },
     ];
@@ -393,7 +423,7 @@ describe("linked RIELTOR seller verification", () => {
         rieltorDetailGapMs: 0,
         fetchRieltorDetail: async (url) => {
           fetched.push(url);
-          return page(realtorHtml);
+          return page(realtorHtml, 200, url);
         },
       },
       2,
@@ -431,7 +461,7 @@ describe("linked RIELTOR seller verification", () => {
         rieltorDetailGapMs: 0,
         fetchRieltorDetail: async (url) => {
           ownerFetched.push(url);
-          return page(realtorHtml);
+          return page(realtorHtml, 200, url);
         },
       },
       2,
@@ -439,6 +469,147 @@ describe("linked RIELTOR seller verification", () => {
     expect(ownerFetched).toEqual([]);
     expect(ownerReport.sentOk).toBe(1);
     expect(ownerReport.linkedSellerVerification.sameCycleResolved).toBe(1);
+  });
+
+  it("detail-checks a same-cycle RIELTOR card whose seller is still unknown", async () => {
+    const cases = [
+      {
+        name: "realtor",
+        html: realtorHtml,
+        sentOk: 0,
+        outbox: 0,
+        counter: "detailConfirmedAgent" as const,
+      },
+      {
+        name: "owner",
+        html: ownerHtml,
+        sentOk: 1,
+        outbox: 1,
+        counter: "detailConfirmedOwner" as const,
+      },
+      {
+        name: "ambiguous",
+        html: ambiguousHtml,
+        sentOk: 1,
+        outbox: 1,
+        counter: "detailUnknown" as const,
+      },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const path = dbPath();
+      const store = new DurableDeliveryStore(getDb(path));
+      const externalId = String(700 + index);
+      const sourceId = `unk-${index}`;
+      const lunBatch: Listing[] = [];
+      const rieltorBatch: Listing[] = [];
+      const adapters = [adapter("lun", () => lunBatch), adapter("rieltor", () => rieltorBatch)];
+      await seed(store, adapters);
+      lunBatch.push(lunLinked(sourceId, `https://rieltor.ua/lvov/flats-rent/view/${externalId}/`));
+      rieltorBatch.push(
+        listing({
+          source: "rieltor",
+          sourceId: externalId,
+          url: `https://rieltor.ua/lvov/flats-rent/view/${externalId}/`,
+          sellerType: "unknown",
+          metadata: { ownerEvidenceLevel: "private_unknown" },
+        }),
+      );
+      let calls = 0;
+      const report = await runTelegramTestCycle(
+        {
+          adapters,
+          config: configFor({ ENABLE_RIELTOR: "true" }),
+          sink: sink(),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => now,
+          rieltorDetailGapMs: 0,
+          fetchRieltorDetail: async (url) => {
+            calls += 1;
+            return page(item.html, 200, url);
+          },
+        },
+        2,
+      );
+      expect(calls, item.name).toBe(1);
+      expect(report.linkedSellerVerification.detailRequests, item.name).toBe(1);
+      expect(report.linkedSellerVerification.sameCycleResolved, item.name).toBe(0);
+      expect(report.linkedSellerVerification[item.counter], item.name).toBe(1);
+      expect(report.sentOk, item.name).toBe(item.sentOk);
+      expect(outboxCount(sourceId), item.name).toBe(item.outbox);
+      closeDb();
+    }
+  });
+
+  it("does not accept seller markers after a redirect to a different RIELTOR page", async () => {
+    const finals = ["https://rieltor.ua/lvov/flats-rent/view/1/", "https://rieltor.ua/"];
+    for (const [index, finalUrl] of finals.entries()) {
+      const path = dbPath();
+      const store = new DurableDeliveryStore(getDb(path));
+      const batch: Listing[] = [];
+      const adapters = [adapter("lun", () => batch)];
+      await seed(store, adapters);
+      const sourceId = `redir-${index}`;
+      batch.push(lunLinked(sourceId, "https://rieltor.ua/lvov/flats-rent/view/13065183/"));
+      const report = await runTelegramTestCycle(
+        {
+          adapters,
+          config: configFor(),
+          sink: sink(),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => now,
+          rieltorDetailGapMs: 0,
+          fetchRieltorDetail: async () => page(realtorHtml, 200, finalUrl),
+        },
+        2,
+      );
+      expect(report.linkedSellerVerification.detailTransportFailure, finalUrl).toBe(1);
+      expect(report.linkedSellerVerification.detailConfirmedAgent, finalUrl).toBe(0);
+      expect(report.linkedSellerVerification.detailConfirmedOwner, finalUrl).toBe(0);
+      expect(report.sentOk, finalUrl).toBe(1);
+      const verdict = getDb()
+        .prepare("SELECT seller_verdict AS verdict FROM external_seller_verifications")
+        .get() as { verdict: string };
+      expect(verdict.verdict, finalUrl).toBe("transport_failure");
+      closeDb();
+    }
+  });
+
+  it("accepts www and query-canonical redirects of the same RIELTOR listing", async () => {
+    const finals = [
+      "https://www.rieltor.ua/lvov/flats-rent/view/13065183/",
+      "https://rieltor.ua/lvov/flats-rent/view/13065183/?utm=1#x",
+    ];
+    for (const [index, finalUrl] of finals.entries()) {
+      const path = dbPath();
+      const store = new DurableDeliveryStore(getDb(path));
+      const batch: Listing[] = [];
+      const adapters = [adapter("lun", () => batch)];
+      await seed(store, adapters);
+      const sourceId = `canon-${index}`;
+      batch.push(lunLinked(sourceId, "https://rieltor.ua/lvov/flats-rent/view/13065183/?utm=1"));
+      const report = await runTelegramTestCycle(
+        {
+          adapters,
+          config: configFor(),
+          sink: sink(),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => now,
+          rieltorDetailGapMs: 0,
+          fetchRieltorDetail: async () => page(realtorHtml, 200, finalUrl),
+        },
+        2,
+      );
+      expect(report.linkedSellerVerification.detailConfirmedAgent, finalUrl).toBe(1);
+      expect(report.sentOk, finalUrl).toBe(0);
+      expect(outboxCount(sourceId), finalUrl).toBe(0);
+      closeDb();
+    }
   });
 
   it("never fetches an arbitrary or malformed external URL", async () => {
@@ -468,7 +639,7 @@ describe("linked RIELTOR seller verification", () => {
         rieltorDetailGapMs: 0,
         fetchRieltorDetail: async (url) => {
           fetched.push(url);
-          return page(realtorHtml);
+          return page(realtorHtml, 200, url);
         },
       },
       2,
@@ -486,9 +657,9 @@ describe("linked RIELTOR seller verification", () => {
     await seed(store, adapters);
     batch.push(lunLinked("4725847579", "https://rieltor.ua/lvov/flats-rent/view/13064911/"));
     let calls = 0;
-    const fetchRieltorDetail = async () => {
+    const fetchRieltorDetail = async (url: string) => {
       calls += 1;
-      return page(realtorHtml, 200);
+      return page(realtorHtml, 200, url);
     };
     await runTelegramTestCycle(
       {
@@ -545,9 +716,9 @@ describe("linked RIELTOR seller verification", () => {
         outbox: store,
         now: () => now,
         rieltorDetailGapMs: 0,
-        fetchRieltorDetail: async () => {
+        fetchRieltorDetail: async (url) => {
           calls += 1;
-          return page(ownerHtml);
+          return page(ownerHtml, 200, url);
         },
       },
       2,
@@ -565,9 +736,9 @@ describe("linked RIELTOR seller verification", () => {
         outbox: store,
         now: () => now,
         rieltorDetailGapMs: 0,
-        fetchRieltorDetail: async () => {
+        fetchRieltorDetail: async (url) => {
           calls += 1;
-          return page(realtorHtml);
+          return page(realtorHtml, 200, url);
         },
       },
       3,
@@ -585,9 +756,9 @@ describe("linked RIELTOR seller verification", () => {
     await seed(store, adapters);
     batch.push(lunLinked("exp", "https://rieltor.ua/lvov/flats-rent/view/888/"));
     let calls = 0;
-    const fetchRieltorDetail = async () => {
+    const fetchRieltorDetail = async (url: string) => {
       calls += 1;
-      return page(realtorHtml);
+      return page(realtorHtml, 200, url);
     };
     await runTelegramTestCycle(
       {
@@ -628,9 +799,9 @@ describe("linked RIELTOR seller verification", () => {
     const store = new DurableDeliveryStore(getDb(path));
     const item = lunLinked("seeded", "https://rieltor.ua/lvov/flats-rent/view/321/");
     let calls = 0;
-    const fetchRieltorDetail = async () => {
+    const fetchRieltorDetail = async (url: string) => {
       calls += 1;
-      return page(realtorHtml);
+      return page(realtorHtml, 200, url);
     };
     await runTelegramTestCycle(
       {
@@ -714,9 +885,9 @@ describe("linked RIELTOR seller verification", () => {
         outbox: store,
         now: () => now,
         rieltorDetailGapMs: 0,
-        fetchRieltorDetail: async () => {
+        fetchRieltorDetail: async (url) => {
           calls += 1;
-          return page(realtorHtml);
+          return page(realtorHtml, 200, url);
         },
       },
       2,

@@ -177,14 +177,18 @@ export function classifyRieltorDetailSeller(html: string): {
   };
 }
 
-export function trustedRieltorFinalUrl(finalUrl: string): boolean {
-  try {
-    const parsed = new URL(finalUrl);
-    const host = parsed.hostname.toLowerCase().replace(/\.$/, "");
-    return parsed.protocol === "https:" && (host === "rieltor.ua" || host === "www.rieltor.ua");
-  } catch {
+/**
+ * Seller markers are trusted only when the response is still the same canonical
+ * RIELTOR detail listing. www and a stripped query are the same listing; another
+ * id, the homepage, or another host is not.
+ */
+export function trustedRieltorFinalUrl(finalUrl: string, requestedUrl: string): boolean {
+  const expected = canonicalRieltorDetailTarget(requestedUrl);
+  const actual = canonicalRieltorDetailTarget(finalUrl);
+  if (!expected || !actual) {
     return false;
   }
+  return actual.url === expected.url;
 }
 
 type CacheRow = {
@@ -316,12 +320,15 @@ export function createCycleRieltorSellerVerifier(options: {
           evidence: "same-cycle RIELTOR listing is a confirmed intermediary",
         };
       }
-      return {
-        outcome: "same_cycle_resolved",
-        drop: false,
-        requested: false,
-        externalId: target.id,
-      };
+      if (peer.sellerType === "owner") {
+        return {
+          outcome: "same_cycle_resolved",
+          drop: false,
+          requested: false,
+          externalId: target.id,
+          evidence: "same-cycle RIELTOR listing is a confirmed owner",
+        };
+      }
     }
     const now = options.now();
     if (options.db) {
@@ -364,25 +371,6 @@ export function createCycleRieltorSellerVerifier(options: {
         requested: true,
         externalId: target.id,
         evidence: safeStoredError(evidence, "transport_failure") ?? "transport_failure",
-      };
-    }
-    if (!trustedRieltorFinalUrl(page.finalUrl)) {
-      remember(
-        options.db,
-        target,
-        "transport_failure",
-        "redirect left rieltor.ua",
-        page.status,
-        now,
-        TRANSIENT_SELLER_CACHE_MS,
-      );
-      return {
-        outcome: "detail_transport_failure",
-        drop: false,
-        requested: true,
-        externalId: target.id,
-        httpStatus: page.status,
-        evidence: "redirect left rieltor.ua",
       };
     }
     if (page.status === 429) {
@@ -433,6 +421,25 @@ export function createCycleRieltorSellerVerifier(options: {
         externalId: target.id,
         httpStatus: page.status,
         evidence: `HTTP ${page.status}`,
+      };
+    }
+    if (!trustedRieltorFinalUrl(page.finalUrl, target.url)) {
+      remember(
+        options.db,
+        target,
+        "transport_failure",
+        "final URL is not the requested RIELTOR listing",
+        page.status,
+        now,
+        TRANSIENT_SELLER_CACHE_MS,
+      );
+      return {
+        outcome: "detail_transport_failure",
+        drop: false,
+        requested: true,
+        externalId: target.id,
+        httpStatus: page.status,
+        evidence: "final URL is not the requested RIELTOR listing",
       };
     }
     const classified = classifyRieltorDetailSeller(page.bodyText);
