@@ -9,7 +9,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const RIELTOR_DETAIL_GAP_MS = 800;
 export const CONFIRMED_SELLER_CACHE_MS = 30 * DAY_MS;
 export const UNKNOWN_SELLER_CACHE_MS = DAY_MS;
-export const TRANSIENT_SELLER_CACHE_MS = 6 * 60 * 60 * 1000;
+/** Aligns with the seller hold: the next poll must be able to retry. Confirmed verdicts stay long-lived. */
+export const TRANSIENT_SELLER_CACHE_MS = 60 * 1000;
 
 const OWNER_LABEL = /^власник$/i;
 const REALTOR_LABEL = /^рієлтор$/i;

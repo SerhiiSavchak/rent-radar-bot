@@ -12,7 +12,7 @@ import type {
   SourceHealth,
 } from "../../domain/source.ts";
 import { getConfig } from "../../config/env.ts";
-import { keepBalancedCatalogSample } from "../../delivery/catalog-sample.ts";
+import { keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
 import { AppError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import {
@@ -57,7 +57,8 @@ export function mapOlxBrowserExtractToFetchResult(
   if (options.includeHouses === false) {
     listings = listings.filter((item) => item.propertyType !== "house");
   }
-  const unique = keepBalancedCatalogSample(dedupe(listings), options.limit ?? 10);
+  const acquired = keepAcquiredByCategory(dedupe(listings));
+  const unique = acquired.kept;
 
   const statuses = [result.apartments.httpStatus, result.houses.httpStatus].filter(
     (status): status is number => status !== undefined,
@@ -85,6 +86,7 @@ export function mapOlxBrowserExtractToFetchResult(
     `accessibilityOk=${result.accessibilityOk}`,
     `apartments=${result.apartments.validatedListingCount}`,
     `houses=${result.houses.validatedListingCount}`,
+    ...(acquired.truncated ? ["acquired_response_cap=trimmed"] : []),
     `htmlInputKind=${result.apartments.htmlInputKind ?? "none"}/${result.houses.htmlInputKind ?? "none"}`,
     ...result.notes.slice(0, 6),
   ];

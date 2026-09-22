@@ -154,6 +154,13 @@ describe("linked RIELTOR seller verification", () => {
     return row.n;
   }
 
+  function holdCount(): number {
+    const row = getDb().prepare("SELECT COUNT(*) AS n FROM seller_verification_holds").get() as {
+      n: number;
+    };
+    return row.n;
+  }
+
   it("rejects hosts and paths that are not a canonical RIELTOR detail id", () => {
     expect(
       canonicalRieltorDetailTarget("https://evil.example/lvov/flats-rent/view/13065183/"),
@@ -331,7 +338,8 @@ describe("linked RIELTOR seller verification", () => {
     expect(report.linkedSellerVerification.detailRateLimited).toBe(1);
     expect(report.linkedSellerVerification.skippedAfterRateLimit).toBe(1);
     expect(report.linkedSellerVerification.detailConfirmedAgent).toBe(0);
-    expect(report.sentOk).toBe(2);
+    expect(report.sentOk).toBe(0);
+    expect(holdCount()).toBe(2);
   });
 
   it("keeps transport and parser failures distinct from a confirmed seller", async () => {
@@ -382,7 +390,8 @@ describe("linked RIELTOR seller verification", () => {
       expect(report.linkedSellerVerification[item.outcome], item.name).toBe(1);
       expect(report.linkedSellerVerification.detailConfirmedAgent).toBe(0);
       expect(report.linkedSellerVerification.detailConfirmedOwner).toBe(0);
-      expect(report.sentOk).toBe(1);
+      expect(report.sentOk).toBe(0);
+      expect(holdCount()).toBe(1);
       const verdict = getDb()
         .prepare("SELECT seller_verdict AS verdict FROM external_seller_verifications")
         .get() as { verdict: string };
@@ -569,7 +578,8 @@ describe("linked RIELTOR seller verification", () => {
       expect(report.linkedSellerVerification.detailTransportFailure, finalUrl).toBe(1);
       expect(report.linkedSellerVerification.detailConfirmedAgent, finalUrl).toBe(0);
       expect(report.linkedSellerVerification.detailConfirmedOwner, finalUrl).toBe(0);
-      expect(report.sentOk, finalUrl).toBe(1);
+      expect(report.sentOk, finalUrl).toBe(0);
+      expect(holdCount()).toBe(1);
       const verdict = getDb()
         .prepare("SELECT seller_verdict AS verdict FROM external_seller_verifications")
         .get() as { verdict: string };
@@ -897,6 +907,274 @@ describe("linked RIELTOR seller verification", () => {
     expect(report.linkedSellerVerification.detailRequests).toBe(0);
   });
 
+  it("holds an exact LUN copy on the first RIELTOR detail 403 and does not send", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [adapter("lun", () => batch)];
+    await seed(store, adapters);
+    batch.push(lunLinked("4725911476", "https://rieltor.ua/lvov/flats-rent/view/13066270/"));
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url) => page("blocked", 403, url),
+      },
+      2,
+    );
+    expect(report.sentOk).toBe(0);
+    expect(holdCount()).toBe(1);
+    expect(outboxCount("4725911476")).toBe(0);
+  });
+
+  it("drops a held LUN copy when the next poll's RIELTOR catalog card is an agent", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const rieltorBatch: Listing[] = [];
+    const adapters = [adapter("lun", () => batch), adapter("rieltor", () => rieltorBatch)];
+    await seed(store, adapters);
+    batch.push(lunLinked("hold-agent", "https://rieltor.ua/lvov/flats-rent/view/77/"));
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url) => page("blocked", 403, url),
+      },
+      2,
+    );
+    expect(holdCount()).toBe(1);
+    rieltorBatch.push(
+      listing({
+        source: "rieltor",
+        sourceId: "77",
+        url: "https://rieltor.ua/lvov/flats-rent/view/77/",
+        sellerType: "agent",
+      }),
+    );
+    let calls = 0;
+    const later = new Date(now.getTime() + 10 * 60 * 1000);
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_RIELTOR: "true" }),
+        sink: sink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => later,
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url) => {
+          calls += 1;
+          return page(realtorHtml, 200, url);
+        },
+      },
+      3,
+    );
+    expect(calls).toBe(0);
+    expect(report.sentOk).toBe(0);
+    expect(holdCount()).toBe(0);
+    expect(outboxCount("hold-agent")).toBe(0);
+  });
+
+  it("drops a held listing when a later detail page says the seller is an agent", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [adapter("lun", () => batch)];
+    await seed(store, adapters);
+    batch.push(lunLinked("hold-detail-agent", "https://rieltor.ua/lvov/flats-rent/view/88/"));
+    let html = "blocked";
+    let status = 403;
+    const cycle = (at: Date) =>
+      runTelegramTestCycle(
+        {
+          adapters,
+          config: configFor(),
+          sink: sink(),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => at,
+          rieltorDetailGapMs: 0,
+          fetchRieltorDetail: async (url) => page(html, status, url),
+        },
+        2,
+      );
+    await cycle(now);
+    html = realtorHtml;
+    status = 200;
+    const report = await cycle(new Date(now.getTime() + 10 * 60 * 1000));
+    expect(report.sentOk).toBe(0);
+    expect(holdCount()).toBe(0);
+    expect(outboxCount("hold-detail-agent")).toBe(0);
+  });
+
+  it("sends a held listing once when a later detail page confirms the owner", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [adapter("lun", () => batch)];
+    await seed(store, adapters);
+    batch.push(lunLinked("hold-owner", "https://rieltor.ua/lvov/flats-rent/view/99/"));
+    let html = "blocked";
+    let status = 403;
+    const cycle = (at: Date, cycleNumber: number) =>
+      runTelegramTestCycle(
+        {
+          adapters,
+          config: configFor(),
+          sink: sink(),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => at,
+          rieltorDetailGapMs: 0,
+          fetchRieltorDetail: async (url) => page(html, status, url),
+        },
+        cycleNumber,
+      );
+    await cycle(now, 2);
+    html = ownerHtml;
+    status = 200;
+    const sent = await cycle(new Date(now.getTime() + 10 * 60 * 1000), 3);
+    const again = await cycle(new Date(now.getTime() + 20 * 60 * 1000), 4);
+    expect(sent.sentOk).toBe(1);
+    expect(again.sentOk).toBe(0);
+    expect(outboxCount("hold-owner")).toBe(1);
+    expect(holdCount()).toBe(0);
+  });
+
+  it("sends unknown exactly once after the hold expires on persistent transport failure", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [adapter("lun", () => batch)];
+    await seed(store, adapters);
+    batch.push(lunLinked("hold-expire", "https://rieltor.ua/lvov/flats-rent/view/100/"));
+    const cycle = (at: Date, cycleNumber: number) =>
+      runTelegramTestCycle(
+        {
+          adapters,
+          config: configFor(),
+          sink: sink(),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => at,
+          rieltorDetailGapMs: 0,
+          fetchRieltorDetail: async (url) => page("blocked", 403, url),
+        },
+        cycleNumber,
+      );
+    const first = await cycle(now, 2);
+    const second = await cycle(new Date(now.getTime() + 10 * 60 * 1000), 3);
+    const third = await cycle(new Date(now.getTime() + 20 * 60 * 1000), 4);
+    const fourth = await cycle(new Date(now.getTime() + 30 * 60 * 1000), 5);
+    expect(first.sentOk).toBe(0);
+    expect(second.sentOk).toBe(0);
+    expect(third.sentOk).toBe(1);
+    expect(fourth.sentOk).toBe(0);
+    expect(outboxCount("hold-expire")).toBe(1);
+    expect(holdCount()).toBe(0);
+  });
+
+  it("keeps a hold across a process restart and then resolves it", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [adapter("lun", () => batch)];
+    await seed(store, adapters);
+    batch.push(lunLinked("hold-restart", "https://rieltor.ua/lvov/flats-rent/view/101/"));
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url) => page("blocked", 403, url),
+      },
+      2,
+    );
+    expect(holdCount()).toBe(1);
+    closeDb();
+    const reopened = new DurableDeliveryStore(getDb(path));
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink(),
+        dedupe: reopened,
+        baseline: reopened,
+        outbox: reopened,
+        now: () => new Date(now.getTime() + 10 * 60 * 1000),
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url) => page(ownerHtml, 200, url),
+      },
+      3,
+    );
+    expect(report.sentOk).toBe(1);
+    expect(holdCount()).toBe(0);
+    expect(outboxCount("hold-restart")).toBe(1);
+  });
+
+  it("resolves a persisted hold after the source listing disappears", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [adapter("lun", () => batch)];
+    await seed(store, adapters);
+    batch.push(lunLinked("hold-gone", "https://rieltor.ua/lvov/flats-rent/view/102/"));
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url) => page("blocked", 403, url),
+      },
+      2,
+    );
+    batch.length = 0;
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(now.getTime() + 10 * 60 * 1000),
+        rieltorDetailGapMs: 0,
+        fetchRieltorDetail: async (url) => page(ownerHtml, 200, url),
+      },
+      3,
+    );
+    expect(report.sentOk).toBe(1);
+    expect(holdCount()).toBe(0);
+    expect(outboxCount("hold-gone")).toBe(1);
+  });
+
   it("migrates schema 5 rows forward and deletes only expired verification cache rows", () => {
     const path = dbPath();
     const db = new DatabaseSync(path);
@@ -920,7 +1198,7 @@ describe("linked RIELTOR seller verification", () => {
          source, status, checked_at, consecutive_failures, updated_at
        ) VALUES ('lun', 'ok', ?, 0, ?)`,
     ).run(now.toISOString(), now.toISOString());
-    expect(applyMigrations(db)).toBe(7);
+    expect(applyMigrations(db)).toBe(8);
     expect(
       (
         db.prepare("SELECT status FROM source_health WHERE source = 'lun'").get() as {

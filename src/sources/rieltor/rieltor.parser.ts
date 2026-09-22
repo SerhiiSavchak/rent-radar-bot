@@ -32,9 +32,13 @@ export function buildRieltorSearchUrl(
   category: RieltorCategory,
   page = 1,
   ownersOnly = false,
+  sort = "bycreated",
 ): string {
   const path = category === "house" ? "houses-rent" : "flats-rent";
   const params = new URLSearchParams();
+  if (sort) {
+    params.set("sort", sort);
+  }
   if (ownersOnly) {
     params.set("f-owners", "1");
   }

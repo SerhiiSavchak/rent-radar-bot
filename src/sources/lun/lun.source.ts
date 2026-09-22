@@ -13,6 +13,7 @@ import { AppError } from "../../utils/errors.ts";
 import { headerBag, httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
 import { inspectLunHtml } from "./lun.parser.ts";
+import { ACQUIRED_RESPONSE_CAP_PER_CATEGORY } from "../../delivery/catalog-sample.ts";
 
 /** Public Lviv long-term flats catalog. Not the bez-poserednykiv owner-only route. */
 export const LUN_FLATS_URL = "https://lun.ua/rent/lviv/flats";
@@ -134,11 +135,15 @@ export class LunSource implements ListingSourceAdapter {
         continue;
       }
       sawStructure = true;
-      const perPage = Math.max(3, Math.ceil((options?.limit ?? 10) / pages.length));
-      listings.push(...inspection.listings.slice(0, perPage));
+      if (inspection.listings.length > ACQUIRED_RESPONSE_CAP_PER_CATEGORY) {
+        notes.push(
+          `${page} acquired-response cap kept ${ACQUIRED_RESPONSE_CAP_PER_CATEGORY} of ${inspection.listings.length}`,
+        );
+      }
+      listings.push(...inspection.listings.slice(0, ACQUIRED_RESPONSE_CAP_PER_CATEGORY));
     }
 
-    const unique = dedupe(listings).slice(0, options?.limit ?? 10);
+    const unique = dedupe(listings);
     // Partial success: if any page yielded listings, prefer ok over masking as parser_failure.
     const resultKind =
       unique.length > 0

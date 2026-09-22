@@ -174,7 +174,7 @@ export function writeSourceHealth(
   const checkedAt = at.toISOString();
   const listingCount = input.listingCount === undefined ? null : input.listingCount;
   const httpStatus = input.httpStatus === undefined ? null : input.httpStatus;
-  const errorSafe = isFailureSourceStatus(status) ? safeStoredError(input.errorSafe, status) : null;
+  const errorSafe = input.errorSafe ? safeStoredError(input.errorSafe, status) : null;
 
   db.exec("BEGIN IMMEDIATE;");
   try {

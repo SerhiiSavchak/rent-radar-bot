@@ -1,21 +1,17 @@
 /**
- * Cards already present in one catalog response on 2026-09-22:
- * LUN 24 per category, DIM.RIA at least 20 apartments, OLX browser 51 apartments
- * and 36 houses. The poll keeps that response instead of a global prefix of 10.
- * 80 leaves headroom over the measured OLX page without a second request.
+ * Safety cap for one already-downloaded catalog response.
+ * Live first responses on 2026-09-22 were LUN 24 cards per category and
+ * OLX 51 apartments plus 36 houses. 120 sits above those pages, so a normal
+ * first response is kept whole. The cap only stops a runaway payload.
  */
-export const CATALOG_CARDS_PER_CATEGORY = 80;
+export const ACQUIRED_RESPONSE_CAP_PER_CATEGORY = 120;
 
-export function catalogSampleLimit(categoryCount = 2): number {
-  return CATALOG_CARDS_PER_CATEGORY * Math.max(1, categoryCount);
-}
-
-export function keepBalancedCatalogSample<T extends { propertyType: string }>(
+export function keepAcquiredByCategory<T extends { propertyType: string }>(
   listings: T[],
-  totalLimit: number,
-): T[] {
-  const order = ["apartment", "house", "other"] as const;
+  capPerCategory = ACQUIRED_RESPONSE_CAP_PER_CATEGORY,
+): { kept: T[]; truncated: boolean } {
   const groups = new Map<string, T[]>();
+  const order: string[] = [];
   for (const listing of listings) {
     const key =
       listing.propertyType === "apartment" || listing.propertyType === "house"
@@ -26,16 +22,17 @@ export function keepBalancedCatalogSample<T extends { propertyType: string }>(
       group.push(listing);
     } else {
       groups.set(key, [listing]);
+      order.push(key);
     }
   }
-  const present = order.filter((key) => (groups.get(key)?.length ?? 0) > 0);
-  if (present.length === 0) {
-    return [];
-  }
-  const perGroup = Math.max(1, Math.ceil(totalLimit / present.length));
+  let truncated = false;
   const kept: T[] = [];
-  for (const key of present) {
-    kept.push(...(groups.get(key) ?? []).slice(0, perGroup));
+  for (const key of order) {
+    const group = groups.get(key) ?? [];
+    if (group.length > capPerCategory) {
+      truncated = true;
+    }
+    kept.push(...group.slice(0, capPerCategory));
   }
-  return kept;
+  return { kept, truncated };
 }

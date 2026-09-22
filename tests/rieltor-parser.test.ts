@@ -36,9 +36,11 @@ const emptyHousesOwners = catalogPage({
 
 describe("RIELTOR parser", () => {
   it("builds Lviv routes and owner query without silently dropping the city prefix", () => {
-    expect(buildRieltorSearchUrl("apartment")).toBe("https://rieltor.ua/lvov/flats-rent/");
+    expect(buildRieltorSearchUrl("apartment")).toBe(
+      "https://rieltor.ua/lvov/flats-rent/?sort=bycreated",
+    );
     expect(buildRieltorSearchUrl("house", 2, true)).toBe(
-      "https://rieltor.ua/lvov/houses-rent/?f-owners=1&page=2",
+      "https://rieltor.ua/lvov/houses-rent/?sort=bycreated&f-owners=1&page=2",
     );
   });
 

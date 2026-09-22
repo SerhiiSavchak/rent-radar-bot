@@ -8,7 +8,18 @@ import {
   defaultMaxPublicationAgeMinutes,
   withFirstSeenAt,
 } from "./listing-freshness.ts";
-import { catalogSampleLimit } from "./catalog-sample.ts";
+import {
+  hasSellerHold,
+  deleteSellerHold,
+  resolveDueSellerHolds,
+  shouldHoldSellerVerification,
+  upsertSellerHold,
+} from "./seller-verification-hold.ts";
+import {
+  formatRieltorCoverage,
+  rieltorPublicationBoundaryKey,
+  type RieltorCategoryName,
+} from "../sources/rieltor/rieltor-incremental.ts";
 import type {
   ListingDedupe,
   OutboxItem,
@@ -22,6 +33,7 @@ import {
 } from "./cross-source-dedup.ts";
 import { annotateListing } from "./listing-annotations.ts";
 import {
+  canonicalRieltorDetailTarget,
   createCycleRieltorSellerVerifier,
   emptyLinkedSellerVerification,
   type LinkedSellerDecision,
@@ -397,10 +409,10 @@ function classifySourceAttempt(result: SourceFetchResult): {
       errorSafe: `transport_blocked HTTP ${result.httpStatus} via ${result.transport}`,
     };
   }
-  if (kind === "ok" && result.listings.length > 0) {
-    return { ok: true, resultKind: kind };
-  }
-  if (kind === "valid_empty") {
+  if ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty") {
+    if (result.coverage?.coverageTruncated) {
+      return { ok: true, resultKind: kind, errorSafe: formatRieltorCoverage(result.coverage) };
+    }
     return { ok: true, resultKind: kind };
   }
   if (kind === "parser_failure") {
@@ -593,6 +605,31 @@ export async function runTelegramTestCycle(
   );
   deps.baseline.ensureSellerPolicy?.(deps.config.sellerPolicy, now());
   const policyCutoverAt = deps.baseline.sellerPolicyCutoverAt?.();
+  const holdDb =
+    deps.baseline instanceof DurableDeliveryStore
+      ? deps.baseline.verificationDatabase()
+      : deps.outbox instanceof DurableDeliveryStore
+        ? deps.outbox.verificationDatabase()
+        : undefined;
+
+  const readRieltorWatermarks = ():
+    | Partial<Record<RieltorCategoryName, Date>>
+    | undefined => {
+    if (!holdDb) {
+      return undefined;
+    }
+    const watermarks: Partial<Record<RieltorCategoryName, Date>> = {};
+    for (const category of ["apartment", "house"] as const) {
+      const row = holdDb
+        .prepare("SELECT value FROM schema_meta WHERE key = ?")
+        .get(rieltorPublicationBoundaryKey(category)) as { value: string } | undefined;
+      const parsed = row ? Date.parse(row.value) : Number.NaN;
+      if (Number.isFinite(parsed)) {
+        watermarks[category] = new Date(parsed);
+      }
+    }
+    return Object.keys(watermarks).length > 0 ? watermarks : undefined;
+  };
 
   type SourceBucket = {
     source: string;
@@ -638,9 +675,11 @@ export async function runTelegramTestCycle(
     }
 
     try {
+      const publicationWatermarks =
+        adapter.source === "rieltor" ? readRieltorWatermarks() : undefined;
       const result: SourceFetchResult = await adapter.inspectLatest({
-        limit: catalogSampleLimit(),
         preferOwners: usesOwnerOnlySourceFilter(deps.config),
+        ...(publicationWatermarks ? { publicationWatermarks } : {}),
       });
       const classified = classifySourceAttempt(result);
       // Do not drop old publishedAt here — baseline must see current inventory.
@@ -664,6 +703,24 @@ export async function runTelegramTestCycle(
         raw: result.listings,
         collectedCount: result.listings.length,
       });
+      if (
+        holdDb &&
+        adapter.source === "rieltor" &&
+        classified.ok &&
+        result.coverage &&
+        !result.coverage.coverageTruncated &&
+        result.coverage.nextBoundary
+      ) {
+        const writeBoundary = holdDb.prepare(
+          "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+        );
+        for (const category of ["apartment", "house"] as const) {
+          const value = result.coverage.nextBoundary[category];
+          if (value) {
+            writeBoundary.run(rieltorPublicationBoundaryKey(category), value);
+          }
+        }
+      }
       recordAttempt({
         source: adapter.source,
         enabled: true,
@@ -746,13 +803,31 @@ export async function runTelegramTestCycle(
     ...(deps.fetchRieltorDetail ? { fetchPage: deps.fetchRieltorDetail } : {}),
   });
   const allowLinkedRieltor = async (listing: Listing): Promise<boolean> => {
+    if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
+      return false;
+    }
     const decision = await verifyLinkedRieltor(listing);
     noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);
-    if (!decision.drop) {
-      return true;
+    if (decision.drop) {
+      if (holdDb) {
+        deleteSellerHold(holdDb, listing.source, listing.sourceId);
+      }
+      retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
+      return false;
     }
-    retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
-    return false;
+    const target = canonicalRieltorDetailTarget(
+      typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
+    );
+    if (
+      holdDb &&
+      deps.sink.dryRun !== true &&
+      target &&
+      shouldHoldSellerVerification(decision)
+    ) {
+      upsertSellerHold(holdDb, listing, target.id, now());
+      return false;
+    }
+    return true;
   };
 
   let sentOk = 0;
@@ -799,6 +874,50 @@ export async function runTelegramTestCycle(
       sendErrors.push(...delivered.sendErrors);
       if (pauseChannel) {
         break;
+      }
+    }
+  }
+
+  const releaseHeldListing = async (original: Listing): Promise<void> => {
+    const listing = annotateListing(original);
+    if (crossSource) {
+      const decision = crossSource.assessCrossSource(listing, crossSourcePeers);
+      if (decision.suppress) {
+        suppressedCrossSourceDuplicate += 1;
+        deps.dedupe.markSeen(listing);
+        return;
+      }
+    }
+    const established = deps.baseline.establishedAt(listing.source);
+    const monitoringStartedAt = laterDate(established, policyCutoverAt);
+    const freshness = classifyListingFreshness(listing, {
+      maxPublicationAgeMinutes,
+      strictNewPublications,
+      now: now(),
+      ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
+    });
+    if (!freshness.deliverable) {
+      deps.dedupe.markSeen(listing);
+      return;
+    }
+    const deliveryKind =
+      freshness.kind === "new_publication" || freshness.kind === "first_noticed"
+        ? freshness.kind
+        : "first_noticed";
+    const delivered = await handoff(listing, deliveryKind);
+    if (crossSource) {
+      crossSourcePeers.push(listing);
+    }
+    sentOk += delivered.sentOk;
+    sentFailed += delivered.sentFailed;
+    sendErrors.push(...delivered.sendErrors);
+  };
+
+  if (holdDb && deps.sink.dryRun !== true) {
+    const released = await resolveDueSellerHolds(holdDb, now(), verifyLinkedRieltor);
+    for (const item of released) {
+      if (item.action === "send") {
+        await releaseHeldListing(item.listing);
       }
     }
   }

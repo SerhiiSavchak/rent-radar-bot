@@ -5,6 +5,8 @@ export type FetchListingsOptions = {
   includeHouses?: boolean;
   includeApartments?: boolean;
   preferOwners?: boolean;
+  /** Newest publication already covered, per RIELTOR category. */
+  publicationWatermarks?: Partial<Record<"apartment" | "house", Date>>;
 };
 
 export type FetchResultKind =
@@ -36,6 +38,16 @@ export type SourceHealth = {
   resultKind?: FetchResultKind | undefined;
 };
 
+export type IncrementalCoverage = {
+  pagesFetched: number;
+  cardsFetched: number;
+  boundaryReached: boolean;
+  coverageTruncated: boolean;
+  oldestObservedPublication?: string;
+  newestObservedPublication?: string;
+  nextBoundary?: Partial<Record<"apartment" | "house", string>>;
+};
+
 export type SourceFetchResult = {
   listings: Listing[];
   health: SourceHealth;
@@ -45,6 +57,7 @@ export type SourceFetchResult = {
   rawNotes?: string[] | undefined;
   resultKind?: FetchResultKind | undefined;
   integrity?: SourceIntegrity | undefined;
+  coverage?: IncrementalCoverage | undefined;
 };
 
 export interface ListingSourceAdapter {

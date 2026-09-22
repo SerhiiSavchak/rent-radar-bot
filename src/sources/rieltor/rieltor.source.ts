@@ -14,29 +14,18 @@ import { isRieltorTransportBlocked, resolveRieltorInspectKind } from "./rieltor-
 import { decideRieltorTransientRetry } from "./rieltor-retry.ts";
 import { buildRieltorSearchUrl, inspectRieltorHtml } from "./rieltor.parser.ts";
 import {
-  RIELTOR_MAX_PAGES_PER_CATEGORY,
-  RIELTOR_PAGE_SIZE,
+  RIELTOR_INCREMENTAL_MAX_PAGES,
+  RIELTOR_NEWEST_SORT,
+  crossedRieltorPublicationBoundary,
+  finalizeRieltorCoverage,
+  formatRieltorCoverage,
+  publicationRange,
+  type RieltorIncrementalCoverage,
+} from "./rieltor-incremental.ts";
+import {
   RIELTOR_REQUEST_GAP_MS,
   type RieltorCategory,
 } from "./rieltor.types.ts";
-
-/**
- * Split a total sample across categories and stay inside the existing 2-page cap.
- * A global slice of 10 kept only the first apartments and dropped the house page
- * that had already been downloaded. Page 2 of flats contained same-day cards, so
- * the poll window uses both existing pages instead of adding a third.
- */
-export function rieltorCategoryWindow(
-  totalLimit: number,
-  categoryCount: number,
-): { pages: number; keep: number } {
-  const perCategory = Math.max(1, Math.ceil(totalLimit / Math.max(1, categoryCount)));
-  const pages = Math.min(
-    RIELTOR_MAX_PAGES_PER_CATEGORY,
-    Math.max(1, Math.ceil(perCategory / RIELTOR_PAGE_SIZE)),
-  );
-  return { pages, keep: Math.min(perCategory, pages * RIELTOR_PAGE_SIZE) };
-}
 
 export class RieltorSource implements ListingSourceAdapter {
   readonly source = "rieltor" as const;
@@ -76,8 +65,6 @@ export class RieltorSource implements ListingSourceAdapter {
       categories.push("house");
     }
 
-    const window = rieltorCategoryWindow(options?.limit ?? 10, categories.length);
-    const categoryOptions: FetchListingsOptions = { ...effectiveOptions, limit: window.keep };
     const listings: Listing[] = [];
     let lastStatus: number | undefined;
     let parserFailure = false;
@@ -85,12 +72,15 @@ export class RieltorSource implements ListingSourceAdapter {
     let blocked = false;
     let rateLimited = false;
     let sawStructure = false;
-    let truncated = false;
     let extractedCardCount = 0;
     let validatedCardCount = 0;
     let hasJsonLd = false;
     let declaredTotal = 0;
     let requestCount = 0;
+    let pagesFetched = 0;
+    let boundaryReached = true;
+    let coverageTruncated = false;
+    const nextBoundary: NonNullable<RieltorIncrementalCoverage["nextBoundary"]> = {};
 
     for (const [index, category] of categories.entries()) {
       if (index > 0) {
@@ -98,17 +88,22 @@ export class RieltorSource implements ListingSourceAdapter {
       }
       const page = await this.fetchCategoryPages(
         category,
-        categoryOptions,
+        effectiveOptions,
         notes,
         config.sourceTimeoutMs,
       );
       requestCount += page.requestCount;
+      pagesFetched += page.pagesFetched;
       lastStatus = page.lastStatus ?? lastStatus;
       extractedCardCount += page.extractedCardCount;
       validatedCardCount += page.validatedCardCount;
       hasJsonLd = hasJsonLd || page.hasJsonLd;
       declaredTotal += page.declaredCount ?? 0;
-      truncated = truncated || page.truncated;
+      boundaryReached = boundaryReached && page.boundaryReached;
+      coverageTruncated = coverageTruncated || page.coverageTruncated;
+      if (page.nextBoundary) {
+        nextBoundary[category] = page.nextBoundary;
+      }
       if (page.rateLimited) {
         rateLimited = true;
         httpError = true;
@@ -130,13 +125,23 @@ export class RieltorSource implements ListingSourceAdapter {
         continue;
       }
       sawStructure = true;
-      listings.push(...page.listings.slice(0, window.keep));
+      listings.push(...page.listings);
     }
 
-    const unique = dedupe(listings).slice(0, window.keep * Math.max(1, categories.length));
+    const unique = dedupe(listings);
+    const range = publicationRange(unique);
+    const coverage: RieltorIncrementalCoverage = {
+      pagesFetched,
+      cardsFetched: unique.length,
+      boundaryReached,
+      coverageTruncated,
+      ...(range.oldest ? { oldestObservedPublication: range.oldest } : {}),
+      ...(range.newest ? { newestObservedPublication: range.newest } : {}),
+      ...(Object.keys(nextBoundary).length > 0 ? { nextBoundary } : {}),
+    };
     if (effectiveOptions.preferOwners !== true && declaredTotal > unique.length) {
       notes.push(
-        `public catalog sample=${unique.length} declared≈${declaredTotal} — not exhaustive under existing page/limit bounds`,
+        `public catalog sample=${unique.length} declared≈${declaredTotal} — incremental newest-first scan, not the full catalog`,
       );
     }
     const resultKind = resolveRieltorInspectKind({
@@ -153,21 +158,18 @@ export class RieltorSource implements ListingSourceAdapter {
       status: lastStatus,
       resultKind,
       requestCount,
-      truncated,
+      boundaryReached,
+      coverageTruncated,
     });
+    const coverageNote = formatRieltorCoverage(coverage);
     return {
       listings: unique,
       transport: "public HTML catalog cards + optional JSON-LD",
       dataKind: "LIVE DATA",
       resultKind,
+      coverage,
       ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
-      rawNotes: [
-        ...notes,
-        `requests=${requestCount}`,
-        truncated
-          ? "TRUNCATED: declared catalog size exceeds fetched cards; do not treat this scan as complete"
-          : "scanCompleteWithinFetchedPages=true (full-catalog completeness still depends on declaredCount)",
-      ],
+      rawNotes: [...notes, `requests=${requestCount}`, coverageNote],
       integrity: {
         ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
         hasExpectedMarkers: sawStructure,
@@ -184,7 +186,7 @@ export class RieltorSource implements ListingSourceAdapter {
         resultKind,
         ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
         transport: "public HTML catalog cards + optional JSON-LD",
-        message: messageFor(resultKind, unique.length, lastStatus, truncated, declaredTotal),
+        message: `${messageFor(resultKind, unique.length, lastStatus, false, declaredTotal)} ${formatRieltorCoverage(coverage)}`,
       },
     };
   }
@@ -198,43 +200,44 @@ export class RieltorSource implements ListingSourceAdapter {
     listings: Listing[];
     lastStatus?: number;
     requestCount: number;
+    pagesFetched: number;
     extractedCardCount: number;
     validatedCardCount: number;
     hasJsonLd: boolean;
     declaredCount?: number;
-    truncated: boolean;
+    boundaryReached: boolean;
+    coverageTruncated: boolean;
+    nextBoundary?: string;
     parserFailure: boolean;
     httpError: boolean;
     blocked: boolean;
     rateLimited: boolean;
   }> {
     const ownersOnly = options?.preferOwners === true;
-    const limit = options?.limit ?? 10;
+    const watermark = options?.publicationWatermarks?.[category];
     const listings: Listing[] = [];
     let lastStatus: number | undefined;
     let requestCount = 0;
+    let pagesFetched = 0;
     let extractedCardCount = 0;
     let validatedCardCount = 0;
     let hasJsonLd = false;
     let declaredCount: number | undefined;
-    let truncated = false;
     let parserFailure = false;
     let httpError = false;
     let blocked = false;
     let rateLimited = false;
-
-    const maxPages = Math.min(
-      RIELTOR_MAX_PAGES_PER_CATEGORY,
-      Math.max(1, Math.ceil(limit / RIELTOR_PAGE_SIZE)),
-    );
+    let crossed = false;
+    const maxPages = watermark ? RIELTOR_INCREMENTAL_MAX_PAGES : 1;
 
     for (let page = 1; page <= maxPages; page += 1) {
       if (page > 1) {
         await sleep(RIELTOR_REQUEST_GAP_MS);
       }
-      const url = buildRieltorSearchUrl(category, page, ownersOnly);
+      const url = buildRieltorSearchUrl(category, page, ownersOnly, RIELTOR_NEWEST_SORT);
       const fetched = await fetchRieltorPage(url, timeoutMs, notes);
       requestCount += fetched.requestCount;
+      pagesFetched += 1;
       if (!fetched.response) {
         httpError = true;
         notes.push(`${category} page ${page}: network failure after bounded retry`);
@@ -272,9 +275,8 @@ export class RieltorSource implements ListingSourceAdapter {
       extractedCardCount += inspection.extractedCardCount;
       validatedCardCount += inspection.validatedCardCount;
       declaredCount = inspection.declaredCount ?? declaredCount;
-      truncated = truncated || inspection.truncated;
       notes.push(
-        `${category} p${page} kind=${inspection.resultKind} declared=${inspection.declaredCount ?? "n/a"} cards=${inspection.extractedCardCount} validated=${inspection.validatedCardCount} jsonld=${inspection.hasJsonLd} location=${inspection.locationResolved} truncated=${inspection.truncated}`,
+        `${category} p${page} kind=${inspection.resultKind} declared=${inspection.declaredCount ?? "n/a"} cards=${inspection.extractedCardCount} validated=${inspection.validatedCardCount} jsonld=${inspection.hasJsonLd} location=${inspection.locationResolved}`,
       );
       if (!inspection.locationResolved) {
         parserFailure = true;
@@ -285,44 +287,46 @@ export class RieltorSource implements ListingSourceAdapter {
         parserFailure = true;
         break;
       }
-      listings.push(...inspection.listings);
-      if (inspection.resultKind === "valid_empty" || inspection.listings.length === 0) {
-        break;
+      for (const listing of inspection.listings) {
+        listings.push(listing);
+        if (crossedRieltorPublicationBoundary(listing.publishedAt, watermark)) {
+          crossed = true;
+          break;
+        }
       }
-      if (listings.length >= limit) {
-        break;
-      }
-      const remaining =
-        inspection.declaredCount !== undefined
-          ? inspection.declaredCount - page * inspection.extractedCardCount
-          : 0;
-      if (remaining <= 0) {
-        truncated = false;
+      if (crossed || inspection.resultKind === "valid_empty" || inspection.listings.length === 0) {
         break;
       }
     }
 
-    if (declaredCount !== undefined && listings.length < declaredCount) {
-      truncated = true;
-    }
-
+    const finalized = finalizeRieltorCoverage({
+      hadWatermark: watermark !== undefined,
+      pagesFetched,
+      boundaryReached: crossed,
+    });
+    const failed = parserFailure || httpError || blocked || rateLimited;
+    const boundaryReached = failed ? false : finalized.boundaryReached;
+    const coverageTruncated = failed ? true : finalized.coverageTruncated;
+    const range = publicationRange(listings);
     return {
       listings,
       requestCount,
+      pagesFetched,
       extractedCardCount,
       validatedCardCount,
       hasJsonLd,
-      truncated,
+      boundaryReached,
+      coverageTruncated,
       parserFailure,
       httpError,
       blocked,
       rateLimited,
+      ...(boundaryReached && range.newest ? { nextBoundary: range.newest } : {}),
       ...(lastStatus !== undefined ? { lastStatus } : {}),
       ...(declaredCount !== undefined ? { declaredCount } : {}),
     };
   }
 }
-
 
 function messageFor(
   kind: FetchResultKind,

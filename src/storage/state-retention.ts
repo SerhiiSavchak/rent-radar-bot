@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { deleteExpiredSellerVerifications } from "../delivery/rieltor-detail-seller.ts";
+import { deleteAbandonedSellerHolds } from "../delivery/seller-verification-hold.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -32,6 +33,7 @@ export type StateCleanupReport = {
   sentOutboxRowsRemoved: number;
   diagnosticRowsRemoved: number;
   externalSellerRowsRemoved: number;
+  sellerHoldRowsRemoved: number;
   durationMs: number;
   databaseBytes?: number;
   finishedAt: string;
@@ -61,6 +63,7 @@ export function runStateCleanupIfDue(
         sentOutboxRowsRemoved: 0,
         diagnosticRowsRemoved: 0,
         externalSellerRowsRemoved: 0,
+        sellerHoldRowsRemoved: 0,
         durationMs: Date.now() - started,
         finishedAt: now.toISOString(),
       };
@@ -85,6 +88,7 @@ function runStateCleanup(
   let crossSourceIdentitiesRemoved: number;
   let sentOutboxRowsRemoved: number;
   let externalSellerRowsRemoved: number;
+  let sellerHoldRowsRemoved: number;
 
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -135,6 +139,7 @@ function runStateCleanup(
       .run(seenCutoff);
     seenRowsRemoved = changed(seen);
     externalSellerRowsRemoved = deleteExpiredSellerVerifications(db, now);
+    sellerHoldRowsRemoved = deleteAbandonedSellerHolds(db, now);
 
     db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)").run(
       STATE_CLEANUP_META_KEY,
@@ -159,6 +164,7 @@ function runStateCleanup(
     sentOutboxRowsRemoved,
     diagnosticRowsRemoved: 0,
     externalSellerRowsRemoved,
+    sellerHoldRowsRemoved,
     durationMs: Date.now() - started,
     ...(databaseBytes !== undefined ? { databaseBytes } : {}),
     finishedAt,

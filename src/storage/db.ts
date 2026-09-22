@@ -154,6 +154,7 @@ export function resetDbForTests(databasePath: string): void {
   closeDb();
   db = new DatabaseSync(databasePath);
   db.exec(`
+    DROP TABLE IF EXISTS seller_verification_holds;
     DROP TABLE IF EXISTS source_admin_alerts;
     DROP TABLE IF EXISTS external_seller_verifications;
     DROP TABLE IF EXISTS source_health;

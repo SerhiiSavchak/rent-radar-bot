@@ -4,21 +4,31 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
 import {
-  catalogSampleLimit,
-  keepBalancedCatalogSample,
+  ACQUIRED_RESPONSE_CAP_PER_CATEGORY,
+  keepAcquiredByCategory,
 } from "../src/delivery/catalog-sample.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
 import type { TelegramTestSink } from "../src/outputs/telegram-test.sink.ts";
-import { rieltorCategoryWindow } from "../src/sources/rieltor/rieltor.source.ts";
+import {
+  finalizeRieltorCoverage,
+  formatRieltorCoverage,
+} from "../src/sources/rieltor/rieltor-incremental.ts";
 import { closeDb, getDb } from "../src/storage/db.ts";
 import { DurableDeliveryStore } from "../src/storage/durable-delivery-store.ts";
 
-describe("catalog sample depth", () => {
-  it("keeps the measured first response instead of a global prefix of 10", () => {
-    const limit = catalogSampleLimit(2);
-    expect(limit).toBeGreaterThanOrEqual(24 * 2);
-    expect(Math.ceil(limit / 2)).toBeGreaterThanOrEqual(51);
+describe("acquired catalog cards", () => {
+  it("keeps a card below the old top-10 when it was already in the response", () => {
+    const listings = Array.from({ length: 15 }, (_, index) => ({
+      propertyType: "apartment",
+      sourceId: `a${index + 1}`,
+    }));
+    const kept = keepAcquiredByCategory(listings).kept;
+    expect(kept.some((item) => item.sourceId === "a11")).toBe(true);
+    expect(kept).toHaveLength(15);
+  });
+
+  it("keeps an OLX card past position 10 and does not let apartments hide houses", () => {
     const apartments = Array.from({ length: 51 }, (_, index) => ({
       propertyType: "apartment",
       sourceId: `a${index + 1}`,
@@ -27,22 +37,46 @@ describe("catalog sample depth", () => {
       propertyType: "house",
       sourceId: `h${index + 1}`,
     }));
-    const kept = keepBalancedCatalogSample([...apartments, ...houses], limit);
+    const kept = keepAcquiredByCategory([...apartments, ...houses]).kept;
+    expect(kept.some((item) => item.sourceId === "a15")).toBe(true);
     expect(kept.some((item) => item.sourceId === "a28")).toBe(true);
-    expect(kept.some((item) => item.sourceId === "a51")).toBe(true);
     expect(kept.filter((item) => item.propertyType === "house")).toHaveLength(36);
     expect(kept).toHaveLength(87);
   });
 
-  it("keeps a same-day RIELTOR card from page 2 without opening a third page", () => {
-    const window = rieltorCategoryWindow(catalogSampleLimit(2), 2);
-    expect(window.pages).toBe(2);
-    expect(window.keep).toBeGreaterThanOrEqual(35);
-    expect(window.keep).toBeLessThanOrEqual(40);
+  it("caps a runaway category without dropping the other category", () => {
+    const apartments = Array.from({ length: ACQUIRED_RESPONSE_CAP_PER_CATEGORY + 1 }, (_, index) => ({
+      propertyType: "apartment",
+      sourceId: `a${index + 1}`,
+    }));
+    const houses = Array.from({ length: 4 }, (_, index) => ({
+      propertyType: "house",
+      sourceId: `h${index + 1}`,
+    }));
+    const acquired = keepAcquiredByCategory([...apartments, ...houses]);
+    expect(acquired.truncated).toBe(true);
+    expect(acquired.kept.filter((item) => item.propertyType === "apartment")).toHaveLength(
+      ACQUIRED_RESPONSE_CAP_PER_CATEGORY,
+    );
+    expect(acquired.kept.filter((item) => item.propertyType === "house")).toHaveLength(4);
+  });
+
+  it("does not claim RIELTOR coverage when the page guard is reached first", () => {
+    const coverage = finalizeRieltorCoverage({
+      hadWatermark: true,
+      pagesFetched: 3,
+      boundaryReached: false,
+      maxPages: 3,
+    });
+    expect(coverage.boundaryReached).toBe(false);
+    expect(coverage.coverageTruncated).toBe(true);
+    expect(formatRieltorCoverage({ pagesFetched: 3, cardsFetched: 60, ...coverage })).toContain(
+      "coverageTruncated=true",
+    );
   });
 });
 
-describe("poller requests the catalog sample", () => {
+describe("poller does not pass a tight catalog prefix", () => {
   const dir = mkdtempSync(join(tmpdir(), "rent-radar-sample-"));
 
   afterEach(() => {
@@ -50,14 +84,14 @@ describe("poller requests the catalog sample", () => {
     resetConfigCache();
   });
 
-  it("passes the catalog sample limit into inspectLatest", async () => {
-    const seen: number[] = [];
+  it("leaves inspectLatest limit unset and records a truncated RIELTOR scan", async () => {
+    const seen: Array<number | undefined> = [];
     const now = new Date("2026-09-22T12:00:00.000Z");
-    const adapter: ListingSourceAdapter = {
+    const lun: ListingSourceAdapter = {
       source: "lun",
       fetchLatest: async () => [],
       inspectLatest: async (options): Promise<SourceFetchResult> => {
-        if (options?.limit !== undefined) seen.push(options.limit);
+        seen.push(options?.limit);
         return {
           listings: [],
           transport: "test",
@@ -68,6 +102,25 @@ describe("poller requests the catalog sample", () => {
         };
       },
       healthCheck: async () => ({ source: "lun", healthy: true, checkedAt: now }),
+    };
+    const rieltor: ListingSourceAdapter = {
+      source: "rieltor",
+      fetchLatest: async () => [],
+      inspectLatest: async (): Promise<SourceFetchResult> => ({
+        listings: [],
+        transport: "test",
+        dataKind: "MOCK DATA",
+        resultKind: "valid_empty",
+        httpStatus: 200,
+        coverage: {
+          pagesFetched: 3,
+          cardsFetched: 60,
+          boundaryReached: false,
+          coverageTruncated: true,
+        },
+        health: { source: "rieltor", healthy: true, checkedAt: now, message: "ok" },
+      }),
+      healthCheck: async () => ({ source: "rieltor", healthy: true, checkedAt: now }),
     };
     const sink = {
       chatId: "1",
@@ -83,7 +136,7 @@ describe("poller requests the catalog sample", () => {
       ENABLE_LUN: "true",
       ENABLE_OLX: "false",
       ENABLE_OLX_BROWSER: "false",
-      ENABLE_RIELTOR: "false",
+      ENABLE_RIELTOR: "true",
       PROPERTY_TYPES: "apartment,house",
       TARGET_LAT: "49.8397",
       TARGET_LNG: "24.0297",
@@ -92,10 +145,11 @@ describe("poller requests the catalog sample", () => {
       FIRST_RUN_MODE: "seed",
       TELEGRAM_STRICT_NEW_PUBLICATIONS: "true",
     });
-    const store = new DurableDeliveryStore(getDb(join(dir, "sample.sqlite")));
+    const path = join(dir, "sample.sqlite");
+    const store = new DurableDeliveryStore(getDb(path));
     await runTelegramTestCycle(
       {
-        adapters: [adapter],
+        adapters: [lun, rieltor],
         config,
         sink,
         dedupe: store,
@@ -105,6 +159,12 @@ describe("poller requests the catalog sample", () => {
       },
       1,
     );
-    expect(seen).toEqual([catalogSampleLimit()]);
+    expect(seen).toEqual([undefined]);
+    const health = getDb().prepare(
+      "SELECT status, last_error_safe AS errorSafe FROM source_health WHERE source = 'rieltor'",
+    ).get() as { status: string; errorSafe: string | null };
+    expect(health.status).toBe("valid_empty");
+    expect(health.errorSafe).toContain("coverageTruncated=true");
+    expect(health.errorSafe).toContain("boundaryReached=false");
   });
 });

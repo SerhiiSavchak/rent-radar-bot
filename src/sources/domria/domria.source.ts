@@ -13,6 +13,7 @@ import { logger } from "../../utils/logger.ts";
 import { bindingPollIntervalSeconds, decideDomriaTransport } from "./domria-budget.ts";
 import { extractInitialStateJson, inspectDomriaCatalog, parseDomriaInfo } from "./domria.parser.ts";
 import { domriaSearchResponseSchema } from "./domria.types.ts";
+import { keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
 
 const APARTMENTS_HTML = "https://dom.ria.com/uk/arenda-kvartir/lvov/";
 const HOUSES_HTML = "https://dom.ria.com/uk/arenda-domov/lvov/";
@@ -74,7 +75,7 @@ export class DomriaSource implements ListingSourceAdapter {
         config.domriaMaxInfoPerPoll,
       );
       if (api.listings.length > 0) {
-        return finish(api.listings, started, "official API", api.status, notes, options?.limit, {
+        return finish(api.listings, started, "official API", api.status, notes, {
           structurePresent: true,
         });
       }
@@ -82,13 +83,13 @@ export class DomriaSource implements ListingSourceAdapter {
     }
 
     if (!config.domriaUsePublicHtmlFallback && decision.transport !== "html") {
-      return finish([], started, "official API", undefined, notes, options?.limit, {
+      return finish([], started, "official API", undefined, notes, {
         forceUnhealthy: true,
       });
     }
     if (!config.domriaUsePublicHtmlFallback && config.domriaAcquisition === "html") {
       notes.push("DOMRIA_USE_PUBLIC_HTML_FALLBACK=false disables the production HTML path.");
-      return finish([], started, "public HTML", undefined, notes, options?.limit, {
+      return finish([], started, "public HTML", undefined, notes, {
         forceUnhealthy: true,
       });
     }
@@ -125,8 +126,7 @@ export class DomriaSource implements ListingSourceAdapter {
           continue;
         }
         structurePresent = true;
-        const perPage = Math.max(3, Math.ceil((options?.limit ?? 10) / pages.length));
-        htmlListings.push(...parsed.listings.slice(0, perPage));
+        htmlListings.push(...parsed.listings);
       } catch (error) {
         parserFailure = true;
         notes.push(`HTML parse failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -138,7 +138,6 @@ export class DomriaSource implements ListingSourceAdapter {
       "public HTML embedded JSON",
       lastStatus,
       notes,
-      options?.limit,
       {
         structurePresent: structurePresent && !parserFailure,
         parserFailure,
@@ -248,7 +247,6 @@ function finish(
   transport: string,
   status: number | undefined,
   notes: string[],
-  limit?: number,
   flags: {
     forceUnhealthy?: boolean;
     structurePresent?: boolean;
@@ -256,7 +254,13 @@ function finish(
     httpError?: boolean;
   } = {},
 ): SourceFetchResult {
-  const unique = dedupe(listings).slice(0, limit ?? 10);
+  const acquired = keepAcquiredByCategory(dedupe(listings));
+  const unique = acquired.kept;
+  if (acquired.truncated) {
+    notes.push(
+      `acquired-response cap kept ${unique.length} cards; a normal first page is below the cap`,
+    );
+  }
   const resultKind = deriveDomriaInspectResultKind({
     listingCount: unique.length,
     ...(status !== undefined ? { httpStatus: status } : {}),
