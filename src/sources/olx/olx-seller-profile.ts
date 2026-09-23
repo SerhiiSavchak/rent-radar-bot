@@ -4,33 +4,44 @@ export type OlxProfileDecision = {
 };
 
 /**
- * Public OLX profile inventory, read from the listing's own `/uk/list/user/{slug}/` link.
+ * Public OLX profile inventory from the listing's own `/uk/list/user/{slug}/` link.
  *
- * Live counts on 2026-09-23, one stock Chromium, sequential:
- * - Надія (`1811096174`): totalElements 6, totalPages 1, mixed real-estate and accommodation.
- * - Наталя Ткачук (`28160545`): totalElements 13, totalPages 2, real-estate categories on the page.
- * - Another Наталія (`24346513`): totalElements 20, totalPages 2.
- * - Ксенія and Юліан: 2 and 1 ads, one page.
+ * Live counts on 2026-09-24, one stock Chromium, page 2 followed only from the
+ * profile's own `page=2` link:
+ * - Надія `1811096174`: 6 total, 1 page, 6 visible, 2 real-estate (ratio 0.33).
+ * - Ксенія `11299243`: 2 total, 1 page, 2 real-estate.
+ * - Юліан `172271722`: 1 total, 1 page, 1 real-estate.
+ * - Наталя Ткачук `28160545`: 13 total, 2 pages, 10+3 visible, 13 real-estate.
+ * - Наталія `24346513`: 21 total, 3 pages, first two pages 10+10 real-estate.
  *
- * A second public page is the split. Six ads on one page stay unknown and are sent.
- * Three addresses are not this decision.
+ * Ten real-estate ads is the full first page both professional profiles filled.
+ * Two real-estate ads, or one real-estate ad among other goods, stay unknown.
  */
-export const OLX_PROFILE_MULTI_PAGE_MIN = 2;
+export const OLX_PROFILE_REAL_ESTATE_MIN = 10;
 
-/** Successful reads are reused so the next cycles do not open the same profile. */
-export const OLX_PROFILE_SUCCESS_TTL_MS = 12 * 60 * 60 * 1000;
+/** A likely profile stays cached. The seller already showed a large inventory. */
+export const OLX_PROFILE_LIKELY_TTL_MS = 12 * 60 * 60 * 1000;
 
-/** A failed read is unknown/send and is retried later, not on every cycle. */
+/**
+ * A small or mixed profile is rechecked within the hour. 45 minutes is three to
+ * four 10-minute polls, short enough to notice a growing inventory and long
+ * enough not to open Chromium for the same seller every cycle.
+ */
+export const OLX_PROFILE_UNKNOWN_TTL_MS = 45 * 60 * 1000;
+
+/** A failed read stays sendable and is retried later, not on every cycle. */
 export const OLX_PROFILE_FAILURE_TTL_MS = 60 * 60 * 1000;
 
-/** New profile navigations per cycle, after the listing is otherwise deliverable. */
+/** New profile navigations per cycle. Past this, the listing is deferred, not sent. */
 export const OLX_PROFILE_PROBE_BUDGET = 4;
 
 export type OlxProfileSnapshot = {
   acquired: boolean;
   totalPages?: number;
   totalElements?: number;
-  realEstateOnPage?: boolean;
+  visibleAds?: number;
+  realEstateAds?: number;
+  realEstateRatio?: number;
 };
 
 export function findOlxPublicProfilePath(html: string): string | undefined {
@@ -53,9 +64,17 @@ function isRealEstateAd(raw: unknown): boolean {
   return category?.type === "real_estate";
 }
 
+function withRatio(snapshot: OlxProfileSnapshot): OlxProfileSnapshot {
+  const visible = snapshot.visibleAds ?? 0;
+  const realEstate = snapshot.realEstateAds ?? 0;
+  return {
+    ...snapshot,
+    realEstateRatio: visible === 0 ? 0 : realEstate / visible,
+  };
+}
+
 /**
- * Reads `userListing.userListing` from the public profile prerendered state.
- * Missing counters stay unacquired. This does not invent an offers API.
+ * Reads one page of `userListing.userListing`. Missing counters stay unacquired.
  */
 export function parseOlxProfileInventory(state: unknown): OlxProfileSnapshot {
   const nested = asRecord(asRecord(asRecord(state)?.userListing)?.userListing);
@@ -65,24 +84,57 @@ export function parseOlxProfileInventory(state: unknown): OlxProfileSnapshot {
     return { acquired: false };
   }
   const ads = Array.isArray(nested?.ads) ? nested.ads : [];
-  return {
+  const realEstateAds = ads.filter((ad) => isRealEstateAd(ad)).length;
+  return withRatio({
     acquired: true,
     totalPages,
     totalElements,
-    realEstateOnPage: ads.some((ad) => isRealEstateAd(ad)),
-  };
+    visibleAds: ads.length,
+    realEstateAds,
+  });
+}
+
+/** Adds a second public page onto the first. Totals stay from the first page. */
+export function mergeOlxProfilePages(
+  first: OlxProfileSnapshot,
+  second: OlxProfileSnapshot,
+): OlxProfileSnapshot {
+  if (!first.acquired) {
+    return second.acquired ? withRatio(second) : { acquired: false };
+  }
+  if (!second.acquired) {
+    return withRatio(first);
+  }
+  const visibleAds = (first.visibleAds ?? 0) + (second.visibleAds ?? 0);
+  const realEstateAds = (first.realEstateAds ?? 0) + (second.realEstateAds ?? 0);
+  return withRatio({
+    acquired: true,
+    ...(first.totalPages !== undefined ? { totalPages: first.totalPages } : {}),
+    ...(first.totalElements !== undefined ? { totalElements: first.totalElements } : {}),
+    visibleAds,
+    realEstateAds,
+  });
 }
 
 export function classifyOlxProfileInventory(snapshot: OlxProfileSnapshot): OlxProfileDecision {
-  if (!snapshot.acquired || snapshot.totalPages === undefined || snapshot.totalElements === undefined) {
+  if (
+    !snapshot.acquired ||
+    snapshot.totalPages === undefined ||
+    snapshot.totalElements === undefined ||
+    snapshot.realEstateAds === undefined ||
+    snapshot.visibleAds === undefined
+  ) {
     return { verdict: "unknown", evidence: "olx_profile_unreadable" };
   }
+  const ratio = snapshot.visibleAds === 0 ? 0 : snapshot.realEstateAds / snapshot.visibleAds;
   const evidence = [
     `olx_pages=${snapshot.totalPages}`,
     `olx_total=${snapshot.totalElements}`,
-    `olx_real_estate=${snapshot.realEstateOnPage ? 1 : 0}`,
+    `olx_visible=${snapshot.visibleAds}`,
+    `olx_real_estate_count=${snapshot.realEstateAds}`,
+    `olx_real_estate_ratio=${Math.round(ratio * 100)}`,
   ].join(";");
-  if (snapshot.totalPages >= OLX_PROFILE_MULTI_PAGE_MIN && snapshot.realEstateOnPage === true) {
+  if (snapshot.realEstateAds >= OLX_PROFILE_REAL_ESTATE_MIN) {
     return { verdict: "profile_likely_intermediary", evidence };
   }
   return { verdict: "unknown", evidence };
@@ -90,15 +142,35 @@ export function classifyOlxProfileInventory(snapshot: OlxProfileSnapshot): OlxPr
 
 export function olxProfileEvidence(snapshot: OlxProfileSnapshot, checkedAt: Date): string {
   const decision = classifyOlxProfileInventory(snapshot);
+  const checked = `olx_checked_at=${checkedAt.toISOString()}`;
   if (decision.evidence === "olx_profile_unreadable") {
-    return `olx_unreadable=1;olx_checked_at=${checkedAt.toISOString()}`;
+    return `olx_unreadable=1;${checked}`;
   }
-  return `${decision.evidence};olx_checked_at=${checkedAt.toISOString()}`;
+  return `${decision.evidence};${checked}`;
 }
 
 function token(evidence: string, name: string): string | undefined {
   const match = evidence.match(new RegExp(`(?:^|;)${name}=([^;]*)`));
   return match?.[1];
+}
+
+function snapshotFromEvidence(evidence: string): OlxProfileSnapshot | undefined {
+  const totalPages = Number(token(evidence, "olx_pages"));
+  const totalElements = Number(token(evidence, "olx_total"));
+  const visibleAds = Number(token(evidence, "olx_visible"));
+  const realEstateAds = Number(token(evidence, "olx_real_estate_count"));
+  if (
+    ![totalPages, totalElements, visibleAds, realEstateAds].every((value) => Number.isFinite(value))
+  ) {
+    return undefined;
+  }
+  return withRatio({
+    acquired: true,
+    totalPages,
+    totalElements,
+    visibleAds,
+    realEstateAds,
+  });
 }
 
 export function olxProfileCacheState(
@@ -113,15 +185,20 @@ export function olxProfileCacheState(
     return "absent";
   }
   const age = now.getTime() - checkedAt;
-  const unreadable = token(evidence, "olx_unreadable") === "1";
-  const ttl = unreadable ? OLX_PROFILE_FAILURE_TTL_MS : OLX_PROFILE_SUCCESS_TTL_MS;
-  if (age < 0 || age >= ttl) {
+  if (age < 0) {
     return "stale";
   }
-  const pages = Number(token(evidence, "olx_pages") ?? "");
-  const realEstate = token(evidence, "olx_real_estate") === "1";
-  if (!unreadable && pages >= OLX_PROFILE_MULTI_PAGE_MIN && realEstate) {
-    return "fresh_likely";
+  if (token(evidence, "olx_unreadable") === "1") {
+    return age < OLX_PROFILE_FAILURE_TTL_MS ? "fresh_unknown" : "stale";
   }
-  return "fresh_unknown";
+  const snapshot = snapshotFromEvidence(evidence);
+  if (!snapshot) {
+    return "stale";
+  }
+  const likely = classifyOlxProfileInventory(snapshot).verdict === "profile_likely_intermediary";
+  const ttl = likely ? OLX_PROFILE_LIKELY_TTL_MS : OLX_PROFILE_UNKNOWN_TTL_MS;
+  if (age >= ttl) {
+    return "stale";
+  }
+  return likely ? "fresh_likely" : "fresh_unknown";
 }

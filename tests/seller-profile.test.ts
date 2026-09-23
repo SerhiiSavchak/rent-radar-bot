@@ -223,7 +223,11 @@ describe("seller profile classifier", () => {
         metadata: { userId: "owner", ownerEvidenceLevel: "platform_confirmed" },
         location: { raw: street },
       });
-    applySellerProfileGate([owner("1", "Львів, вул. Перша, 1"), owner("2", "Львів, вул. Друга, 2")], db, now);
+    applySellerProfileGate(
+      [owner("1", "Львів, вул. Перша, 1"), owner("2", "Львів, вул. Друга, 2")],
+      db,
+      now,
+    );
     const third = applySellerProfileGate([owner("3", "Львів, вул. Третя, 3")], db, now);
     expect(third.dropped).toBe(0);
     expect(third.profileRejected).toBe(0);
@@ -334,9 +338,9 @@ describe("seller profile classifier", () => {
       undefined,
       now,
     );
-    const count = db
-      .prepare("SELECT COUNT(*) AS n FROM seller_profile_cache")
-      .get() as { n: number };
+    const count = db.prepare("SELECT COUNT(*) AS n FROM seller_profile_cache").get() as {
+      n: number;
+    };
     expect(count.n).toBe(0);
     db.close();
   });
@@ -368,25 +372,31 @@ describe("seller profile classifier", () => {
     db.close();
   });
 
-  it("sends the observed one-page OLX inventory and rejects a second real-estate page", () => {
+  it("sends a small OLX inventory and rejects ten or more real-estate ads", () => {
     const db = openDb();
     const small = rememberOlxProfileProbe(
       db,
       "nadia",
-      { acquired: true, totalPages: 1, totalElements: 6, realEstateOnPage: true },
+      { acquired: true, totalPages: 1, totalElements: 6, visibleAds: 6, realEstateAds: 2 },
       now,
     );
     expect(small.verdict).toBe("unknown");
     const sent = applySellerProfileGate(
-      ["Зелена, 1", "Пасічна, 2", "Шевченка, 3", "Франка, 4", "Городоцька, 5", "Личаківська, 6"].map(
-        (street, index) =>
-          card({
-            source: "olx",
-            sourceId: `n-${index}`,
-            url: `https://www.olx.ua/d/uk/obyavlenie/n-${index}`,
-            location: { raw: `Львів, ${street}` },
-            metadata: { olxUserId: "nadia" },
-          }),
+      [
+        "Зелена, 1",
+        "Пасічна, 2",
+        "Шевченка, 3",
+        "Франка, 4",
+        "Городоцька, 5",
+        "Личаківська, 6",
+      ].map((street, index) =>
+        card({
+          source: "olx",
+          sourceId: `n-${index}`,
+          url: `https://www.olx.ua/d/uk/obyavlenie/n-${index}`,
+          location: { raw: `Львів, ${street}` },
+          metadata: { olxUserId: "nadia" },
+        }),
       ),
       db,
       now,
@@ -397,7 +407,7 @@ describe("seller profile classifier", () => {
     const large = rememberOlxProfileProbe(
       db,
       "tkachuk",
-      { acquired: true, totalPages: 2, totalElements: 13, realEstateOnPage: true },
+      { acquired: true, totalPages: 2, totalElements: 13, visibleAds: 13, realEstateAds: 13 },
       now,
     );
     expect(large.verdict).toBe("profile_likely_intermediary");

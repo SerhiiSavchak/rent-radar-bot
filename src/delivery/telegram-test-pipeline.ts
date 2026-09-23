@@ -15,8 +15,20 @@ import {
   shouldHoldSellerVerification,
   upsertSellerHold,
 } from "./seller-verification-hold.ts";
-import { applySellerProfileGate, readSellerProfileEvidence, rememberOlxProfileProbe, sellerProfileId, shouldRejectSellerProfile } from "./seller-profile.ts";
+import {
+  applySellerProfileGate,
+  isPlatformConfirmedOwner,
+  readSellerProfileEvidence,
+  rememberOlxProfileProbe,
+  sellerProfileId,
+  shouldRejectSellerProfile,
+} from "./seller-profile.ts";
 import type { SellerProfilePolicies } from "./seller-profile.ts";
+import {
+  deleteOlxProfilePending,
+  listOlxProfilePending,
+  saveOlxProfilePending,
+} from "./olx-profile-pending.ts";
 import {
   classifyOlxProfileInventory,
   OLX_PROFILE_PROBE_BUDGET,
@@ -88,6 +100,7 @@ export type SourceDeliveryFunnel = {
   already_seen: number;
   cross_source_duplicate: number;
   verification_held: number;
+  profile_probe_deferred: number;
   deliverable: number;
   sent: number;
 };
@@ -102,6 +115,7 @@ function emptyFunnel(collected = 0): SourceDeliveryFunnel {
     already_seen: 0,
     cross_source_duplicate: 0,
     verification_held: 0,
+    profile_probe_deferred: 0,
     deliverable: 0,
     sent: 0,
   };
@@ -619,7 +633,13 @@ async function deliverListing(
       }
       store?.clearTelegramPause();
       deps.dedupe.markSeen(listing);
-      return { dryRun: result.dryRun, sentOk: 1, sentFailed: 0, sendErrors: [], pauseChannel: false };
+      return {
+        dryRun: result.dryRun,
+        sentOk: 1,
+        sentFailed: 0,
+        sendErrors: [],
+        pauseChannel: false,
+      };
     }
     const errorClass = result.errorClass ?? "transient";
     const pauseChannel = errorClass === "operator_action";
@@ -645,7 +665,13 @@ async function deliverListing(
     if (outbox && id !== undefined) {
       outbox.markFailed(id, errorSafe, at, { errorClass: "transient" });
     }
-    return { dryRun: false, sentOk: 0, sentFailed: 1, sendErrors: [errorSafe], pauseChannel: false };
+    return {
+      dryRun: false,
+      sentOk: 0,
+      sentFailed: 1,
+      sendErrors: [errorSafe],
+      pauseChannel: false,
+    };
   }
 }
 
@@ -654,7 +680,11 @@ async function notifySourceAdmins(
   at: Date,
 ): Promise<{ sent: number; errors: string[] }> {
   const adminChatId = deps.config.adminTelegramChatId;
-  if (!adminChatId || !(deps.baseline instanceof DurableDeliveryStore) || deps.sink.dryRun === true) {
+  if (
+    !adminChatId ||
+    !(deps.baseline instanceof DurableDeliveryStore) ||
+    deps.sink.dryRun === true
+  ) {
     return { sent: 0, errors: [] };
   }
   try {
@@ -722,13 +752,10 @@ export async function runTelegramTestCycle(
       return undefined;
     }
     const row = holdDb.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key) as
-      | { value: string }
-      | undefined;
+      { value: string } | undefined;
     return row?.value;
   };
-  const readRieltorWatermarks = ():
-    | Partial<Record<RieltorCategoryName, Date>>
-    | undefined => {
+  const readRieltorWatermarks = (): Partial<Record<RieltorCategoryName, Date>> | undefined => {
     const watermarks: Partial<Record<RieltorCategoryName, Date>> = {};
     for (const category of ["apartment", "house"] as const) {
       const parsed = Date.parse(readMetaValue(rieltorPublicationBoundaryKey(category)) ?? "");
@@ -739,8 +766,7 @@ export async function runTelegramTestCycle(
     return Object.keys(watermarks).length > 0 ? watermarks : undefined;
   };
   const readRieltorCatchup = ():
-    | Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>>
-    | undefined => {
+    Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>> | undefined => {
     const catchup: Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>> =
       {};
     for (const category of ["apartment", "house"] as const) {
@@ -1000,12 +1026,7 @@ export async function runTelegramTestCycle(
     const target = canonicalRieltorDetailTarget(
       typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
     );
-    if (
-      holdDb &&
-      deps.sink.dryRun !== true &&
-      target &&
-      shouldHoldSellerVerification(decision)
-    ) {
+    if (holdDb && deps.sink.dryRun !== true && target && shouldHoldSellerVerification(decision)) {
       upsertSellerHold(holdDb, listing, target.id, now());
       return "hold";
     }
@@ -1017,36 +1038,51 @@ export async function runTelegramTestCycle(
     likelyPolicy: deps.config.sellerProfileLikelyPolicy,
     newAccountPolicy: deps.config.sellerProfileNewAccountPolicy,
   };
-  const rejectProbedOlxProfile = async (
+  const releaseOlxPending = (listing: Listing): void => {
+    if (listing.source === "olx" && holdDb && deps.sink.dryRun !== true) {
+      deleteOlxProfilePending(holdDb, listing.sourceId);
+    }
+  };
+  const decideOlxProfile = async (
     listing: Listing,
     attempt: TelegramSourceAttempt | undefined,
-  ): Promise<boolean> => {
+  ): Promise<"allow" | "reject" | "defer"> => {
     if (listing.source !== "olx" || !deps.probeOlxSellerProfile) {
-      return false;
+      return "allow";
+    }
+    if (isPlatformConfirmedOwner(listing)) {
+      releaseOlxPending(listing);
+      return "allow";
     }
     const sellerId = sellerProfileId(listing);
     if (!sellerId) {
-      return false;
+      releaseOlxPending(listing);
+      return "allow";
     }
     const evidence = holdDb ? readSellerProfileEvidence(holdDb, "olx", sellerId) : "";
     const cached = olxProfileCacheState(evidence, now());
-    const dropLikely = (): boolean => {
+    if (cached === "fresh_likely") {
       if (attempt?.funnel) {
         attempt.funnel.profile_likely_rejected += 1;
       }
       profileLikelyIntermediary += 1;
       profileRejected += 1;
       deps.dedupe.markSeen(listing);
-      return true;
-    };
-    if (cached === "fresh_likely") {
-      return dropLikely();
+      releaseOlxPending(listing);
+      return "reject";
     }
     if (cached === "fresh_unknown") {
-      return false;
+      releaseOlxPending(listing);
+      return "allow";
     }
     if (olxProfileProbes >= OLX_PROFILE_PROBE_BUDGET) {
-      return false;
+      if (holdDb && deps.sink.dryRun !== true) {
+        saveOlxProfilePending(holdDb, listing);
+      }
+      if (attempt?.funnel) {
+        attempt.funnel.profile_probe_deferred += 1;
+      }
+      return "defer";
     }
     olxProfileProbes += 1;
     try {
@@ -1056,12 +1092,21 @@ export async function runTelegramTestCycle(
           ? rememberOlxProfileProbe(holdDb, sellerId, snapshot, now())
           : classifyOlxProfileInventory(snapshot);
       if (shouldRejectSellerProfile(decision.verdict, olxProfilePolicies)) {
-        return dropLikely();
+        if (attempt?.funnel) {
+          attempt.funnel.profile_likely_rejected += 1;
+        }
+        profileLikelyIntermediary += 1;
+        profileRejected += 1;
+        deps.dedupe.markSeen(listing);
+        releaseOlxPending(listing);
+        return "reject";
       }
+      releaseOlxPending(listing);
+      return "allow";
     } catch {
-      // An unread profile stays sendable. It is not owner evidence.
+      releaseOlxPending(listing);
+      return "allow";
     }
-    return false;
   };
 
   let sentOk = 0;
@@ -1226,11 +1271,50 @@ export async function runTelegramTestCycle(
     if (attempt?.funnel) {
       attempt.funnel.already_seen += Math.max(0, bucket.listings.length - unseen.length);
     }
-    await attachDisplayPrices(deps, unseen);
+    const carried: Listing[] = [];
+    const carriedIds = new Set<string>();
+    if (
+      bucket.source === "olx" &&
+      holdDb &&
+      deps.sink.dryRun !== true &&
+      deps.probeOlxSellerProfile
+    ) {
+      const fetchedById = new Map(unseen.map((item) => [item.sourceId, item]));
+      for (const pending of listOlxProfilePending(holdDb)) {
+        if (pending.source !== "olx" || carriedIds.has(pending.sourceId)) {
+          continue;
+        }
+        const current = fetchedById.get(pending.sourceId) ?? pending;
+        if (deps.dedupe.hasSeen(current)) {
+          deleteOlxProfilePending(holdDb, pending.sourceId);
+          continue;
+        }
+        carriedIds.add(pending.sourceId);
+        const established = deps.baseline.establishedAt(bucket.source);
+        const monitoringStartedAt = laterDate(established, policyCutoverAt);
+        const freshness = classifyListingFreshness(current, {
+          maxPublicationAgeMinutes,
+          strictNewPublications,
+          now: now(),
+          ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
+        });
+        if (!freshness.deliverable) {
+          if (attempt?.funnel) {
+            attempt.funnel.freshness_rejected += 1;
+          }
+          deps.dedupe.markSeen(current);
+          deleteOlxProfilePending(holdDb, pending.sourceId);
+          continue;
+        }
+        carried.push(withFirstSeenAt(current, now()));
+      }
+    }
+    const candidates = [...carried, ...unseen.filter((item) => !carriedIds.has(item.sourceId))];
+    await attachDisplayPrices(deps, candidates);
     newAfterDedupe += unseen.length;
     newlyObservedCount += unseen.length;
 
-    for (const original of unseen) {
+    for (const original of candidates) {
       const listing = annotateListing(original);
       if (crossSource) {
         const decision = crossSource.assessCrossSource(listing, crossSourcePeers);
@@ -1252,6 +1336,7 @@ export async function runTelegramTestCycle(
             attempt.funnel.cross_source_duplicate += 1;
           }
           deps.dedupe.markSeen(listing);
+          releaseOlxPending(listing);
           continue;
         }
         if (decision.verdict === "possible_duplicate") {
@@ -1282,6 +1367,7 @@ export async function runTelegramTestCycle(
         }
         // Still mark seen so old inventory does not retry forever.
         deps.dedupe.markSeen(listing);
+        releaseOlxPending(listing);
         continue;
       }
 
@@ -1298,7 +1384,8 @@ export async function runTelegramTestCycle(
         }
         continue;
       }
-      if (await rejectProbedOlxProfile(listing, attempt)) {
+      const profileAction = await decideOlxProfile(listing, attempt);
+      if (profileAction === "reject" || profileAction === "defer") {
         continue;
       }
       if (attempt?.funnel) {
