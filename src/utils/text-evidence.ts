@@ -63,6 +63,8 @@ const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = 
   { pattern: /послуги\s+рі[єе]лтора/i, label: "послуги рієлтора" },
   { pattern: /услуги\s+риелтора/i, label: "услуги риелтора" },
   { pattern: unicodePhrase(String.raw`я\s+агент(?:ство)?${CYRILLIC_WORD_END}`), label: "я агент" },
+  // Uppercase «АН» plus a name. Case-sensitive so ordinary «ан» inside a word does not match.
+  { pattern: /(?<![\p{L}\p{N}_])АН\s+\p{L}/u, label: "АН <назва>" },
 ];
 
 function includesPhrase(lower: string, phrase: string): boolean {

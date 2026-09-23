@@ -154,4 +154,74 @@ describe("LUN parser", () => {
     const inspection = inspectLunHtml(html);
     expect(inspection.resultKind).toBe("parser_failure");
   });
+
+  it("drops a LUN card whose rieltorContact is an agency", () => {
+    const listing = parseLunCard(
+      {
+        id: 4725633107,
+        isOwner: false,
+        agency: null,
+        price: 450,
+        currency: "usd",
+        sectionId: 2,
+        location: [24.03, 49.84],
+        rieltorContact: {
+          contactType: "rieltor",
+          name: "Контакт",
+          agency: { name: "АН Золотий дім", url: "https://example.rieltor.ua/" },
+          activeOffers: 38,
+        },
+      },
+      undefined,
+    );
+    expect(listing?.sellerType).toBe("agent");
+    expect(listing?.metadata?.ownerEvidenceLevel).toBe("intermediary");
+    expect(listing?.sellerEvidence?.join(" ")).toContain("АН Золотий дім");
+    expect(JSON.stringify(listing)).not.toContain("380");
+  });
+
+  it("drops a structured LUN realtor contact without an agency object", () => {
+    const listing = parseLunCard(
+      {
+        id: 4725631078,
+        isOwner: false,
+        agency: null,
+        price: 600,
+        currency: "usd",
+        sectionId: 2,
+        location: [24.03, 49.85],
+        rieltorContact: {
+          contactType: "rieltor",
+          name: "Контакт",
+          agency: null,
+          activeOffers: 11,
+        },
+      },
+      undefined,
+    );
+    expect(listing?.sellerType).toBe("agent");
+    expect(listing?.metadata?.ownerEvidenceLevel).toBe("intermediary");
+  });
+
+  it("keeps a LUN owner contact that has no agency role", () => {
+    const listing = parseLunCard(
+      {
+        id: 4725543266,
+        isOwner: true,
+        agency: null,
+        price: 20000,
+        currency: "uah",
+        sectionId: 2,
+        location: [24.03, 49.85],
+        rieltorContact: {
+          contactType: "owner",
+          name: "Власник",
+          agency: null,
+        },
+      },
+      undefined,
+    );
+    expect(listing?.sellerType).toBe("owner");
+    expect(listing?.metadata?.ownerEvidenceLevel).toBe("platform_confirmed");
+  });
 });

@@ -15,8 +15,14 @@ import {
   shouldHoldSellerVerification,
   upsertSellerHold,
 } from "./seller-verification-hold.ts";
-import { applySellerProfileGate } from "./seller-profile.ts";
+import { applySellerProfileGate, readSellerProfileEvidence, rememberOlxProfileProbe, sellerProfileId, shouldRejectSellerProfile } from "./seller-profile.ts";
 import type { SellerProfilePolicies } from "./seller-profile.ts";
+import {
+  classifyOlxProfileInventory,
+  OLX_PROFILE_PROBE_BUDGET,
+  olxProfileCacheState,
+  type OlxProfileSnapshot,
+} from "../sources/olx/olx-seller-profile.ts";
 import {
   formatRieltorCoverage,
   parseRieltorCatchup,
@@ -70,7 +76,36 @@ export type TelegramSourceAttempt = {
   errorSafe?: string;
   baselineEstablished?: boolean;
   baselineSkippedFailure?: boolean;
+  funnel?: SourceDeliveryFunnel;
 };
+
+export type SourceDeliveryFunnel = {
+  collected: number;
+  property_geo_accepted: number;
+  confirmed_intermediary_rejected: number;
+  profile_likely_rejected: number;
+  freshness_rejected: number;
+  already_seen: number;
+  cross_source_duplicate: number;
+  verification_held: number;
+  deliverable: number;
+  sent: number;
+};
+
+function emptyFunnel(collected = 0): SourceDeliveryFunnel {
+  return {
+    collected,
+    property_geo_accepted: 0,
+    confirmed_intermediary_rejected: 0,
+    profile_likely_rejected: 0,
+    freshness_rejected: 0,
+    already_seen: 0,
+    cross_source_duplicate: 0,
+    verification_held: 0,
+    deliverable: 0,
+    sent: 0,
+  };
+}
 
 export type TelegramTestCycleReport = {
   cycle: number;
@@ -146,6 +181,11 @@ export type TelegramTestPipelineDeps = {
    * to be sent. Tests omit this so they do not open a browser.
    */
   enrichDisplayPrices?: (listings: Listing[]) => Promise<void>;
+  /**
+   * Public OLX profile read for an otherwise deliverable listing.
+   * Failure must resolve to an unreadable snapshot, not an owner.
+   */
+  probeOlxSellerProfile?: (listing: Listing) => Promise<OlxProfileSnapshot>;
 };
 
 export type LinkedSellerEvent = {
@@ -747,7 +787,10 @@ export async function runTelegramTestCycle(
   let profileRejected = 0;
 
   const recordAttempt = (attempt: TelegramSourceAttempt): void => {
-    sourceAttempts.push(attempt);
+    sourceAttempts.push({
+      ...attempt,
+      funnel: attempt.funnel ?? emptyFunnel(attempt.listingCount),
+    });
     deps.baseline.recordSourceHealth?.(
       {
         source: attempt.source,
@@ -795,6 +838,17 @@ export async function runTelegramTestCycle(
       // Do not drop old publishedAt here — baseline must see current inventory.
       // Freshness classifier (not MAX_LISTING_AGE filter) gates what is sent as new.
       const { maxListingAgeMinutes: _ignoredAge, ...configWithoutAge } = deps.config;
+      const filtered = applyListingFilters(result.listings, configWithoutAge);
+      const funnel = emptyFunnel(result.listings.length);
+      for (const item of filtered) {
+        if (!item.locationMatched || !item.propertyMatched) {
+          continue;
+        }
+        funnel.property_geo_accepted += 1;
+        if (sellerDecisionBucket(item.listing) === "intermediary") {
+          funnel.confirmed_intermediary_rejected += 1;
+        }
+      }
       const sellerStats = countSellerDecisions(result.listings, deps.config);
       sellerTotals.sellerAcceptedOwner += sellerStats.sellerAcceptedOwner;
       sellerTotals.sellerAcceptedSelfDeclared += sellerStats.sellerAcceptedSelfDeclared;
@@ -802,7 +856,7 @@ export async function runTelegramTestCycle(
       sellerTotals.sellerRejectedIntermediary += sellerStats.sellerRejectedIntermediary;
       sellerTotals.otherFilterRejected += sellerStats.otherFilterRejected;
       sellerTotals.acceptedCount += sellerStats.acceptedCount;
-      const acceptedRaw = applyListingFilters(result.listings, configWithoutAge)
+      const acceptedRaw = filtered
         .filter((item) => item.accepted && item.locationMatched)
         .map((item) => item.listing);
       const profilePolicies: SellerProfilePolicies = {
@@ -818,6 +872,7 @@ export async function runTelegramTestCycle(
       profileLikelyIntermediary += profiled.profileLikelyIntermediary;
       profileHighRisk += profiled.profileHighRisk;
       profileRejected += profiled.profileRejected;
+      funnel.profile_likely_rejected += profiled.profileRejected;
       const accepted = profiled.kept;
 
       buckets.push({
@@ -863,6 +918,7 @@ export async function runTelegramTestCycle(
         resultKind: classified.resultKind,
         ...(result.httpStatus !== undefined ? { httpStatus: result.httpStatus } : {}),
         ...(classified.errorSafe ? { errorSafe: classified.errorSafe } : {}),
+        funnel,
       });
       if (!classified.ok && classified.errorSafe) {
         sourceErrors.push({ source: adapter.source, errorSafe: classified.errorSafe });
@@ -928,9 +984,9 @@ export async function runTelegramTestCycle(
     ...(deps.rieltorDetailGapMs !== undefined ? { gapMs: deps.rieltorDetailGapMs } : {}),
     ...(deps.fetchRieltorDetail ? { fetchPage: deps.fetchRieltorDetail } : {}),
   });
-  const allowLinkedRieltor = async (listing: Listing): Promise<boolean> => {
+  const allowLinkedRieltor = async (listing: Listing): Promise<"allow" | "hold" | "drop"> => {
     if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
-      return false;
+      return "hold";
     }
     const decision = await verifyLinkedRieltor(listing);
     noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);
@@ -939,7 +995,7 @@ export async function runTelegramTestCycle(
         deleteSellerHold(holdDb, listing.source, listing.sourceId);
       }
       retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
-      return false;
+      return "drop";
     }
     const target = canonicalRieltorDetailTarget(
       typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
@@ -951,9 +1007,61 @@ export async function runTelegramTestCycle(
       shouldHoldSellerVerification(decision)
     ) {
       upsertSellerHold(holdDb, listing, target.id, now());
+      return "hold";
+    }
+    return "allow";
+  };
+
+  let olxProfileProbes = 0;
+  const olxProfilePolicies: SellerProfilePolicies = {
+    likelyPolicy: deps.config.sellerProfileLikelyPolicy,
+    newAccountPolicy: deps.config.sellerProfileNewAccountPolicy,
+  };
+  const rejectProbedOlxProfile = async (
+    listing: Listing,
+    attempt: TelegramSourceAttempt | undefined,
+  ): Promise<boolean> => {
+    if (listing.source !== "olx" || !deps.probeOlxSellerProfile) {
       return false;
     }
-    return true;
+    const sellerId = sellerProfileId(listing);
+    if (!sellerId) {
+      return false;
+    }
+    const evidence = holdDb ? readSellerProfileEvidence(holdDb, "olx", sellerId) : "";
+    const cached = olxProfileCacheState(evidence, now());
+    const dropLikely = (): boolean => {
+      if (attempt?.funnel) {
+        attempt.funnel.profile_likely_rejected += 1;
+      }
+      profileLikelyIntermediary += 1;
+      profileRejected += 1;
+      deps.dedupe.markSeen(listing);
+      return true;
+    };
+    if (cached === "fresh_likely") {
+      return dropLikely();
+    }
+    if (cached === "fresh_unknown") {
+      return false;
+    }
+    if (olxProfileProbes >= OLX_PROFILE_PROBE_BUDGET) {
+      return false;
+    }
+    olxProfileProbes += 1;
+    try {
+      const snapshot = await deps.probeOlxSellerProfile(listing);
+      const decision =
+        holdDb && deps.sink.dryRun !== true
+          ? rememberOlxProfileProbe(holdDb, sellerId, snapshot, now())
+          : classifyOlxProfileInventory(snapshot);
+      if (shouldRejectSellerProfile(decision.verdict, olxProfilePolicies)) {
+        return dropLikely();
+      }
+    } catch {
+      // An unread profile stays sendable. It is not owner evidence.
+    }
+    return false;
   };
 
   let sentOk = 0;
@@ -1086,7 +1194,7 @@ export async function runTelegramTestCycle(
               continue;
             }
           }
-          if (!(await allowLinkedRieltor(listing))) {
+          if ((await allowLinkedRieltor(listing)) !== "allow") {
             continue;
           }
           const delivered = await handoff(listing, "initial_preview");
@@ -1115,6 +1223,9 @@ export async function runTelegramTestCycle(
       deps.baseline.recordSuccess(bucket.source, now());
     }
     const unseen = deps.dedupe.filterUnseen(bucket.listings).map((l) => withFirstSeenAt(l, now()));
+    if (attempt?.funnel) {
+      attempt.funnel.already_seen += Math.max(0, bucket.listings.length - unseen.length);
+    }
     await attachDisplayPrices(deps, unseen);
     newAfterDedupe += unseen.length;
     newlyObservedCount += unseen.length;
@@ -1137,6 +1248,9 @@ export async function runTelegramTestCycle(
         }
         if (decision.suppress) {
           suppressedCrossSourceDuplicate += 1;
+          if (attempt?.funnel) {
+            attempt.funnel.cross_source_duplicate += 1;
+          }
           deps.dedupe.markSeen(listing);
           continue;
         }
@@ -1154,6 +1268,9 @@ export async function runTelegramTestCycle(
         ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
       });
       if (!freshness.deliverable) {
+        if (attempt?.funnel) {
+          attempt.funnel.freshness_rejected += 1;
+        }
         if (freshness.kind === "old_publication") {
           suppressedOld += 1;
         } else if (freshness.kind === "refreshed_old") {
@@ -1168,8 +1285,24 @@ export async function runTelegramTestCycle(
         continue;
       }
 
-      if (!(await allowLinkedRieltor(listing))) {
+      const linked = await allowLinkedRieltor(listing);
+      if (linked === "hold") {
+        if (attempt?.funnel) {
+          attempt.funnel.verification_held += 1;
+        }
         continue;
+      }
+      if (linked === "drop") {
+        if (attempt?.funnel) {
+          attempt.funnel.confirmed_intermediary_rejected += 1;
+        }
+        continue;
+      }
+      if (await rejectProbedOlxProfile(listing, attempt)) {
+        continue;
+      }
+      if (attempt?.funnel) {
+        attempt.funnel.deliverable += 1;
       }
 
       const deliveryKind =
@@ -1177,6 +1310,9 @@ export async function runTelegramTestCycle(
           ? freshness.kind
           : "first_noticed";
       const delivered = await handoff(listing, deliveryKind);
+      if (attempt?.funnel) {
+        attempt.funnel.sent += delivered.sentOk;
+      }
       if (crossSource) {
         crossSourcePeers.push(listing);
       }

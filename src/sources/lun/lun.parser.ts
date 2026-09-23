@@ -2,7 +2,7 @@ import type { Listing } from "../../domain/listing.ts";
 import { detectPropertyType } from "../../filters/listing-filter.ts";
 import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { normalizeLatLng } from "../../utils/geo.ts";
-import { collectTextEvidence } from "../../utils/text-evidence.ts";
+import { collectTextEvidence, hasExplicitIntermediaryText } from "../../utils/text-evidence.ts";
 import { lunCardSchema, type LunCard } from "./lun.types.ts";
 
 const NEXT_FLIGHT_PREFIX = 'self.__next_f.push([1,"';
@@ -195,15 +195,17 @@ export function parseLunCard(
   const url = `https://lun.ua/uk/realty/${sourceId}`;
   const jsonDescription = typeof jsonLd?.description === "string" ? jsonLd.description : undefined;
   const text = [card.header, card.text, jsonDescription].filter(Boolean).join("\n");
+  const seller = lunSellerSignals(card);
   const owner = classifyOwner({
     platformOwner: card.isOwner === true,
-    platformAgent: Boolean(card.agency),
-    agencyName: card.agency?.name,
-    agencyId: card.agency?.id,
+    platformAgent: seller.platformAgent,
+    ...(seller.agencyName ? { agencyName: seller.agencyName } : {}),
+    ...(seller.agencyId !== undefined ? { agencyId: seller.agencyId } : {}),
     withoutCommission: card.withoutCommission === true,
     text,
     extraEvidence: [
       ...collectTextEvidence(text),
+      ...seller.notes,
       ...(card.isOwner === true ? ["lun.isOwner=true"] : []),
       ...(card.site?.displayName ? [`aggregated site = ${card.site.displayName}`] : []),
       ...(card.urlRaw ? [`originalUrl=${card.urlRaw}`] : []),
@@ -360,6 +362,42 @@ export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtml
     validationRatio,
     resultKind,
     cardsParseFailed: extracted.cardsParseFailed,
+  };
+}
+
+const LUN_REALTOR_CONTACT_TYPES = new Set(["rieltor", "realtor", "agent", "agency", "intermediary"]);
+
+function trimmedText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * LUN puts the realtor role on `rieltorContact`, not on the top-level `agency` object.
+ * `contactType=rieltor` and a nested agency name are structured evidence.
+ * A free-form contact name counts only when it is itself an agency phrase.
+ */
+export function lunSellerSignals(card: LunCard): {
+  platformAgent: boolean;
+  agencyName?: string;
+  agencyId?: string | number;
+  notes: string[];
+} {
+  const contact = card.rieltorContact ?? undefined;
+  const contactType = trimmedText(contact?.contactType)?.toLowerCase();
+  const nestedAgency = trimmedText(contact?.agency?.name);
+  const contactName = trimmedText(contact?.name);
+  const topAgency = trimmedText(card.agency?.name);
+  const nameIsAgency = Boolean(contactName && hasExplicitIntermediaryText(contactName));
+  const agencyName = topAgency ?? nestedAgency ?? (nameIsAgency ? contactName : undefined);
+  const structuredRole = Boolean(contactType && LUN_REALTOR_CONTACT_TYPES.has(contactType));
+  return {
+    platformAgent: Boolean(card.agency) || structuredRole || Boolean(nestedAgency) || nameIsAgency,
+    ...(agencyName ? { agencyName } : {}),
+    ...(card.agency?.id !== undefined && card.agency.id !== null ? { agencyId: card.agency.id } : {}),
+    notes: [
+      ...(contactType ? [`lun.rieltorContact.contactType=${contactType}`] : []),
+      ...(nestedAgency ? [`lun.rieltorContact.agency=${nestedAgency}`] : []),
+    ],
   };
 }
 

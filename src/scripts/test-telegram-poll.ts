@@ -32,6 +32,7 @@ import { openDurableRuntime, PollerLockError } from "../storage/durable-runtime.
 import { writeHeartbeat } from "../storage/heartbeat.ts";
 import { waitMsUntilNextPollStart } from "../delivery/poll-cadence.ts";
 import { readOlxDisplayedPrices } from "../sources/olx/olx-display-price.ts";
+import { probeOlxSellerProfile } from "../sources/olx/olx-seller-profile.browser.ts";
 import { runStateCleanupIfDue, STATE_RETENTION } from "../storage/state-retention.ts";
 
 loadDotenv();
@@ -162,6 +163,7 @@ try {
         baseline: runtime.store,
         outbox: runtime.store,
         enrichDisplayPrices: readOlxDisplayedPrices,
+        probeOlxSellerProfile,
       },
       cycle,
     );

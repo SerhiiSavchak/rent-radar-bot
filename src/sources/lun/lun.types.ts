@@ -30,7 +30,29 @@ export const lunCardSchema = z
     location: z.array(z.number()).optional(),
     sectionId: z.number().optional(),
     geoEntities: z.unknown().optional(),
-    rieltorContact: z.unknown().optional(),
+    /**
+     * Live catalog shape (2026-09-23). Top-level `agency` is often null while
+     * the realtor role lives here. Phones are accepted so the card still parses,
+     * and callers must not persist them.
+     */
+    rieltorContact: z
+      .object({
+        contactType: z.string().nullable().optional(),
+        name: z.string().nullable().optional(),
+        agency: z
+          .object({
+            name: z.string().nullable().optional(),
+            url: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+        activeOffers: z.number().nullable().optional(),
+        isVerified: z.boolean().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
     site: z
       .object({
         displayName: z.string().optional(),

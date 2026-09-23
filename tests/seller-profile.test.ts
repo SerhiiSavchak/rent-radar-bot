@@ -9,6 +9,7 @@ import {
   assessSellerProfile,
   deleteExpiredSellerProfiles,
   DEFAULT_SELLER_PROFILE_POLICIES,
+  rememberOlxProfileProbe,
   sellerProfileId,
   shouldRejectSellerProfile,
   verdictWhenProfileUnreadable,
@@ -102,28 +103,28 @@ describe("seller profile classifier", () => {
     expect(gated.kept).toHaveLength(2);
   });
 
-  it("rejects three addresses by default and still sends them when likely policy is send", () => {
+  it("rejects three DIM.RIA addresses by default and still sends them when likely policy is send", () => {
     const listings = [
       card({
-        source: "olx",
+        source: "domria",
         sourceId: "a",
-        url: "https://www.olx.ua/d/uk/obyavlenie/a",
+        url: "https://dom.ria.com/uk/realty-a.html",
         location: { raw: "Львів, вул. Зелена, 1" },
-        metadata: { olxUserId: "same" },
+        metadata: { userId: "same" },
       }),
       card({
-        source: "olx",
+        source: "domria",
         sourceId: "b",
-        url: "https://www.olx.ua/d/uk/obyavlenie/b",
+        url: "https://dom.ria.com/uk/realty-b.html",
         location: { raw: "Львів, вул. Городоцька, 20" },
-        metadata: { olxUserId: "same" },
+        metadata: { userId: "same" },
       }),
       card({
-        source: "olx",
+        source: "domria",
         sourceId: "c",
-        url: "https://www.olx.ua/d/uk/obyavlenie/c",
+        url: "https://dom.ria.com/uk/realty-c.html",
         location: { raw: "Львів, вул. Третя, 3" },
-        metadata: { olxUserId: "same" },
+        metadata: { userId: "same" },
       }),
     ];
     const decision = assessSellerProfile({
@@ -191,7 +192,7 @@ describe("seller profile classifier", () => {
     expect(again.profileLikelyIntermediary).toBe(0);
     expect(again.dropped).toBe(0);
     expect(again.kept.map((item) => item.sourceId).sort()).toEqual(["2", "3"]);
-    const rejected = applySellerProfileGate(
+    const stillSent = applySellerProfileGate(
       [
         card({
           source: "olx",
@@ -204,9 +205,10 @@ describe("seller profile classifier", () => {
       reopened,
       now,
     );
-    expect(rejected.profileLikelyIntermediary).toBe(1);
-    expect(rejected.profileRejected).toBe(1);
-    expect(rejected.dropped).toBe(1);
+    expect(stillSent.profileLikelyIntermediary).toBe(0);
+    expect(stillSent.profileRejected).toBe(0);
+    expect(stillSent.dropped).toBe(0);
+    expect(stillSent.kept).toHaveLength(1);
     reopened.close();
   });
 
@@ -363,6 +365,88 @@ describe("seller profile classifier", () => {
       new Date("2026-01-01T00:00:00.000Z"),
     );
     expect(deleteExpiredSellerProfiles(db, now)).toBe(1);
+    db.close();
+  });
+
+  it("sends the observed one-page OLX inventory and rejects a second real-estate page", () => {
+    const db = openDb();
+    const small = rememberOlxProfileProbe(
+      db,
+      "nadia",
+      { acquired: true, totalPages: 1, totalElements: 6, realEstateOnPage: true },
+      now,
+    );
+    expect(small.verdict).toBe("unknown");
+    const sent = applySellerProfileGate(
+      ["Зелена, 1", "Пасічна, 2", "Шевченка, 3", "Франка, 4", "Городоцька, 5", "Личаківська, 6"].map(
+        (street, index) =>
+          card({
+            source: "olx",
+            sourceId: `n-${index}`,
+            url: `https://www.olx.ua/d/uk/obyavlenie/n-${index}`,
+            location: { raw: `Львів, ${street}` },
+            metadata: { olxUserId: "nadia" },
+          }),
+      ),
+      db,
+      now,
+    );
+    expect(sent.dropped).toBe(0);
+    expect(sent.kept).toHaveLength(6);
+
+    const large = rememberOlxProfileProbe(
+      db,
+      "tkachuk",
+      { acquired: true, totalPages: 2, totalElements: 13, realEstateOnPage: true },
+      now,
+    );
+    expect(large.verdict).toBe("profile_likely_intermediary");
+    const rejected = applySellerProfileGate(
+      [
+        card({
+          source: "olx",
+          sourceId: "t-1",
+          url: "https://www.olx.ua/d/uk/obyavlenie/t-1",
+          metadata: { olxUserId: "tkachuk" },
+        }),
+      ],
+      db,
+      now,
+    );
+    expect(rejected.dropped).toBe(1);
+    expect(rejected.profileRejected).toBe(1);
+
+    const failed = rememberOlxProfileProbe(db, "offline", { acquired: false }, now);
+    expect(failed.verdict).toBe("unknown");
+    expect(failed.evidence).toContain("olx_unreadable=1");
+    const kept = applySellerProfileGate(
+      [
+        card({
+          source: "olx",
+          sourceId: "off",
+          url: "https://www.olx.ua/d/uk/obyavlenie/off",
+          location: { raw: "Львів, вул. Зелена, 1" },
+          metadata: { olxUserId: "offline" },
+        }),
+        card({
+          source: "olx",
+          sourceId: "off-2",
+          url: "https://www.olx.ua/d/uk/obyavlenie/off-2",
+          location: { raw: "Львів, вул. Городоцька, 2" },
+          metadata: { olxUserId: "offline" },
+        }),
+        card({
+          source: "olx",
+          sourceId: "off-3",
+          url: "https://www.olx.ua/d/uk/obyavlenie/off-3",
+          location: { raw: "Львів, вул. Франка, 3" },
+          metadata: { olxUserId: "offline" },
+        }),
+      ],
+      db,
+      now,
+    );
+    expect(kept.dropped).toBe(0);
     db.close();
   });
 });

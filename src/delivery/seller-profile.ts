@@ -1,5 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Listing, SellerType } from "../domain/listing.ts";
+import {
+  classifyOlxProfileInventory,
+  olxProfileCacheState,
+  olxProfileEvidence,
+  type OlxProfileSnapshot,
+} from "../sources/olx/olx-seller-profile.ts";
 
 /**
  * How many distinct public addresses under one seller id count as repeated
@@ -54,10 +60,6 @@ export type SellerProfileGateStats = {
   profileLikelyIntermediary: number;
   profileHighRisk: number;
   profileRejected: number;
-};
-
-type CacheRow = {
-  address_keys: string;
 };
 
 function meta(listing: Listing): Record<string, unknown> {
@@ -180,21 +182,68 @@ export function shouldRejectSellerProfile(
   return false;
 }
 
-function readAddresses(db: DatabaseSync, source: string, sellerId: string): string[] {
+function readProfileRow(
+  db: DatabaseSync,
+  source: string,
+  sellerId: string,
+): { addresses: string[]; evidence: string } {
   const row = db
     .prepare(
-      "SELECT address_keys FROM seller_profile_cache WHERE source = ? AND seller_id = ?",
+      "SELECT address_keys, evidence FROM seller_profile_cache WHERE source = ? AND seller_id = ?",
     )
-    .get(source, sellerId) as CacheRow | undefined;
+    .get(source, sellerId) as { address_keys: string; evidence: string } | undefined;
   if (!row) {
-    return [];
+    return { addresses: [], evidence: "" };
   }
+  return { addresses: parseAddresses(row.address_keys), evidence: row.evidence };
+}
+
+function parseAddresses(raw: string): string[] {
   try {
-    const parsed = JSON.parse(row.address_keys) as unknown;
+    const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
   } catch {
     return [];
   }
+}
+
+function mergeEvidence(decisionEvidence: string, previous: string): string {
+  if (decisionEvidence.includes("olx_")) {
+    const kept = previous
+      .split(";")
+      .filter((token) => token && !token.startsWith("olx_"));
+    return [decisionEvidence, ...kept].filter(Boolean).join(";");
+  }
+  const kept = previous.split(";").filter((token) => token.startsWith("olx_"));
+  return [decisionEvidence, ...kept].filter(Boolean).join(";");
+}
+
+export function readSellerProfileEvidence(
+  db: DatabaseSync,
+  source: string,
+  sellerId: string,
+): string {
+  try {
+    return readProfileRow(db, source, sellerId).evidence;
+  } catch {
+    return "";
+  }
+}
+
+export function rememberOlxProfileProbe(
+  db: DatabaseSync,
+  sellerId: string,
+  snapshot: OlxProfileSnapshot,
+  now: Date,
+): SellerProfileDecision {
+  const classified = classifyOlxProfileInventory(snapshot);
+  const previous = readProfileRow(db, "olx", sellerId);
+  const decision: SellerProfileDecision = {
+    verdict: classified.verdict,
+    evidence: mergeEvidence(olxProfileEvidence(snapshot, now), previous.evidence),
+  };
+  writeProfile(db, "olx", sellerId, decision, previous.addresses, now);
+  return decision;
 }
 
 function writeProfile(
@@ -267,9 +316,12 @@ export function applySellerProfileGate(
       .map((listing) => normalizeSellerAddress(listing.location.raw))
       .filter((item): item is string => Boolean(item));
     let prior: string[] = [];
+    let previousEvidence = "";
     if (db) {
       try {
-        prior = readAddresses(db, source, sellerId);
+        const row = readProfileRow(db, source, sellerId);
+        prior = row.addresses;
+        previousEvidence = row.evidence;
       } catch {
         prior = [];
       }
@@ -285,12 +337,42 @@ export function applySellerProfileGate(
       .find((value) => typeof value === "string");
     const accountCreatedAt = typeof createdRaw === "string" ? new Date(createdRaw) : undefined;
     const confirmedOwner = group.every((listing) => isPlatformConfirmedOwner(listing));
-    const decision = assessSellerProfile({
-      confirmedOwner,
-      addresses,
-      ...(accountCreatedAt ? { accountCreatedAt } : {}),
-      now,
-    });
+    const distinctAddressEvidence =
+      addresses.length > 0
+        ? `distinct_addresses=${new Set(addresses).size}`
+        : "no_profile_signal";
+    let decision: SellerProfileDecision;
+    if (source === "olx" && !confirmedOwner) {
+      const cached = olxProfileCacheState(previousEvidence, now);
+      if (cached === "fresh_likely") {
+        decision = {
+          verdict: "profile_likely_intermediary",
+          evidence: previousEvidence,
+        };
+      } else {
+        const ageOnly = assessSellerProfile({
+          confirmedOwner: false,
+          addresses: [],
+          ...(accountCreatedAt ? { accountCreatedAt } : {}),
+          now,
+        });
+        decision =
+          ageOnly.verdict === "profile_high_risk"
+            ? ageOnly
+            : { verdict: "unknown", evidence: distinctAddressEvidence };
+      }
+    } else {
+      decision = assessSellerProfile({
+        confirmedOwner,
+        addresses,
+        ...(accountCreatedAt ? { accountCreatedAt } : {}),
+        now,
+      });
+    }
+    decision = {
+      ...decision,
+      evidence: mergeEvidence(decision.evidence, previousEvidence),
+    };
     persist(source, sellerId, decision, addresses);
     if (decision.verdict === "profile_likely_intermediary") {
       profileLikelyIntermediary += group.length;

@@ -246,12 +246,20 @@ describe("owner classifier", () => {
     expect(hasExplicitIntermediaryText("Рієлторам не телефонувати")).toBe(false);
     expect(hasExplicitIntermediaryText("Приватний будинок біля парку")).toBe(false);
     expect(hasExplicitIntermediaryText("Готовий співпрацювати з ріелторами")).toBe(false);
+    expect(hasExplicitIntermediaryText("без співпраці")).toBe(false);
+    expect(hasExplicitIntermediaryText("є інші варіанти")).toBe(false);
+    expect(hasExplicitIntermediaryText("підберемо варіанти")).toBe(false);
+    expect(hasExplicitIntermediaryText("комісія за комунальні")).toBe(false);
+    expect(hasExplicitIntermediaryText("АН Золотий дім")).toBe(true);
+    expect(hasExplicitIntermediaryText("санітарний стан")).toBe(false);
 
     for (const text of [
       "Без комісії",
       "Без рієлтора",
       "Агентствам не турбувати",
       "Рієлторам не телефонувати",
+      "без співпраці",
+      "є інші варіанти",
     ]) {
       const result = classifyOwner({ text, platformPrivate: true });
       expect(result.ownerEvidenceLevel).toBe("private_unknown");

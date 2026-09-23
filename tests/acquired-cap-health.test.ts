@@ -201,6 +201,10 @@ describe("acquired-response cap coverage", () => {
       1,
     );
     expect(cycle.sentOk).toBe(1);
+    expect(cycle.sourceAttempts.find((item) => item.source === "lun")?.funnel).toMatchObject({
+      sent: 1,
+      collected: expect.any(Number),
+    });
     const health = readSourceHealth(getDb(path), "lun");
     expect(health?.status).toBe("ok");
     expect(health?.consecutiveFailures).toBe(0);
