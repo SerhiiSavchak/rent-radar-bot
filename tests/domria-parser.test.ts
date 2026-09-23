@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isSellerEligible } from "../src/filters/owner-filter.ts";
 import { inspectDomriaCatalog, parseDomriaInfo } from "../src/sources/domria/domria.parser.ts";
 
 describe("DIM.RIA parser", () => {
@@ -45,6 +46,7 @@ describe("DIM.RIA parser", () => {
     });
     expect(listing?.sellerType).toBe("unknown");
     expect(listing?.sellerEvidence?.some((item) => item.includes("agency_id=52150"))).toBe(true);
+    expect(listing ? isSellerEligible(listing) : true).toBe(false);
   });
 
   it("keeps unrecognized characteristic 1437 as unknown", () => {
@@ -70,6 +72,7 @@ describe("DIM.RIA parser", () => {
       realty_type_id: 2,
     });
     expect(listing?.sellerType).toBe("owner");
+    expect(listing ? isSellerEligible(listing) : false).toBe(true);
   });
 
   it("preserves old publishing_date and never substitutes now", () => {

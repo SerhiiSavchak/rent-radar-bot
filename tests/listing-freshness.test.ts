@@ -7,7 +7,6 @@ import { classifyListingFreshness } from "../src/delivery/listing-freshness.ts";
 import { InMemorySourceBaseline } from "../src/delivery/source-baseline-memory.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import {
-  formatKyivDateTime,
   formatListingTelegramHtml,
   formatSellerLabel,
   TelegramTestSink,
@@ -502,11 +501,12 @@ describe("Telegram copy", () => {
       firstSeenAt: new Date("2026-09-17T12:00:00Z"),
     });
     const text = formatListingTelegramHtml(listing, { deliveryKind: "new_publication" });
-    expect(text).toContain("Нова публікація");
+    expect(text).toContain("TEST");
     expect(text).not.toContain("нове оголошення");
+    expect(text).not.toContain("Вперше помічено");
     expect(text).not.toMatch(/2025-12-31T15:03:31/);
-    expect(text).toContain(formatKyivDateTime(listing.publishedAt));
-    expect(formatSellerLabel(listing)).toBe("Власник — за позначкою майданчика");
+    expect(text).toContain("Опубліковано:");
+    expect(formatSellerLabel(listing)).toBe("Власник підтверджений");
     expect(formatSellerLabel(listing)).not.toContain("platform-verified");
     expect(
       formatSellerLabel({
@@ -514,11 +514,11 @@ describe("Telegram copy", () => {
         sellerType: "unknown",
         metadata: { ownerEvidenceLevel: "self_declared" },
       }),
-    ).toBe("Самозаява «від власника» в тексті — не позначка майданчика");
+    ).toBe("Власник не підтверджений");
     expect(formatListingTelegramHtml(listing, { deliveryKind: "initial_preview" })).toContain(
-      "Початкова добірка",
+      "Відкрити оголошення",
     );
-    expect(formatListingTelegramHtml(listing, { deliveryKind: "first_noticed" })).toContain(
+    expect(formatListingTelegramHtml(listing, { deliveryKind: "first_noticed" })).not.toContain(
       "Вперше помічено",
     );
   });

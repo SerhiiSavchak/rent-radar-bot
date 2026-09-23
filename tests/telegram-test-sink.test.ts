@@ -11,7 +11,6 @@ import {
 } from "../src/delivery/telegram-test-pipeline.ts";
 import {
   createTelegramTestSinkFromEnv,
-  formatKyivDateTime,
   formatListingTelegramHtml,
   redactTelegramSecrets,
   resolveTelegramTestConfig,
@@ -111,17 +110,18 @@ describe("Telegram formatting and splitting", () => {
     const listing = sampleListing();
     const text = formatListingTelegramHtml(listing, { deliveryKind: "new_publication" });
     expect(text).toContain("Квартира");
-    expect(text).toContain("12000");
-    expect(text).toContain("Львів");
-    expect(text).toContain("Власник — за позначкою майданчика");
+    expect(text).toContain("12 000 грн / місяць");
+    expect(text).toContain("Львів, Галицький");
+    expect(text).toContain("Власник підтверджений");
     expect(formatListingTelegramHtml(sampleListing({ sellerType: "unknown" }))).toContain(
-      "Власник не підтверджено",
+      "Власник не підтверджений",
     );
-    expect(text).toContain(formatKyivDateTime(listing.publishedAt));
+    expect(text).not.toContain("Вперше помічено");
+    expect(text).not.toContain("firstSeen");
     expect(text).not.toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
     expect(text).toContain("https://rieltor.ua/flats-rent/100/");
-    expect(text).toContain("rieltor");
-    expect(text).toContain("Нова публікація");
+    expect(text).toContain("RIELTOR");
+    expect(text).toContain("TEST");
   });
 
   it("splits long messages under the Telegram limit", () => {

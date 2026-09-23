@@ -68,6 +68,7 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
     platformAgent: role.platformAgent === true,
     platformBusiness: role.platformBusiness === true,
     offerTypeLabel: role.offerLabel,
+    ...(agencyId > 0 ? { agencyId } : {}),
     text: `${title}\n${description ?? ""}`,
     extraEvidence: [
       ...collectTextEvidence(`${title}\n${description ?? ""}`),
@@ -108,6 +109,7 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
       sellerConfidence: owner.confidence,
       advertType: info.advert_type_name_uk ?? info.advert_type_name,
       userId: info.user_id,
+      ...(agencyId > 0 ? { agencyId } : {}),
       characteristic1437Recognized: role.recognized,
       ...sellerAnnotation(owner),
     },

@@ -30,6 +30,8 @@ import {
 import { createCollectionAdapters } from "../collection/create-source-adapters.ts";
 import { openDurableRuntime, PollerLockError } from "../storage/durable-runtime.ts";
 import { writeHeartbeat } from "../storage/heartbeat.ts";
+import { waitMsUntilNextPollStart } from "../delivery/poll-cadence.ts";
+import { readOlxDisplayedPrices } from "../sources/olx/olx-display-price.ts";
 import { runStateCleanupIfDue, STATE_RETENTION } from "../storage/state-retention.ts";
 
 loadDotenv();
@@ -131,6 +133,7 @@ try {
   let cyclesAttempted = 0;
 
   for (let cycle = 1; unbounded || cycle <= cycles; cycle += 1) {
+    const cycleStartedMs = Date.now();
     if (stop) {
       console.log(JSON.stringify({ message: "live:test-telegram:poll.aborted", cycle }));
       break;
@@ -158,6 +161,7 @@ try {
         dedupe: runtime.store,
         baseline: runtime.store,
         outbox: runtime.store,
+        enrichDisplayPrices: readOlxDisplayedPrices,
       },
       cycle,
     );
@@ -189,9 +193,10 @@ try {
     if (report.sentFailed > 0 || report.hasSourceFailures) {
       exitFail = true;
     }
-    if ((unbounded || cycle < cycles) && !stop && intervalMs > 0) {
+    const waitMs = waitMsUntilNextPollStart(Date.now() - cycleStartedMs, intervalMs);
+    if ((unbounded || cycle < cycles) && !stop && waitMs > 0) {
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => resolve(), intervalMs);
+        const timer = setTimeout(() => resolve(), waitMs);
         const cancel = () => {
           clearTimeout(timer);
           resolve();

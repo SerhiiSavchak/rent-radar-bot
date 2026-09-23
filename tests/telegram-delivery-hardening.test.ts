@@ -486,24 +486,24 @@ describe("telegram delivery hardening", () => {
 
   it("renders missing fields, escapes HTML, and keeps an oversized message inside the limit", () => {
     const sparse = listing({
-      title: "A <b>tag</b> & more",
+      title: "Квартира",
       price: undefined,
-      location: { raw: "Львів" },
+      location: { raw: "A <b>tag</b> & more" },
       publishedAt: undefined,
       sellerType: "unknown",
     });
     const text = formatListingTelegramHtml(sparse);
     expect(text).toContain("Ціна не вказана");
-    expect(text).toContain("Львів");
-    expect(text).toContain("Власник не підтверджено");
-    expect(text).toContain("domria");
+    expect(text).toContain("Власник не підтверджений");
+    expect(text).toContain("DIM.RIA");
     expect(text).toContain(sparse.url);
     expect(text).toContain("&lt;b&gt;tag&lt;/b&gt;");
     expect(text).toContain("&amp;");
     expect(text).not.toContain("<b>tag</b>");
-    const huge = formatListingTelegramHtml(listing({ title: "x".repeat(8000) }));
+    expect(text).not.toContain("Вперше помічено");
+    const huge = formatListingTelegramHtml(listing({ location: { raw: "x".repeat(8000) } }));
     expect(huge.length).toBeLessThanOrEqual(4096);
-    expect(huge.endsWith(listing().url)).toBe(true);
+    expect(huge).toContain(listing().url);
     expect(formatListingTelegramPlain(sparse)).not.toContain("<b>");
   });
 

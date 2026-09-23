@@ -171,6 +171,31 @@ describe("RIELTOR parser", () => {
     expect(inspection.listings[0]?.metadata?.publishedLabel).toBe("сьогодні");
     expect(inspection.listings[0]?.metadata?.coordinatePrecision).toBe("unspecified_point");
   });
+
+  it("keeps the visible card currency when JSON-LD has a different amount", () => {
+    const card = realtorCard();
+    const html = catalogPage({
+      title: "Зняти квартиру в Львові, оренда квартир - RIELTOR.UA",
+      heading: "Оренда квартир в Львові",
+      count: "1 оголошення",
+      path: "/lvov/flats-rent/",
+      primary: [card],
+      extras: [],
+      jsonLd: true,
+    }).replace(
+      '"price":750,"priceCurrency":"USD"',
+      '"price":31200,"priceCurrency":"UAH"',
+    );
+    const inspection = inspectRieltorHtml(html, {
+      category: "apartment",
+      pageUrl: "https://rieltor.ua/lvov/flats-rent/?sort=bycreated",
+    });
+    expect(inspection.listings[0]?.price).toEqual({
+      amount: 750,
+      currency: "USD",
+      period: "month",
+    });
+  });
 });
 
 function ownerCard(

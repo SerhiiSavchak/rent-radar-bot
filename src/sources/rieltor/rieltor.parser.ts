@@ -379,6 +379,14 @@ function parsePrice(
   cardHtml: string,
   json: RieltorJsonLdItem | undefined,
 ): Listing["price"] | undefined {
+  const raw =
+    textOf(cardHtml, "catalog-card-price-title lun-identity-font") ??
+    textOf(cardHtml, "catalog-card-price-title") ??
+    attr(cardHtml, "data-label");
+  const visible = raw ? parseVisiblePrice(raw) : undefined;
+  if (visible) {
+    return visible;
+  }
   const jsonAmount = num(json?.offers?.price);
   if (jsonAmount !== undefined) {
     return {
@@ -387,13 +395,10 @@ function parsePrice(
       period: "month",
     };
   }
-  const raw =
-    textOf(cardHtml, "catalog-card-price-title lun-identity-font") ??
-    textOf(cardHtml, "catalog-card-price-title") ??
-    attr(cardHtml, "data-label");
-  if (!raw) {
-    return undefined;
-  }
+  return undefined;
+}
+
+function parseVisiblePrice(raw: string): Listing["price"] | undefined {
   const amount = num(raw.replace(/[^\d.,]/g, "").replace(",", "."));
   if (amount === undefined) {
     return undefined;
@@ -403,6 +408,8 @@ function parsePrice(
     currency = "USD";
   } else if (/€/.test(raw) || /\beur\b/i.test(raw)) {
     currency = "EUR";
+  } else if (!/грн|uah/i.test(raw) && !/\d/.test(raw)) {
+    return undefined;
   }
   return { amount, currency, period: "month" };
 }

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 /** 4 = cross-source identities. 5 = source health and retention indexes. 6 = linked seller cache. */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const MIGRATION_1 = `
 CREATE TABLE IF NOT EXISTS listings (
@@ -202,6 +202,18 @@ DROP TABLE source_health;
 ALTER TABLE source_health_v8 RENAME TO source_health;
 `;
 
+const MIGRATION_9 = `
+CREATE TABLE IF NOT EXISTS seller_profile_cache (
+  source TEXT NOT NULL,
+  seller_id TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  address_keys TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (source, seller_id)
+);
+`;
+
 const MIGRATIONS: Record<number, string> = {
   1: MIGRATION_1,
   2: MIGRATION_2,
@@ -211,6 +223,7 @@ const MIGRATIONS: Record<number, string> = {
   6: MIGRATION_6,
   7: MIGRATION_7,
   8: MIGRATION_8,
+  9: MIGRATION_9,
 };
 
 export function sqliteMigrationSql(version: number): string {

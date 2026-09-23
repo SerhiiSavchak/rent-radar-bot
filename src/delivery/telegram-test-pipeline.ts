@@ -15,6 +15,7 @@ import {
   shouldHoldSellerVerification,
   upsertSellerHold,
 } from "./seller-verification-hold.ts";
+import { applySellerProfileGate } from "./seller-profile.ts";
 import {
   formatRieltorCoverage,
   parseRieltorCatchup,
@@ -133,6 +134,11 @@ export type TelegramTestPipelineDeps = {
   /** Test double. Production uses one non-retried HTTPS GET of the rebuilt RIELTOR detail URL. */
   fetchRieltorDetail?: (url: string, timeoutMs: number) => Promise<RieltorDetailPage>;
   rieltorDetailGapMs?: number;
+  /**
+   * Optional. The poller reads OLX listing-page display prices for cards about
+   * to be sent. Tests omit this so they do not open a browser.
+   */
+  enrichDisplayPrices?: (listings: Listing[]) => Promise<void>;
 };
 
 export type LinkedSellerEvent = {
@@ -490,6 +496,25 @@ function idleDelivery(dryRun: boolean): DeliveryOutcome {
   return { dryRun, sentOk: 0, sentFailed: 0, sendErrors: [], pauseChannel: false };
 }
 
+async function attachDisplayPrices(
+  deps: TelegramTestPipelineDeps,
+  listings: Listing[],
+): Promise<void> {
+  const enrich = deps.enrichDisplayPrices;
+  if (!enrich) {
+    return;
+  }
+  const targets = listings.filter((listing) => listing.source === "olx").slice(0, 8);
+  if (targets.length === 0) {
+    return;
+  }
+  try {
+    await enrich(targets);
+  } catch {
+    // A missed listing page keeps the catalog price already stored on the listing.
+  }
+}
+
 async function deliverListing(
   deps: TelegramTestPipelineDeps,
   listing: Listing,
@@ -767,9 +792,16 @@ export async function runTelegramTestCycle(
       sellerTotals.sellerRejectedIntermediary += sellerStats.sellerRejectedIntermediary;
       sellerTotals.otherFilterRejected += sellerStats.otherFilterRejected;
       sellerTotals.acceptedCount += sellerStats.acceptedCount;
-      const accepted = applyListingFilters(result.listings, configWithoutAge)
+      const acceptedRaw = applyListingFilters(result.listings, configWithoutAge)
         .filter((item) => item.accepted && item.locationMatched)
         .map((item) => item.listing);
+      const profiled = applySellerProfileGate(
+        acceptedRaw,
+        deps.sink.dryRun === true ? undefined : holdDb,
+        now(),
+      );
+      sellerTotals.sellerRejectedIntermediary += profiled.dropped;
+      const accepted = profiled.kept;
 
       buckets.push({
         source: adapter.source,
@@ -1024,6 +1056,7 @@ export async function runTelegramTestCycle(
       if (firstRunMode === "preview") {
         usedPreview = true;
         const sample = unseen.slice(0, previewLimit);
+        await attachDisplayPrices(deps, sample);
         for (const original of sample) {
           const listing = annotateListing(original);
           if (crossSource) {
@@ -1065,6 +1098,7 @@ export async function runTelegramTestCycle(
       deps.baseline.recordSuccess(bucket.source, now());
     }
     const unseen = deps.dedupe.filterUnseen(bucket.listings).map((l) => withFirstSeenAt(l, now()));
+    await attachDisplayPrices(deps, unseen);
     newAfterDedupe += unseen.length;
     newlyObservedCount += unseen.length;
 

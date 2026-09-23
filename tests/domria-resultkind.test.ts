@@ -105,8 +105,8 @@ describe("seller label honesty", () => {
     const listing = {
       sellerType: "unknown",
     } as Listing;
-    expect(formatSellerLabel(listing)).toBe("Власник не підтверджено");
-    expect(formatSellerLabel({ sellerType: "owner" } as Listing)).toContain("позначкою майданчика");
+    expect(formatSellerLabel(listing)).toBe("Власник не підтверджений");
+    expect(formatSellerLabel({ sellerType: "owner" } as Listing)).toBe("Власник підтверджений");
     expect(formatSellerLabel({ sellerType: "owner" } as Listing)).not.toContain(
       "platform-verified",
     );

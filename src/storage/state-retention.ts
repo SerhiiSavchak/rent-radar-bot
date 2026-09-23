@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { deleteExpiredSellerVerifications } from "../delivery/rieltor-detail-seller.ts";
+import { deleteExpiredSellerProfiles } from "../delivery/seller-profile.ts";
 import { deleteAbandonedSellerHolds } from "../delivery/seller-verification-hold.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -34,6 +35,7 @@ export type StateCleanupReport = {
   diagnosticRowsRemoved: number;
   externalSellerRowsRemoved: number;
   sellerHoldRowsRemoved: number;
+  sellerProfileRowsRemoved: number;
   durationMs: number;
   databaseBytes?: number;
   finishedAt: string;
@@ -64,6 +66,7 @@ export function runStateCleanupIfDue(
         diagnosticRowsRemoved: 0,
         externalSellerRowsRemoved: 0,
         sellerHoldRowsRemoved: 0,
+        sellerProfileRowsRemoved: 0,
         durationMs: Date.now() - started,
         finishedAt: now.toISOString(),
       };
@@ -89,6 +92,7 @@ function runStateCleanup(
   let sentOutboxRowsRemoved: number;
   let externalSellerRowsRemoved: number;
   let sellerHoldRowsRemoved: number;
+  let sellerProfileRowsRemoved: number;
 
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -140,6 +144,7 @@ function runStateCleanup(
     seenRowsRemoved = changed(seen);
     externalSellerRowsRemoved = deleteExpiredSellerVerifications(db, now);
     sellerHoldRowsRemoved = deleteAbandonedSellerHolds(db, now);
+    sellerProfileRowsRemoved = deleteExpiredSellerProfiles(db, now);
 
     db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)").run(
       STATE_CLEANUP_META_KEY,
@@ -165,6 +170,7 @@ function runStateCleanup(
     diagnosticRowsRemoved: 0,
     externalSellerRowsRemoved,
     sellerHoldRowsRemoved,
+    sellerProfileRowsRemoved,
     durationMs: Date.now() - started,
     ...(databaseBytes !== undefined ? { databaseBytes } : {}),
     finishedAt,

@@ -189,7 +189,7 @@ describe("persistent source health and retention", () => {
   });
 
   it("migrates schema 4 to schema 8 without dropping rows, and a second migrate is a no-op", () => {
-    expect(SCHEMA_VERSION).toBe(8);
+    expect(SCHEMA_VERSION).toBe(9);
     const path = dbPath();
     const db = new DatabaseSync(path);
     db.exec(`
@@ -222,12 +222,12 @@ describe("persistent source health and retention", () => {
     ).run();
     expect(appliedSchemaVersion(db)).toBe(4);
 
-    expect(applyMigrations(db)).toBe(8);
-    expect(appliedSchemaVersion(db)).toBe(8);
+    expect(applyMigrations(db)).toBe(9);
+    expect(appliedSchemaVersion(db)).toBe(9);
     const version = db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get() as {
       value: string;
     };
-    expect(version.value).toBe("8");
+    expect(version.value).toBe("9");
     expect(count(db, "SELECT COUNT(*) AS n FROM listings WHERE source_id = 'keep-1'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM source_baselines WHERE source = 'lun'")).toBe(1);
     expect(
@@ -258,11 +258,17 @@ describe("persistent source health and retention", () => {
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'source_admin_alerts'").get(),
     ).toBeTruthy();
-    expect(applyMigrations(db)).toBe(8);
+    expect(applyMigrations(db)).toBe(9);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 5")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 6")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 7")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 8")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 9")).toBe(1);
+    expect(
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'seller_profile_cache'")
+        .get(),
+    ).toBeTruthy();
     expect(
       db
         .prepare(

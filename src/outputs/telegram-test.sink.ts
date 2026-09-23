@@ -104,31 +104,156 @@ function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+const SOURCE_LABEL: Record<Listing["source"], string> = {
+  olx: "OLX",
+  domria: "DIM.RIA",
+  lun: "LUN",
+  rieltor: "RIELTOR",
+};
+
+const UK_MONTHS = [
+  "січня",
+  "лютого",
+  "березня",
+  "квітня",
+  "травня",
+  "червня",
+  "липня",
+  "серпня",
+  "вересня",
+  "жовтня",
+  "листопада",
+  "грудня",
+];
+
+function formatAmount(amount: number): string {
+  const negative = amount < 0;
+  const absolute = Math.abs(amount);
+  const [whole, fraction] = String(absolute).split(".");
+  const grouped = (whole ?? "0").replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  const body = fraction ? `${grouped},${fraction}` : grouped;
+  return negative ? `-${body}` : body;
+}
+
+function displayCurrency(currency: string | undefined): string | undefined {
+  if (!currency) {
+    return undefined;
+  }
+  const token = currency.trim().toUpperCase();
+  if (token === "USD" || token === "$") {
+    return "$";
+  }
+  if (token === "EUR" || token === "€") {
+    return "€";
+  }
+  if (token === "UAH" || token === "ГРН" || token === "GRN") {
+    return "грн";
+  }
+  return currency.trim();
+}
+
 export function formatPrice(listing: Listing): string {
-  if (!listing.price) {
+  const price = listing.displayPrice ?? listing.price;
+  if (!price) {
     return "Ціна не вказана";
   }
-  const currency = listing.price.currency?.trim();
+  const amount = formatAmount(price.amount);
+  const currency = displayCurrency(price.currency);
+  const period = price.period === "day" ? "день" : "місяць";
   if (!currency) {
-    return `${listing.price.amount} (валюта не вказана)`;
+    return `${amount} / ${period}`;
   }
-  return `${listing.price.amount} ${currency}/${listing.price.period ?? "unknown"}`;
+  if (currency === "$" || currency === "€") {
+    return `${currency}${amount} / ${period}`;
+  }
+  return `${amount} ${currency} / ${period}`;
 }
 
 export function formatSellerLabel(listing: Listing): string {
-  if (listing.metadata?.ownerEvidenceLevel === "self_declared") {
-    return "Самозаява «від власника» в тексті — не позначка майданчика";
-  }
   if (listing.sellerType === "owner") {
-    return "Власник — за позначкою майданчика";
+    return "Власник підтверджений";
   }
-  if (listing.sellerType === "agent") {
-    return "Посередник / агент (не власник)";
+  return "Власник не підтверджений";
+}
+
+function kyivParts(date: Date): { year: number; month: number; day: number; hour: string; minute: string } {
+  const fmt = new Intl.DateTimeFormat("uk-UA", {
+    timeZone: KYIV_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map((part) => [part.type, part.value]));
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: parts.hour ?? "00",
+    minute: parts.minute ?? "00",
+  };
+}
+
+export function formatClientPublishedAt(date: Date, now = new Date()): string {
+  const published = kyivParts(date);
+  const current = kyivParts(now);
+  const clock = `${published.hour}:${published.minute}`;
+  const publishedIndex = published.year * 372 + published.month * 31 + published.day;
+  const currentIndex = current.year * 372 + current.month * 31 + current.day;
+  if (publishedIndex === currentIndex) {
+    return `сьогодні, ${clock}`;
   }
-  if (listing.sellerType === "business") {
-    return "Бізнес / забудовник (не власник)";
+  if (publishedIndex === currentIndex - 1) {
+    return `вчора, ${clock}`;
   }
-  return "Власник не підтверджено";
+  const month = UK_MONTHS[published.month - 1] ?? "";
+  return `${published.day} ${month}, ${clock}`;
+}
+
+function propertyHeadline(listing: Listing): string {
+  const rooms = listing.rooms !== undefined && Number.isFinite(listing.rooms) ? Math.round(listing.rooms) : undefined;
+  if (listing.propertyType === "house") {
+    return rooms ? `${rooms}-кімнатний будинок` : "Будинок";
+  }
+  if (listing.propertyType === "apartment") {
+    if (rooms === 1) {
+      return "1-кімнатна квартира";
+    }
+    return rooms ? `${rooms}-кімнатна квартира` : "Квартира";
+  }
+  return "Оголошення";
+}
+
+function propertyFacts(listing: Listing): string | undefined {
+  const bits: string[] = [];
+  if (listing.areaM2 !== undefined && Number.isFinite(listing.areaM2)) {
+    bits.push(`${formatAmount(listing.areaM2)} м²`);
+  }
+  if (listing.rooms !== undefined && Number.isFinite(listing.rooms)) {
+    const rooms = Math.round(listing.rooms);
+    bits.push(`${rooms} ${rooms === 1 ? "кімната" : rooms < 5 ? "кімнати" : "кімнат"}`);
+  }
+  const floor = listing.metadata?.floor;
+  const total = listing.metadata?.totalFloors;
+  const floorNum = typeof floor === "number" ? floor : undefined;
+  const totalNum = typeof total === "number" ? total : undefined;
+  if (floorNum !== undefined && totalNum !== undefined) {
+    bits.push(`${floorNum}/${totalNum} поверх`);
+  } else if (floorNum !== undefined) {
+    bits.push(`${floorNum} поверх`);
+  }
+  return bits.length > 0 ? bits.join(" · ") : undefined;
+}
+
+function locationLine(listing: Listing): string {
+  const city = listing.location.city?.trim();
+  const district = listing.location.district?.trim();
+  if (city && district) {
+    return `${city}, ${district}`;
+  }
+  return city || district || listing.location.raw;
 }
 
 export type ListingDeliveryKindOption =
@@ -153,57 +278,32 @@ export function formatKyivDateTime(date: Date | undefined): string {
   }).format(date);
 }
 
-function headlineFor(kind: ListingDeliveryKindOption | undefined): string {
-  switch (kind) {
-    case "initial_preview":
-      return "📋 <b>TEST · Початкова добірка</b>";
-    case "first_noticed":
-      return "👀 <b>TEST · Вперше помічено</b>";
-    case "new_publication":
-      return "🆕 <b>TEST · Нова публікація</b>";
-    case "initial_inventory":
-      return "📋 <b>TEST · Початкова добірка</b>";
-    case "newly_observed":
-    default:
-      return "👀 <b>TEST · Вперше помічено</b>";
-  }
-}
-
 export function formatListingTelegramHtml(
   listing: Listing,
-  options?: {
+  _options?: {
     deliveryKind?: ListingDeliveryKindOption;
     observationKind?: ListingDeliveryKindOption;
   },
 ): string {
-  const cityArea = [listing.location.city, listing.location.district, listing.location.raw]
-    .filter((item): item is string => Boolean(item))
-    .filter((item, index, arr) => arr.indexOf(item) === index)
-    .join(" · ");
-  const kind = options?.deliveryKind ?? options?.observationKind ?? "new_publication";
-  const publishedLine = listing.publishedAt
-    ? `Опубліковано: ${formatKyivDateTime(listing.publishedAt)} (Київ)`
-    : "Опубліковано: невідомо (майданчик не надав дату)";
-  const refreshedLine = listing.refreshedAt
-    ? `Оновлено на майданчику: ${formatKyivDateTime(listing.refreshedAt)} (Київ)`
-    : undefined;
-  const firstSeenLine = listing.firstSeenAt
-    ? `Вперше помічено ботом: ${formatKyivDateTime(listing.firstSeenAt)} (Київ)`
-    : undefined;
+  const facts = propertyFacts(listing);
+  const published = listing.publishedAt
+    ? `Опубліковано: ${formatClientPublishedAt(listing.publishedAt)}`
+    : "Опубліковано: дата не вказана";
+  const href = escapeHtml(listing.url);
   const html = [
-    headlineFor(kind),
+    "🧪 <b>TEST</b>",
     "",
-    escapeHtml(listing.title),
+    `🏠 <b>${escapeHtml(propertyHeadline(listing))}</b>`,
     "",
-    `💰 ${escapeHtml(formatPrice(listing))}`,
-    `📍 ${escapeHtml(cityArea || listing.location.raw)}`,
+    `💰 <b>${escapeHtml(formatPrice(listing))}</b>`,
+    `📍 ${escapeHtml(locationLine(listing))}`,
+    ...(facts ? [`📐 ${escapeHtml(facts)}`] : []),
     `👤 ${escapeHtml(formatSellerLabel(listing))}`,
-    `🕒 ${escapeHtml(publishedLine)}`,
-    ...(refreshedLine ? [`🔄 ${escapeHtml(refreshedLine)}`] : []),
-    ...(firstSeenLine ? [`👁 ${escapeHtml(firstSeenLine)}`] : []),
-    `📦 ${escapeHtml(listing.source)} · ${escapeHtml(listing.propertyType)}`,
     "",
-    escapeHtml(listing.url),
+    `🕒 ${escapeHtml(published)}`,
+    `🌐 ${escapeHtml(SOURCE_LABEL[listing.source])}`,
+    "",
+    `🔗 <a href="${href}">Відкрити оголошення</a>`,
   ].join("\n");
   return fitTelegramMessage(html);
 }
@@ -216,7 +316,9 @@ export function formatListingTelegramPlain(
   },
 ): string {
   const html = formatListingTelegramHtml(listing, options);
-  return fitTelegramMessage(html.replaceAll(/<\/?b>/g, ""));
+  return fitTelegramMessage(
+    html.replaceAll(/<a href="([^"]*)">([^<]*)<\/a>/g, "$2 $1").replaceAll(/<\/?b>/g, ""),
+  );
 }
 
 /**

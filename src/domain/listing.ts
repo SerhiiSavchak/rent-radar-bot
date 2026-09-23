@@ -38,6 +38,11 @@ export const listingSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   price: listingPriceSchema.optional(),
+  /**
+   * Price text the public listing page shows.
+   * `price` stays the normalized catalog amount used by dedupe and filters.
+   */
+  displayPrice: listingPriceSchema.optional(),
   location: listingLocationSchema,
   propertyType: propertyTypeSchema,
   sellerType: sellerTypeSchema,
