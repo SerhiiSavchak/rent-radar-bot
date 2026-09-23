@@ -26,10 +26,33 @@ export type SellerProfileVerdict =
   | "unknown"
   | "confirmed_owner";
 
+/** Delivery policy for heuristic profile evidence. Classification stays independent. */
+export type SellerProfileDeliveryPolicy = "send" | "reject";
+
+export type SellerProfilePolicies = {
+  /** Default send. Two-address inventory is evidence, not confirmed intermediary proof. */
+  likelyPolicy: SellerProfileDeliveryPolicy;
+  /** Default send. Account age alone is not confirmed intermediary proof. */
+  newAccountPolicy: SellerProfileDeliveryPolicy;
+};
+
+export const DEFAULT_SELLER_PROFILE_POLICIES: SellerProfilePolicies = {
+  likelyPolicy: "send",
+  newAccountPolicy: "send",
+};
+
 export type SellerProfileDecision = {
   verdict: SellerProfileVerdict;
-  drop: boolean;
   evidence: string;
+};
+
+export type SellerProfileGateStats = {
+  kept: Listing[];
+  /** Listings rejected only by an explicit reject profile policy. */
+  dropped: number;
+  profileLikelyIntermediary: number;
+  profileHighRisk: number;
+  profileRejected: number;
 };
 
 type CacheRow = {
@@ -89,11 +112,15 @@ export function isPlatformConfirmedOwner(listing: {
 export function verdictWhenProfileUnreadable(): SellerProfileDecision {
   return {
     verdict: "unknown",
-    drop: false,
     evidence: "profile_unreadable_not_owner",
   };
 }
 
+/**
+ * Classification only. Does not decide delivery.
+ * Two addresses → profile_likely_intermediary. Young account → profile_high_risk.
+ * Neither is confirmed intermediary proof.
+ */
 export function assessSellerProfile(input: {
   confirmedOwner: boolean;
   addresses: string[];
@@ -105,7 +132,6 @@ export function assessSellerProfile(input: {
   if (input.confirmedOwner) {
     return {
       verdict: "confirmed_owner",
-      drop: false,
       evidence: "platform_confirmed_owner",
     };
   }
@@ -114,7 +140,6 @@ export function assessSellerProfile(input: {
   if (distinct.size >= minimum) {
     return {
       verdict: "profile_likely_intermediary",
-      drop: true,
       evidence: `distinct_addresses=${distinct.size}`,
     };
   }
@@ -124,16 +149,34 @@ export function assessSellerProfile(input: {
     if (ageMs >= 0 && ageMs < maxDays * 24 * 60 * 60 * 1000) {
       return {
         verdict: "profile_high_risk",
-        drop: true,
         evidence: `account_age_days=${Math.floor(ageMs / (24 * 60 * 60 * 1000))}`,
       };
     }
   }
   return {
     verdict: "unknown",
-    drop: false,
     evidence: distinct.size > 0 ? `distinct_addresses=${distinct.size}` : "no_profile_signal",
   };
+}
+
+/**
+ * Maps a profile verdict to delivery under the configured policies.
+ * Strong platform intermediary rejection stays in the owner filter, not here.
+ */
+export function shouldRejectSellerProfile(
+  verdict: SellerProfileVerdict,
+  policies: SellerProfilePolicies = DEFAULT_SELLER_PROFILE_POLICIES,
+): boolean {
+  if (verdict === "confirmed_intermediary") {
+    return true;
+  }
+  if (verdict === "profile_likely_intermediary") {
+    return policies.likelyPolicy === "reject";
+  }
+  if (verdict === "profile_high_risk") {
+    return policies.newAccountPolicy === "reject";
+  }
+  return false;
 }
 
 function readAddresses(db: DatabaseSync, source: string, sellerId: string): string[] {
@@ -183,10 +226,14 @@ export function applySellerProfileGate(
   listings: Listing[],
   db: DatabaseSync | undefined,
   now: Date,
-): { kept: Listing[]; dropped: number } {
+  policies: SellerProfilePolicies = DEFAULT_SELLER_PROFILE_POLICIES,
+): SellerProfileGateStats {
   const groups = new Map<string, Listing[]>();
   const kept: Listing[] = [];
   let dropped = 0;
+  let profileLikelyIntermediary = 0;
+  let profileHighRisk = 0;
+  let profileRejected = 0;
   for (const listing of listings) {
     const sellerId = sellerProfileId(listing);
     if (!sellerId) {
@@ -208,7 +255,7 @@ export function applySellerProfileGate(
     try {
       writeProfile(db, source, sellerId, decision, addresses, now);
     } catch {
-      // A database without the cache table still filters the current batch in memory.
+      // A database without the cache table still classifies the current batch in memory.
     }
   };
   for (const [key, group] of groups) {
@@ -244,7 +291,13 @@ export function applySellerProfileGate(
       now,
     });
     persist(source, sellerId, decision, addresses);
-    if (!decision.drop) {
+    if (decision.verdict === "profile_likely_intermediary") {
+      profileLikelyIntermediary += group.length;
+    } else if (decision.verdict === "profile_high_risk") {
+      profileHighRisk += group.length;
+    }
+    const reject = shouldRejectSellerProfile(decision.verdict, policies);
+    if (!reject) {
       kept.push(...group);
       continue;
     }
@@ -253,8 +306,15 @@ export function applySellerProfileGate(
         kept.push(listing);
       } else {
         dropped += 1;
+        profileRejected += 1;
       }
     }
   }
-  return { kept, dropped };
+  return {
+    kept,
+    dropped,
+    profileLikelyIntermediary,
+    profileHighRisk,
+    profileRejected,
+  };
 }

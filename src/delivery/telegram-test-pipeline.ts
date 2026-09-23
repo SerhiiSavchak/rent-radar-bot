@@ -16,6 +16,7 @@ import {
   upsertSellerHold,
 } from "./seller-verification-hold.ts";
 import { applySellerProfileGate } from "./seller-profile.ts";
+import type { SellerProfilePolicies } from "./seller-profile.ts";
 import {
   formatRieltorCoverage,
   parseRieltorCatchup,
@@ -82,6 +83,12 @@ export type TelegramTestCycleReport = {
   sellerAcceptedUnknown: number;
   sellerRejectedIntermediary: number;
   otherFilterRejected: number;
+  /** Heuristic multi-address inventory classified this cycle (not confirmed intermediary). */
+  profileLikelyIntermediary: number;
+  /** Young-account signal classified this cycle when a source supplied a creation date. */
+  profileHighRisk: number;
+  /** Dropped only when an explicit profile reject policy is enabled. */
+  profileRejected: number;
   newAfterDedupe: number;
   initialInventoryCount: number;
   newlyObservedCount: number;
@@ -735,6 +742,9 @@ export async function runTelegramTestCycle(
   };
   const buckets: SourceBucket[] = [];
   const sellerTotals = emptySellerStats();
+  let profileLikelyIntermediary = 0;
+  let profileHighRisk = 0;
+  let profileRejected = 0;
 
   const recordAttempt = (attempt: TelegramSourceAttempt): void => {
     sourceAttempts.push(attempt);
@@ -795,12 +805,19 @@ export async function runTelegramTestCycle(
       const acceptedRaw = applyListingFilters(result.listings, configWithoutAge)
         .filter((item) => item.accepted && item.locationMatched)
         .map((item) => item.listing);
+      const profilePolicies: SellerProfilePolicies = {
+        likelyPolicy: deps.config.sellerProfileLikelyPolicy,
+        newAccountPolicy: deps.config.sellerProfileNewAccountPolicy,
+      };
       const profiled = applySellerProfileGate(
         acceptedRaw,
         deps.sink.dryRun === true ? undefined : holdDb,
         now(),
+        profilePolicies,
       );
-      sellerTotals.sellerRejectedIntermediary += profiled.dropped;
+      profileLikelyIntermediary += profiled.profileLikelyIntermediary;
+      profileHighRisk += profiled.profileHighRisk;
+      profileRejected += profiled.profileRejected;
       const accepted = profiled.kept;
 
       buckets.push({
@@ -1193,6 +1210,9 @@ export async function runTelegramTestCycle(
     sellerAcceptedUnknown: sellerTotals.sellerAcceptedUnknown,
     sellerRejectedIntermediary: sellerTotals.sellerRejectedIntermediary,
     otherFilterRejected: sellerTotals.otherFilterRejected,
+    profileLikelyIntermediary,
+    profileHighRisk,
+    profileRejected,
     newAfterDedupe,
     initialInventoryCount,
     newlyObservedCount,

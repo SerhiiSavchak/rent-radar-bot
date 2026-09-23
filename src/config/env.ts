@@ -66,6 +66,16 @@ const envSchema = z.object({
    * OWNER_ONLY=true does not restore the old gate unless this is owner_only.
    */
   SELLER_POLICY: z.enum(["reject_intermediaries", "owner_only"]).default("reject_intermediaries"),
+  /**
+   * Heuristic profile inventory (≥2 addresses). Default send: classify and cache,
+   * but do not drop until the client chooses reject.
+   */
+  SELLER_PROFILE_LIKELY_POLICY: z.enum(["send", "reject"]).default("send"),
+  /**
+   * Young-account signal when a source supplies accountCreatedAt. Default send.
+   * Independent from the address heuristic.
+   */
+  SELLER_PROFILE_NEW_ACCOUNT_POLICY: z.enum(["send", "reject"]).default("send"),
   PROPERTY_TYPES: z.string().default("apartment,house"),
   MAX_LISTING_AGE_MINUTES: optionalPositiveInt,
   DOMRIA_API_KEY: optionalString,
@@ -113,6 +123,10 @@ export type AppConfig = {
    * Default reject_intermediaries. OWNER_ONLY=true cannot silently restore owner_only.
    */
   sellerPolicy: SellerPolicy;
+  /** Default send. Address-heuristic profile_likely_intermediary remains deliverable. */
+  sellerProfileLikelyPolicy: "send" | "reject";
+  /** Default send. profile_high_risk remains deliverable until explicitly rejected. */
+  sellerProfileNewAccountPolicy: "send" | "reject";
   propertyTypes: PropertyType[];
   maxListingAgeMinutes?: number;
   domriaApiKey?: string;
@@ -173,6 +187,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ownerOnly: parsed.OWNER_ONLY,
     ownerAcceptSelfDeclared: parsed.OWNER_ACCEPT_SELF_DECLARED,
     sellerPolicy: parsed.SELLER_POLICY,
+    sellerProfileLikelyPolicy: parsed.SELLER_PROFILE_LIKELY_POLICY,
+    sellerProfileNewAccountPolicy: parsed.SELLER_PROFILE_NEW_ACCOUNT_POLICY,
     propertyTypes: parsePropertyTypes(parsed.PROPERTY_TYPES),
     domriaUsePublicHtmlFallback: parsed.DOMRIA_USE_PUBLIC_HTML_FALLBACK,
     domriaMaxInfoPerPoll: parsed.DOMRIA_MAX_INFO_PER_POLL,
