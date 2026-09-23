@@ -67,15 +67,15 @@ const envSchema = z.object({
    */
   SELLER_POLICY: z.enum(["reject_intermediaries", "owner_only"]).default("reject_intermediaries"),
   /**
-   * Heuristic profile inventory (≥2 addresses). Default send: classify and cache,
-   * but do not drop until the client chooses reject.
+   * Heuristic profile inventory (≥3 addresses). Default reject matches the client
+   * request. send keeps the listing while classification and cache still run.
    */
-  SELLER_PROFILE_LIKELY_POLICY: z.enum(["send", "reject"]).default("send"),
+  SELLER_PROFILE_LIKELY_POLICY: z.enum(["send", "reject"]).default("reject"),
   /**
-   * Young-account signal when a source supplies accountCreatedAt. Default send.
+   * Young-account signal when a source supplies accountCreatedAt. Default reject.
    * Independent from the address heuristic.
    */
-  SELLER_PROFILE_NEW_ACCOUNT_POLICY: z.enum(["send", "reject"]).default("send"),
+  SELLER_PROFILE_NEW_ACCOUNT_POLICY: z.enum(["send", "reject"]).default("reject"),
   PROPERTY_TYPES: z.string().default("apartment,house"),
   MAX_LISTING_AGE_MINUTES: optionalPositiveInt,
   DOMRIA_API_KEY: optionalString,
@@ -123,9 +123,9 @@ export type AppConfig = {
    * Default reject_intermediaries. OWNER_ONLY=true cannot silently restore owner_only.
    */
   sellerPolicy: SellerPolicy;
-  /** Default send. Address-heuristic profile_likely_intermediary remains deliverable. */
+  /** Default reject. Three-address profile_likely_intermediary is not delivered. */
   sellerProfileLikelyPolicy: "send" | "reject";
-  /** Default send. profile_high_risk remains deliverable until explicitly rejected. */
+  /** Default reject. profile_high_risk is not delivered when a creation timestamp exists. */
   sellerProfileNewAccountPolicy: "send" | "reject";
   propertyTypes: PropertyType[];
   maxListingAgeMinutes?: number;

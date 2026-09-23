@@ -3,9 +3,10 @@ import type { Listing, SellerType } from "../domain/listing.ts";
 
 /**
  * How many distinct public addresses under one seller id count as repeated
- * unrelated inventory. Two is the smallest count that is not a single listing.
+ * unrelated inventory. Three matches the client wording "many listings".
+ * Two addresses stay sendable evidence, not a likely-intermediary verdict.
  */
-export const SELLER_PROFILE_DISTINCT_ADDRESS_MIN = 2;
+export const SELLER_PROFILE_DISTINCT_ADDRESS_MIN = 3;
 
 /** Stored address samples per seller. Older samples stay until the cap shifts them out. */
 export const SELLER_PROFILE_ADDRESS_CAP = 8;
@@ -30,15 +31,15 @@ export type SellerProfileVerdict =
 export type SellerProfileDeliveryPolicy = "send" | "reject";
 
 export type SellerProfilePolicies = {
-  /** Default send. Two-address inventory is evidence, not confirmed intermediary proof. */
+  /** Default reject. Three-address inventory is likely, not confirmed intermediary proof. */
   likelyPolicy: SellerProfileDeliveryPolicy;
-  /** Default send. Account age alone is not confirmed intermediary proof. */
+  /** Default reject. Applies only when a source supplied accountCreatedAt. */
   newAccountPolicy: SellerProfileDeliveryPolicy;
 };
 
 export const DEFAULT_SELLER_PROFILE_POLICIES: SellerProfilePolicies = {
-  likelyPolicy: "send",
-  newAccountPolicy: "send",
+  likelyPolicy: "reject",
+  newAccountPolicy: "reject",
 };
 
 export type SellerProfileDecision = {
@@ -118,7 +119,7 @@ export function verdictWhenProfileUnreadable(): SellerProfileDecision {
 
 /**
  * Classification only. Does not decide delivery.
- * Two addresses → profile_likely_intermediary. Young account → profile_high_risk.
+ * Three addresses → profile_likely_intermediary. A supplied young account → profile_high_risk.
  * Neither is confirmed intermediary proof.
  */
 export function assessSellerProfile(input: {

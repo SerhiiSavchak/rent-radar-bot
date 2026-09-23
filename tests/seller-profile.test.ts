@@ -71,7 +71,7 @@ describe("seller profile classifier", () => {
     expect(gated.kept).toHaveLength(1);
   });
 
-  it("classifies two addresses as likely intermediary but sends by default", () => {
+  it("does not treat two addresses as a likely intermediary", () => {
     const listings = [
       card({
         source: "olx",
@@ -93,16 +93,16 @@ describe("seller profile classifier", () => {
       addresses: ["a", "b"],
       now,
     });
-    expect(decision.verdict).toBe("profile_likely_intermediary");
-    expect(shouldRejectSellerProfile(decision.verdict, DEFAULT_SELLER_PROFILE_POLICIES)).toBe(false);
+    expect(decision.verdict).toBe("unknown");
+    expect(decision.verdict).not.toBe("profile_likely_intermediary");
     const gated = applySellerProfileGate(listings, undefined, now);
     expect(gated.dropped).toBe(0);
     expect(gated.profileRejected).toBe(0);
-    expect(gated.profileLikelyIntermediary).toBe(2);
+    expect(gated.profileLikelyIntermediary).toBe(0);
     expect(gated.kept).toHaveLength(2);
   });
 
-  it("drops two-address inventory only when likely policy is reject", () => {
+  it("rejects three addresses by default and still sends them when likely policy is send", () => {
     const listings = [
       card({
         source: "olx",
@@ -118,15 +118,34 @@ describe("seller profile classifier", () => {
         location: { raw: "Львів, вул. Городоцька, 20" },
         metadata: { olxUserId: "same" },
       }),
+      card({
+        source: "olx",
+        sourceId: "c",
+        url: "https://www.olx.ua/d/uk/obyavlenie/c",
+        location: { raw: "Львів, вул. Третя, 3" },
+        metadata: { olxUserId: "same" },
+      }),
     ];
-    const gated = applySellerProfileGate(listings, undefined, now, {
-      likelyPolicy: "reject",
-      newAccountPolicy: "send",
+    const decision = assessSellerProfile({
+      confirmedOwner: false,
+      addresses: ["a", "b", "c"],
+      now,
     });
-    expect(gated.profileLikelyIntermediary).toBe(2);
-    expect(gated.dropped).toBe(2);
-    expect(gated.profileRejected).toBe(2);
+    expect(decision.verdict).toBe("profile_likely_intermediary");
+    expect(shouldRejectSellerProfile(decision.verdict, DEFAULT_SELLER_PROFILE_POLICIES)).toBe(true);
+    const gated = applySellerProfileGate(listings, undefined, now);
+    expect(gated.profileLikelyIntermediary).toBe(3);
+    expect(gated.dropped).toBe(3);
+    expect(gated.profileRejected).toBe(3);
     expect(gated.kept).toHaveLength(0);
+    const sent = applySellerProfileGate(listings, undefined, now, {
+      likelyPolicy: "send",
+      newAccountPolicy: "reject",
+    });
+    expect(sent.profileLikelyIntermediary).toBe(3);
+    expect(sent.profileRejected).toBe(0);
+    expect(sent.dropped).toBe(0);
+    expect(sent.kept).toHaveLength(3);
   });
 
   it("reuses cached addresses after reopen and does not mix seller ids across sources", () => {
@@ -169,7 +188,7 @@ describe("seller profile classifier", () => {
       reopened,
       now,
     );
-    expect(again.profileLikelyIntermediary).toBe(1);
+    expect(again.profileLikelyIntermediary).toBe(0);
     expect(again.dropped).toBe(0);
     expect(again.kept.map((item) => item.sourceId).sort()).toEqual(["2", "3"]);
     const rejected = applySellerProfileGate(
@@ -184,45 +203,30 @@ describe("seller profile classifier", () => {
       ],
       reopened,
       now,
-      { likelyPolicy: "reject", newAccountPolicy: "send" },
     );
+    expect(rejected.profileLikelyIntermediary).toBe(1);
+    expect(rejected.profileRejected).toBe(1);
     expect(rejected.dropped).toBe(1);
     reopened.close();
   });
 
-  it("keeps a platform-confirmed owner even when another address is cached", () => {
+  it("keeps a platform-confirmed owner with three addresses under the reject policy", () => {
     const db = openDb();
-    applySellerProfileGate(
-      [
-        card({
-          source: "domria",
-          sourceId: "1",
-          url: "https://dom.ria.com/uk/realty-1.html",
-          sellerType: "owner",
-          metadata: { userId: "owner", ownerEvidenceLevel: "platform_confirmed" },
-          location: { raw: "Львів, вул. Перша, 1" },
-        }),
-      ],
-      db,
-      now,
-    );
-    const second = applySellerProfileGate(
-      [
-        card({
-          source: "domria",
-          sourceId: "2",
-          url: "https://dom.ria.com/uk/realty-2.html",
-          sellerType: "owner",
-          metadata: { userId: "owner", ownerEvidenceLevel: "platform_confirmed" },
-          location: { raw: "Львів, вул. Друга, 2" },
-        }),
-      ],
-      db,
-      now,
-      { likelyPolicy: "reject", newAccountPolicy: "reject" },
-    );
-    expect(second.dropped).toBe(0);
-    expect(second.kept).toHaveLength(1);
+    const owner = (id: string, street: string): Listing =>
+      card({
+        source: "domria",
+        sourceId: id,
+        url: `https://dom.ria.com/uk/realty-${id}.html`,
+        sellerType: "owner",
+        metadata: { userId: "owner", ownerEvidenceLevel: "platform_confirmed" },
+        location: { raw: street },
+      });
+    applySellerProfileGate([owner("1", "Львів, вул. Перша, 1"), owner("2", "Львів, вул. Друга, 2")], db, now);
+    const third = applySellerProfileGate([owner("3", "Львів, вул. Третя, 3")], db, now);
+    expect(third.dropped).toBe(0);
+    expect(third.profileRejected).toBe(0);
+    expect(third.profileLikelyIntermediary).toBe(0);
+    expect(third.kept).toHaveLength(1);
     db.close();
   });
 
@@ -239,12 +243,18 @@ describe("seller profile classifier", () => {
     expect(gated.kept).toHaveLength(1);
   });
 
-  it("keeps a young account under the default new-account policy", () => {
+  it("rejects a young account by default and sends it when new-account policy is send", () => {
     const fresh = card({
       source: "olx",
       sourceId: "new",
       url: "https://www.olx.ua/d/uk/obyavlenie/new",
       metadata: { olxUserId: "new-user", accountCreatedAt: "2026-09-22T08:00:00.000Z" },
+    });
+    const undated = card({
+      source: "olx",
+      sourceId: "undated",
+      url: "https://www.olx.ua/d/uk/obyavlenie/undated",
+      metadata: { olxUserId: "undated-user" },
     });
     const decision = assessSellerProfile({
       confirmedOwner: false,
@@ -253,16 +263,27 @@ describe("seller profile classifier", () => {
       now,
     });
     expect(decision.verdict).toBe("profile_high_risk");
-    expect(shouldRejectSellerProfile(decision.verdict)).toBe(false);
+    expect(shouldRejectSellerProfile(decision.verdict)).toBe(true);
+    const missingDate = assessSellerProfile({
+      confirmedOwner: false,
+      addresses: ["one"],
+      now,
+    });
+    expect(missingDate.verdict).toBe("unknown");
     const gated = applySellerProfileGate([fresh], undefined, now);
     expect(gated.profileHighRisk).toBe(1);
-    expect(gated.dropped).toBe(0);
-    const rejected = applySellerProfileGate([fresh], undefined, now, {
-      likelyPolicy: "send",
-      newAccountPolicy: "reject",
+    expect(gated.profileRejected).toBe(1);
+    expect(gated.dropped).toBe(1);
+    const kept = applySellerProfileGate([fresh], undefined, now, {
+      likelyPolicy: "reject",
+      newAccountPolicy: "send",
     });
-    expect(rejected.dropped).toBe(1);
-    expect(rejected.profileRejected).toBe(1);
+    expect(kept.profileHighRisk).toBe(1);
+    expect(kept.profileRejected).toBe(0);
+    expect(kept.dropped).toBe(0);
+    const noAge = applySellerProfileGate([undated], undefined, now);
+    expect(noAge.profileHighRisk).toBe(0);
+    expect(noAge.dropped).toBe(0);
   });
 
   it("does not turn a missing or unreadable seller identity into an owner", () => {
@@ -318,16 +339,16 @@ describe("seller profile classifier", () => {
     db.close();
   });
 
-  it("forgets expired cache rows and defaults both profile policies to send", () => {
+  it("forgets expired cache rows and defaults both profile policies to reject", () => {
     const defaults = loadConfig({});
-    expect(defaults.sellerProfileLikelyPolicy).toBe("send");
-    expect(defaults.sellerProfileNewAccountPolicy).toBe("send");
-    const rejectEnv = loadConfig({
-      SELLER_PROFILE_LIKELY_POLICY: "reject",
-      SELLER_PROFILE_NEW_ACCOUNT_POLICY: "reject",
+    expect(defaults.sellerProfileLikelyPolicy).toBe("reject");
+    expect(defaults.sellerProfileNewAccountPolicy).toBe("reject");
+    const sendEnv = loadConfig({
+      SELLER_PROFILE_LIKELY_POLICY: "send",
+      SELLER_PROFILE_NEW_ACCOUNT_POLICY: "send",
     });
-    expect(rejectEnv.sellerProfileLikelyPolicy).toBe("reject");
-    expect(rejectEnv.sellerProfileNewAccountPolicy).toBe("reject");
+    expect(sendEnv.sellerProfileLikelyPolicy).toBe("send");
+    expect(sendEnv.sellerProfileNewAccountPolicy).toBe("send");
     const db = openDb();
     applySellerProfileGate(
       [
