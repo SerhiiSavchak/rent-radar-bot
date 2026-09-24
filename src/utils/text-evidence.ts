@@ -106,12 +106,33 @@ const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = 
     label: "специалист по недвижимости",
   },
   {
-    pattern: unicodePhrase(String.raw`представ(?:ник|итель)\s+агентств`),
+    pattern: unicodePhrase(String.raw`представ\p{L}*\s+агентств`),
     label: "представник агентства",
   },
-  { pattern: /агентств\p{L}*\s+нерухомост/iu, label: "агентство нерухомості" },
-  { pattern: /агенці\p{L}*\s+нерухомост/iu, label: "агенція нерухомості" },
-  { pattern: /агентств\p{L}*\s+недвижимост/iu, label: "агентство недвижимости" },
+  {
+    pattern: unicodePhrase(String.raw`працюю\s+рі[єе]лтор`),
+    label: "працюю рієлтором",
+  },
+  {
+    pattern: /(?:від|от)\s+агентств\p{L}*\s+не(?:рухомост|движимост)/iu,
+    label: "від агентства нерухомості",
+  },
+  {
+    pattern: /(?:від|от)\s+агенці\p{L}*\s+нерухомост/iu,
+    label: "від агенції нерухомості",
+  },
+  {
+    pattern: /(?<![\p{L}\p{N}_])агентство\s+нерухомост\p{L}*\s+\p{Lu}/iu,
+    label: "агентство нерухомості",
+  },
+  {
+    pattern: /(?<![\p{L}\p{N}_])агенція\s+нерухомост\p{L}*\s+\p{Lu}/iu,
+    label: "агенція нерухомості",
+  },
+  {
+    pattern: /(?<![\p{L}\p{N}_])агентство\s+недвижимост\p{L}*\s+\p{Lu}/iu,
+    label: "агентство недвижимости",
+  },
   { pattern: /real\s+estate\s+agency/iu, label: "real estate agency" },
   { pattern: /рі[єе]лторськ\p{L}*\s+комісі\p{L}*/iu, label: "рієлторська комісія" },
   { pattern: /риелторск\p{L}*\s+комисси\p{L}*/iu, label: "риелторская комиссия" },
@@ -130,7 +151,7 @@ const SUPPORTING_FAMILIES: Array<{
   label: string;
 }> = [
   { family: "collaboration", pattern: /без\s+співпраці/iu, label: "без співпраці" },
-  { family: "collaboration", pattern: /співпрац/iu, label: "співпраця" },
+  { family: "collaboration", pattern: /(?<!не\s)співпрац/iu, label: "співпраця" },
   { family: "collaboration", pattern: /(?<![\p{L}\p{N}_])колег/iu, label: "колеги" },
   { family: "collaboration", pattern: /(?<![\p{L}\p{N}_])спп(?![\p{L}\p{N}_])/iu, label: "спп" },
   { family: "inventory", pattern: /є\s+інші\s+варіанти/iu, label: "є інші варіанти" },
@@ -168,10 +189,14 @@ const SUPPORTING_FAMILIES: Array<{
     pattern: /консультаци\p{L}*\s+по\s+недвижимост/iu,
     label: "консультация по недвижимости",
   },
-  { family: "agency_brand", pattern: /(?<![\p{L}\p{N}_])АН\s+\p{L}/u, label: "АН назва" },
   {
     family: "agency_brand",
-    pattern: /(?<![\p{L}\p{N}_])\p{L}{2,}\s+АН(?![\p{L}\p{N}_])/u,
+    pattern: /(?<![\p{L}\p{N}_])[Аа][Нн]\s+\p{Lu}/u,
+    label: "АН назва",
+  },
+  {
+    family: "agency_brand",
+    pattern: /(?<![\p{L}\p{N}_])\p{Lu}\p{L}{2,}\s+[Аа][Нн](?![\p{L}\p{N}_])/u,
     label: "ім'я АН",
   },
 ];
@@ -251,15 +276,32 @@ function maskProtectedSpans(text: string): { masked: string; ownerContextSignals
   return { masked, ownerContextSignals };
 }
 
+function negatedBefore(text: string, index: number): boolean {
+  const before = text.slice(Math.max(0, index - 30), index);
+  return (
+    /(?:^|[^\p{L}])(?:я\s+|ми\s+)?не(?:\s+є)?\s*$/iu.test(before) ||
+    /(?:^|[^\p{L}])без\s*$/iu.test(before)
+  );
+}
+
 function matchedLabels(
   text: string,
   patterns: Array<{ pattern: RegExp; label: string }>,
+  respectNegation: boolean,
 ): string[] {
   const hits: string[] = [];
   for (const item of patterns) {
-    item.pattern.lastIndex = 0;
-    if (item.pattern.test(text)) {
+    const flags = item.pattern.flags.includes("g") ? item.pattern.flags : `${item.pattern.flags}g`;
+    const pattern = new RegExp(item.pattern.source, flags);
+    for (const match of text.matchAll(pattern)) {
+      if (match.index === undefined) {
+        continue;
+      }
+      if (respectNegation && negatedBefore(text, match.index)) {
+        continue;
+      }
       hits.push(item.label);
+      break;
     }
   }
   return hits;
@@ -283,7 +325,7 @@ export function classifySellerText(text: string | undefined): SellerTextJudgemen
   }
   const normalized = normalizeSellerText(text);
   const { masked, ownerContextSignals } = maskProtectedSpans(normalized);
-  const strongSignals = matchedLabels(masked, STRONG_INTERMEDIARY_PATTERNS);
+  const strongSignals = matchedLabels(masked, STRONG_INTERMEDIARY_PATTERNS, true);
   const supportingSignals: string[] = [];
   const supportingFamilies: SellerTextSignalFamily[] = [];
   if (strongSignals.length === 0) {

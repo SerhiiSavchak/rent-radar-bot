@@ -20,8 +20,8 @@ function eligible(text: string, extra: Parameters<typeof classifyOwner>[0] = {})
 
 describe("seller text evidence", () => {
   it.each([
-    ["Пропозиція від агентства нерухомості", "агентство нерухомості"],
-    ["Пропозиція від агенції нерухомості", "агенція нерухомості"],
+    ["Пропозиція від агентства нерухомості", "від агентства нерухомості"],
+    ["Пропозиція від агенції нерухомості", "від агенції нерухомості"],
     ["рієлторську комісію - 100 %", "рієлторська комісія"],
     ["ріелторську комісію — 50%", "рієлторська комісія"],
     ["риелторская комиссия 50%", "риелторская комиссия"],
@@ -309,6 +309,59 @@ describe("seller evidence review gaps", () => {
     expect(
       classifySellerText("Не агентство нерухомості. Пропозиція від агентства нерухомості.").level,
     ).toBe("confirmed");
+  });
+
+  it.each([
+    "Не працюю з агентствами нерухомості",
+    "З агентствами нерухомості не співпрацюю",
+    "Посередникам та агентствам нерухомості прохання не телефонувати",
+    "Агентствам нерухомості прохання не турбувати",
+    "Квартира без агентства нерухомості",
+    "Не агентство нерухомості, власник",
+    "Я не брокер з нерухомості",
+    "Я не агент з нерухомості",
+    "Не рієлтор, здаю власну квартиру",
+    "Я не спеціаліст з нерухомості",
+    "Не працюю з агентствами нерухомості. Є інші варіанти.",
+    "З рієлторами не співпрацюю. Ключі на руках.",
+  ])("does not confirm anti-agent context: %s", (text) => {
+    const judged = classifySellerText(text);
+    expect(judged.level).not.toBe("confirmed");
+    expect(judged.level).not.toBe("likely");
+    expect(eligible(text).send).toBe(true);
+  });
+
+  it.each([
+    "Пропозиція від агентства нерухомості",
+    "Оголошення від агентства нерухомості",
+    "Представник агентства нерухомості",
+    "Агентство нерухомості Золотий Дім",
+    "От агентства недвижимости",
+    "Я рієлтор",
+    "Брокер з нерухомості",
+    "рієлторську комісію - 100 %",
+  ])("confirms positive agency or role context: %s", (text) => {
+    expect(classifySellerText(text).level).toBe("confirmed");
+    expect(eligible(text).send).toBe(false);
+  });
+
+  it("keeps a separate positive statement after a negation", () => {
+    expect(classifySellerText("Не рієлтор. Пропозиція від агентства нерухомості.").level).toBe(
+      "confirmed",
+    );
+    expect(
+      classifySellerText("Не працюю з агентствами нерухомості. Рієлторська комісія 50%.").level,
+    ).toBe("confirmed");
+  });
+
+  it("treats a cased АН brand as supporting and ignores a bare acronym", () => {
+    expect(classifySellerText("Ксенія АН").supportingFamilies).toEqual(["agency_brand"]);
+    expect(classifySellerText("Ксенія Ан").supportingFamilies).toEqual(["agency_brand"]);
+    expect(classifySellerText("АН Золотий Дім").level).toBe("unknown");
+    expect(classifySellerText("АН Золотий Дім").supportingFamilies).toEqual(["agency_brand"]);
+    expect(classifySellerText("Ксенія").supportingFamilies).toEqual([]);
+    expect(classifySellerText("АН").strongSignals).toEqual([]);
+    expect(classifySellerText("АН").supportingFamilies).toEqual([]);
   });
 
   it("counts only ключі after a protected anti-realtor collaboration phrase", () => {
