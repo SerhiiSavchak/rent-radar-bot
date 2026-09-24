@@ -31,6 +31,7 @@ import { createCollectionAdapters } from "../collection/create-source-adapters.t
 import { openDurableRuntime, PollerLockError } from "../storage/durable-runtime.ts";
 import { writeHeartbeat } from "../storage/heartbeat.ts";
 import { waitMsUntilNextPollStart } from "../delivery/poll-cadence.ts";
+import { resolvePollProcessExitCode } from "../delivery/poll-process-exit.ts";
 import { readOlxDisplayedPrices } from "../sources/olx/olx-display-price.ts";
 import { runStateCleanupIfDue, STATE_RETENTION } from "../storage/state-retention.ts";
 
@@ -39,7 +40,10 @@ loadDotenv();
 const rawCycles = process.env.TELEGRAM_POLL_CYCLES;
 const unbounded = rawCycles === "0";
 const cycles = unbounded ? 0 : Math.max(1, Number(rawCycles ?? "6") || 6);
-const intervalMs = Math.max(0, Number(process.env.TELEGRAM_POLL_INTERVAL_MS ?? String(10 * 60_000)));
+const intervalMs = Math.max(
+  0,
+  Number(process.env.TELEGRAM_POLL_INTERVAL_MS ?? String(10 * 60_000)),
+);
 
 let stop = false;
 let closeRuntime: (() => void) | undefined;
@@ -123,7 +127,7 @@ try {
     );
   }
 
-  let exitFail = false;
+  let operationalFailureObserved = false;
   let totalSentOk = 0;
   let totalSentFailed = 0;
   let totalNewAfterDedupe = 0;
@@ -191,7 +195,7 @@ try {
       dryRun: report.dryRun,
     });
     if (report.sentFailed > 0 || report.hasSourceFailures) {
-      exitFail = true;
+      operationalFailureObserved = true;
     }
     const waitMs = waitMsUntilNextPollStart(Date.now() - cycleStartedMs, intervalMs);
     if ((unbounded || cycle < cycles) && !stop && waitMs > 0) {
@@ -221,7 +225,7 @@ try {
   if (!stop) {
     const summarySend = await sink.sendText(summaryText);
     if (!summarySend.ok) {
-      exitFail = true;
+      operationalFailureObserved = true;
       console.error(
         JSON.stringify({
           message: "live:test-telegram:poll.summary_notify_failed",
@@ -238,6 +242,11 @@ try {
     totalSentOk,
     totalSentFailed,
   });
+  const processExitCode = resolvePollProcessExitCode({
+    unbounded,
+    gracefulStopRequested: stop,
+    operationalFailureObserved,
+  });
   console.log(
     JSON.stringify({
       message: "live:test-telegram:poll.done",
@@ -253,10 +262,12 @@ try {
       baselineSurvivesRestart: true,
       restartRebaseline: false,
       dryRun,
-      exitFail,
+      operationalFailureObserved,
+      gracefulStopRequested: stop,
+      processExitCode,
     }),
   );
-  process.exitCode = exitFail ? 1 : 0;
+  process.exitCode = processExitCode;
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(
@@ -267,7 +278,8 @@ try {
       concurrentPoller: error instanceof PollerLockError,
     }),
   );
-  process.exitCode = error instanceof TelegramTestModeError ? 2 : error instanceof PollerLockError ? 3 : 1;
+  process.exitCode =
+    error instanceof TelegramTestModeError ? 2 : error instanceof PollerLockError ? 3 : 1;
 } finally {
   closeRuntime?.();
 }
