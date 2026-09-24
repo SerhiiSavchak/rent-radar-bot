@@ -1,9 +1,11 @@
 import type { SellerConfidence, SellerType } from "../domain/listing.ts";
 import {
+  classifySellerText,
   hasExplicitIntermediaryText,
   hasExplicitSelfDeclaredOwnerText,
   hasMisleadingOwnerSeekingText,
   hasOwnerText,
+  type SellerTextLevel,
 } from "../utils/text-evidence.ts";
 
 export type OwnerEvidenceLevel =
@@ -50,6 +52,8 @@ export type OwnerClassification = {
    * Display as a listing claim, never as platform verification.
    */
   filterConsidersSelfDeclaredOwner: boolean;
+  /** Text layer only. Structured intermediary evidence stays on ownerEvidenceLevel. */
+  sellerTextLevel: SellerTextLevel;
 };
 
 export type OwnerSignals = {
@@ -105,6 +109,7 @@ function emptyClassification(
     ownerEvidenceLevel: level,
     filterConsidersPrivateOwner: false,
     filterConsidersSelfDeclaredOwner: false,
+    sellerTextLevel: "unknown",
     ...extras,
   };
 }
@@ -245,13 +250,35 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     });
   }
 
+  const judged = classifySellerText(text);
+  if (judged.level === "confirmed") {
+    evidence.push(`seller text confirmed: ${judged.strongSignals.join(", ")}`);
+  } else if (judged.level === "likely") {
+    evidence.push(`seller text likely: ${judged.supportingFamilies.join("+")}`);
+  }
+  for (const context of judged.ownerContextSignals) {
+    evidence.push(`seller text owner-context: ${context}`);
+  }
   const uniqueEvidence = [...new Set(evidence)];
   const agency = hasAgencyMarker(signals);
-  const agentCopy = Boolean(text && hasExplicitIntermediaryText(text));
+  const agentCopy = judged.level === "confirmed";
   const explicitIntermediaryRole =
     signals.platformAgent === true || signals.platformBusiness === true || agency || agentCopy;
   const ownerClaim = hasExplicitSelfDeclaredOwnerText(text);
-  const selfDeclared = ownerClaim && !explicitIntermediaryRole;
+  const selfDeclared = ownerClaim && !explicitIntermediaryRole && judged.level !== "likely";
+  const textLevel =
+    judged.level === "likely" && !explicitIntermediaryRole ? "likely" : judged.level;
+  if (signals.platformOwner === true && explicitIntermediaryRole) {
+    uniqueEvidence.push("platform-confirmed owner overrides intermediary evidence");
+  }
+
+  if (signals.platformOwner === true) {
+    return emptyClassification("owner", "platform_confirmed", uniqueEvidence, items, {
+      confidence: "high",
+      filterConsidersPrivateOwner: true,
+      sellerTextLevel: "unknown",
+    });
+  }
 
   if (signals.platformAgent === true) {
     return emptyClassification(
@@ -277,19 +304,13 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     );
   }
 
-  if (signals.platformOwner === true) {
-    return emptyClassification("owner", "platform_confirmed", uniqueEvidence, items, {
-      confidence: "high",
-      filterConsidersPrivateOwner: true,
-    });
-  }
-
   if (agency || agentCopy) {
     return emptyClassification(
       "unknown",
       ownerClaim ? "conflict" : "intermediary",
       uniqueEvidence,
       items,
+      { sellerTextLevel: "confirmed" },
     );
   }
 
@@ -301,10 +322,14 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   }
 
   if (signals.platformPrivate === true) {
-    return emptyClassification("unknown", "private_unknown", uniqueEvidence, items);
+    return emptyClassification("unknown", "private_unknown", uniqueEvidence, items, {
+      sellerTextLevel: textLevel === "likely" ? "likely" : "unknown",
+    });
   }
 
-  return emptyClassification("unknown", "private_unknown", uniqueEvidence, items);
+  return emptyClassification("unknown", "private_unknown", uniqueEvidence, items, {
+    sellerTextLevel: textLevel === "likely" ? "likely" : "unknown",
+  });
 }
 
 const ASSESSMENT_STATES = new Set<SellerAssessmentState>([
@@ -344,8 +369,12 @@ export function sellerAssessmentFromClassification(
 
 export function sellerAnnotation(classification: OwnerClassification): {
   sellerAssessment: SellerAssessment;
+  sellerTextLevel?: "likely";
 } {
-  return { sellerAssessment: sellerAssessmentFromClassification(classification) };
+  return {
+    sellerAssessment: sellerAssessmentFromClassification(classification),
+    ...(classification.sellerTextLevel === "likely" ? { sellerTextLevel: "likely" as const } : {}),
+  };
 }
 
 function isEvidenceItem(value: unknown): value is SellerEvidenceItem {
@@ -403,6 +432,7 @@ export function sellerAssessmentFromListing(listing: {
     ownerEvidenceLevel,
     filterConsidersPrivateOwner: listing.metadata?.filterConsidersPrivateOwner === true,
     filterConsidersSelfDeclaredOwner: listing.metadata?.filterConsidersSelfDeclaredOwner === true,
+    sellerTextLevel: listing.metadata?.sellerTextLevel === "likely" ? "likely" : "unknown",
   });
   if (
     assessment.evidence.length === 0 &&

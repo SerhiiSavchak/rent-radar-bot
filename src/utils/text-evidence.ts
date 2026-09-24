@@ -45,24 +45,125 @@ function unicodePhrase(source: string): RegExp {
   return new RegExp(`${CYRILLIC_WORD_START}(?:${source})`, "iu");
 }
 
+export type SellerTextLevel = "confirmed" | "likely" | "unknown";
+
+export type SellerTextSignalFamily =
+  "collaboration" | "inventory" | "transaction" | "service" | "agency_brand";
+
+export type SellerTextJudgement = {
+  level: SellerTextLevel;
+  strongSignals: string[];
+  supportingSignals: string[];
+  supportingFamilies: SellerTextSignalFamily[];
+  ownerContextSignals: string[];
+};
+
+const PROTECTED_SPANS: RegExp[] = [
+  /без\s+рі[єе]лторськ\p{L}*\s+комісі\p{L}*/giu,
+  /без\s+риелторск\p{L}*\s+комисси\p{L}*/giu,
+  /без\s+комісі\p{L}*/giu,
+  /без\s+комисси\p{L}*/giu,
+  /без\s+рі[єе]лторів/giu,
+  /без\s+риелторов/giu,
+  /рі[єе]лторам\s+не\s+(?:дзвонити|телефонувати)/giu,
+  /риелторам\s+не\s+звонить/giu,
+  /агентам\s+не\s+(?:турбувати|беспокоить)/giu,
+  /агентствам\s+нерухомості\s+не\s+\p{L}+/giu,
+  /агенціям\s+нерухомості\s+не\s+\p{L}+/giu,
+];
+
 const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: unicodePhrase(String.raw`я\s+рі[єе]лтор`), label: "я рієлтор" },
   { pattern: unicodePhrase(String.raw`я\s+риелтор`), label: "я риелтор" },
   { pattern: unicodePhrase(String.raw`я\s+realtor${CYRILLIC_WORD_END}`), label: "я realtor" },
   { pattern: unicodePhrase(String.raw`ми\s+рі[єе]лтор`), label: "ми рієлтори" },
   { pattern: unicodePhrase(String.raw`ми\s+риелтор`), label: "ми риелторы" },
-  { pattern: /агентство\s+нерухомост/i, label: "агентство нерухомості" },
-  { pattern: /агенція\s+нерухомост/i, label: "агенція нерухомості" },
-  { pattern: /агентство\s+недвижимост/i, label: "агентство недвижимости" },
-  { pattern: /комісія\s+агентств/i, label: "комісія агентства" },
-  { pattern: /комиссия\s+агентств/i, label: "комиссия агентства" },
-  { pattern: /комісія\s+рі[єе]лтор/i, label: "комісія рієлтора" },
-  { pattern: /комиссия\s+риелтор/i, label: "комиссия риелтора" },
-  { pattern: /коміс[іи]я\s+\d+\s*%/i, label: "комісія N%" },
-  { pattern: /комиссия\s+\d+\s*%/i, label: "комиссия N%" },
-  { pattern: /послуги\s+рі[єе]лтора/i, label: "послуги рієлтора" },
-  { pattern: /услуги\s+риелтора/i, label: "услуги риелтора" },
-  { pattern: unicodePhrase(String.raw`я\s+агент(?:ство)?${CYRILLIC_WORD_END}`), label: "я агент" },
+  {
+    pattern: unicodePhrase(String.raw`брокер\s+(?:з|по)\s+не(?:рухомост|движимост)`),
+    label: "брокер з нерухомості",
+  },
+  {
+    pattern: unicodePhrase(String.raw`агент\s+(?:з|по)\s+не(?:рухомост|движимост)`),
+    label: "агент з нерухомості",
+  },
+  { pattern: unicodePhrase(String.raw`менеджер\s+агентств`), label: "менеджер агентства" },
+  {
+    pattern: unicodePhrase(String.raw`спеціаліст\s+з\s+нерухомост`),
+    label: "спеціаліст з нерухомості",
+  },
+  {
+    pattern: unicodePhrase(String.raw`специалист\s+по\s+недвижимост`),
+    label: "специалист по недвижимости",
+  },
+  {
+    pattern: unicodePhrase(String.raw`представ(?:ник|итель)\s+агентств`),
+    label: "представник агентства",
+  },
+  { pattern: /агентств\p{L}*\s+нерухомост/iu, label: "агентство нерухомості" },
+  { pattern: /агенці\p{L}*\s+нерухомост/iu, label: "агенція нерухомості" },
+  { pattern: /агентств\p{L}*\s+недвижимост/iu, label: "агентство недвижимости" },
+  { pattern: /real\s+estate\s+agency/iu, label: "real estate agency" },
+  { pattern: /рі[єе]лторськ\p{L}*\s+комісі\p{L}*/iu, label: "рієлторська комісія" },
+  { pattern: /риелторск\p{L}*\s+комисси\p{L}*/iu, label: "риелторская комиссия" },
+  { pattern: /комісі\p{L}*\s+рі[єе]лтор/iu, label: "комісія рієлтора" },
+  { pattern: /комисси\p{L}*\s+риелтор/iu, label: "комиссия риелтора" },
+  { pattern: /комісі\p{L}*\s+агентств/iu, label: "комісія агентства" },
+  { pattern: /комисси\p{L}*\s+агентств/iu, label: "комиссия агентства" },
+  { pattern: /послуги\s+рі[єе]лтора/iu, label: "послуги рієлтора" },
+  { pattern: /услуги\s+риелтора/iu, label: "услуги риелтора" },
+  { pattern: unicodePhrase(String.raw`я\s+агент${CYRILLIC_WORD_END}`), label: "я агент" },
+];
+
+const SUPPORTING_FAMILIES: Array<{
+  family: SellerTextSignalFamily;
+  pattern: RegExp;
+  label: string;
+}> = [
+  { family: "collaboration", pattern: /без\s+співпраці/iu, label: "без співпраці" },
+  { family: "collaboration", pattern: /співпрац/iu, label: "співпраця" },
+  { family: "collaboration", pattern: /(?<![\p{L}\p{N}_])колег/iu, label: "колеги" },
+  { family: "collaboration", pattern: /(?<![\p{L}\p{N}_])спп(?![\p{L}\p{N}_])/iu, label: "спп" },
+  { family: "inventory", pattern: /є\s+інші\s+варіанти/iu, label: "є інші варіанти" },
+  { family: "inventory", pattern: /є\s+інші\s+об/iu, label: "є інші об'єкти" },
+  { family: "inventory", pattern: /маю\s+інші\s+варіанти/iu, label: "маю інші варіанти" },
+  { family: "inventory", pattern: /підбер\p{L}*\s+варіант/iu, label: "підбір варіанта" },
+  { family: "inventory", pattern: /підбір\s+нерухомост/iu, label: "підбір нерухомості" },
+  { family: "inventory", pattern: /допоможу\s+підібрати/iu, label: "допоможу підібрати" },
+  { family: "inventory", pattern: /база\s+об/iu, label: "база об'єктів" },
+  { family: "inventory", pattern: /інші\s+об['']?єкти/iu, label: "інші об'єкти" },
+  { family: "transaction", pattern: /(?<![\p{L}\p{N}_])комісі/iu, label: "комісія" },
+  { family: "transaction", pattern: /(?<![\p{L}\p{N}_])комисси/iu, label: "комиссия" },
+  { family: "transaction", pattern: /ексклюзив/iu, label: "ексклюзив" },
+  { family: "transaction", pattern: /ключі\s+на\s+руках/iu, label: "ключі на руках" },
+  { family: "transaction", pattern: /ключи\s+на\s+руках/iu, label: "ключи на руках" },
+  {
+    family: "transaction",
+    pattern: /(?<![\p{L}\p{N}_])покази(?![\p{L}\p{N}_])/iu,
+    label: "покази",
+  },
+  {
+    family: "transaction",
+    pattern: /(?<![\p{L}\p{N}_])показы(?![\p{L}\p{N}_])/iu,
+    label: "показы",
+  },
+  { family: "service", pattern: /супровід\s+угоди/iu, label: "супровід угоди" },
+  { family: "service", pattern: /сопровождение\s+сделки/iu, label: "сопровождение сделки" },
+  {
+    family: "service",
+    pattern: /консультаці\p{L}*\s+з\s+нерухомост/iu,
+    label: "консультація з нерухомості",
+  },
+  {
+    family: "service",
+    pattern: /консультаци\p{L}*\s+по\s+недвижимост/iu,
+    label: "консультация по недвижимости",
+  },
+  { family: "agency_brand", pattern: /(?<![\p{L}\p{N}_])АН\s+\p{L}/u, label: "АН назва" },
+  {
+    family: "agency_brand",
+    pattern: /(?<![\p{L}\p{N}_])\p{L}{2,}\s+АН(?![\p{L}\p{N}_])/u,
+    label: "ім'я АН",
+  },
 ];
 
 function includesPhrase(lower: string, phrase: string): boolean {
@@ -119,14 +220,79 @@ export function hasExplicitSelfDeclaredOwnerText(text: string | undefined): bool
   return SELF_DECLARED_OWNER_PHRASES.some((phrase) => includesPhrase(lower, phrase));
 }
 
-function strongIntermediaryHits(text: string): string[] {
+export function normalizeSellerText(text: string): string {
+  return text
+    .replace(/[\u2019\u2018\u02BC`]/g, "'")
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function maskProtectedSpans(text: string): { masked: string; ownerContextSignals: string[] } {
+  let masked = text;
+  const ownerContextSignals: string[] = [];
+  for (const pattern of PROTECTED_SPANS) {
+    pattern.lastIndex = 0;
+    masked = masked.replace(pattern, (span) => {
+      ownerContextSignals.push(span);
+      return " ".repeat(span.length);
+    });
+  }
+  return { masked, ownerContextSignals };
+}
+
+function matchedLabels(
+  text: string,
+  patterns: Array<{ pattern: RegExp; label: string }>,
+): string[] {
   const hits: string[] = [];
-  for (const item of STRONG_INTERMEDIARY_PATTERNS) {
+  for (const item of patterns) {
+    item.pattern.lastIndex = 0;
     if (item.pattern.test(text)) {
       hits.push(item.label);
     }
   }
   return hits;
+}
+
+/**
+ * Classifies already-available public seller text.
+ * One supporting family stays unknown. Two independent families are likely.
+ * A strong agency, role, or realtor-commission phrase is confirmed.
+ * Negated owner-side phrases are masked first and cannot create that confirmation.
+ */
+export function classifySellerText(text: string | undefined): SellerTextJudgement {
+  if (!text || !text.trim()) {
+    return {
+      level: "unknown",
+      strongSignals: [],
+      supportingSignals: [],
+      supportingFamilies: [],
+      ownerContextSignals: [],
+    };
+  }
+  const normalized = normalizeSellerText(text);
+  const { masked, ownerContextSignals } = maskProtectedSpans(normalized);
+  const strongSignals = matchedLabels(masked, STRONG_INTERMEDIARY_PATTERNS);
+  const supportingSignals: string[] = [];
+  const supportingFamilies: SellerTextSignalFamily[] = [];
+  if (strongSignals.length === 0) {
+    for (const item of SUPPORTING_FAMILIES) {
+      item.pattern.lastIndex = 0;
+      if (!item.pattern.test(masked) || supportingFamilies.includes(item.family)) {
+        continue;
+      }
+      supportingFamilies.push(item.family);
+      supportingSignals.push(item.label);
+    }
+  }
+  const level: SellerTextLevel =
+    strongSignals.length > 0 ? "confirmed" : supportingFamilies.length >= 2 ? "likely" : "unknown";
+  return { level, strongSignals, supportingSignals, supportingFamilies, ownerContextSignals };
+}
+
+function strongIntermediaryHits(text: string): string[] {
+  return classifySellerText(text).strongSignals;
 }
 
 /**

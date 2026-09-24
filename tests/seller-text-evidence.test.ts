@@ -1,0 +1,188 @@
+import { describe, expect, it } from "vitest";
+import { applySellerProfileGate } from "../src/delivery/seller-profile.ts";
+import { classifyOwner, isSellerEligible } from "../src/filters/owner-filter.ts";
+import type { Listing } from "../src/domain/listing.ts";
+import { parseLunCard } from "../src/sources/lun/lun.parser.ts";
+import { classifySellerText } from "../src/utils/text-evidence.ts";
+
+function eligible(text: string, extra: Parameters<typeof classifyOwner>[0] = {}) {
+  const result = classifyOwner({ text, platformPrivate: true, ...extra });
+  return {
+    result,
+    send: isSellerEligible({
+      sellerType: result.sellerType,
+      metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+    }),
+  };
+}
+
+describe("seller text evidence", () => {
+  it.each([
+    ["Пропозиція від агентства нерухомості", "агентство нерухомості"],
+    ["Пропозиція від агенції нерухомості", "агенція нерухомості"],
+    ["рієлторську комісію - 100 %", "рієлторська комісія"],
+    ["ріелторську комісію — 50%", "рієлторська комісія"],
+    ["риелторская комиссия 50%", "риелторская комиссия"],
+    ["комісія рієлтора 50%", "комісія рієлтора"],
+    ["Ксенія АН\nрієлторську комісію - 100 %", "рієлторська комісія"],
+  ])("confirms strong copy: %s", (text, signal) => {
+    const judged = classifySellerText(text);
+    expect(judged.level).toBe("confirmed");
+    expect(judged.strongSignals).toContain(signal);
+    expect(eligible(text).send).toBe(false);
+  });
+
+  it("rejects a structured LUN realtor contact and the АН Золотий дім agency name", () => {
+    const listing = parseLunCard(
+      {
+        id: 4725633107,
+        urlRaw: "https://rieltor.ua/lvov/flats-rent/view/13071259/",
+        isOwner: false,
+        agency: null,
+        text: "Оренда 1 к кв",
+        rieltorContact: {
+          contactType: "rieltor",
+          name: "АН Золотий дім",
+          agency: { name: "АН Золотий дім" },
+        },
+        site: { displayName: "rieltor.ua" },
+      },
+      undefined,
+    );
+    expect(listing?.sellerType).toBe("agent");
+    expect(listing?.sellerEvidence?.join(" ")).toContain("lun.rieltorContact.contactType=rieltor");
+    expect(listing?.sellerEvidence?.join(" ")).toContain("АН Золотий дім");
+    expect(
+      isSellerEligible({
+        sellerType: listing!.sellerType,
+        metadata: listing?.metadata,
+      }),
+    ).toBe(false);
+    expect(listing?.sellerEvidence?.join(" ")).not.toMatch(/^aggregated site = rieltor\.ua$/);
+  });
+
+  it("keeps an aggregated rieltor.ua card sendable when the contact is not a realtor", () => {
+    const listing = parseLunCard(
+      {
+        id: 1,
+        isOwner: false,
+        agency: null,
+        text: "Оренда від власника",
+        site: { displayName: "rieltor.ua" },
+      },
+      undefined,
+    );
+    expect(listing?.sellerType).toBe("unknown");
+    expect(listing?.metadata?.ownerEvidenceLevel).not.toBe("intermediary");
+  });
+
+  it.each([
+    [10, { agencyId: 15 }],
+    [11, { platformAgent: true, offerTypeLabel: "Рієлтор" }],
+    [12, { agencyName: "Агенція Дім" }],
+  ])("keeps existing structured intermediary path %s", (_n, signals) => {
+    expect(eligible("Оренда", signals).send).toBe(false);
+  });
+
+  it.each([
+    "без комісії",
+    "без рієлторської комісії",
+    "рієлторам не дзвонити",
+    "без рієлторів",
+    "від власника, без посередників",
+    "агентам не турбувати",
+    "агентствам нерухомості не телефонувати",
+  ])("does not confirm owner-side negation: %s", (text) => {
+    const judged = classifySellerText(text);
+    expect(judged.level).not.toBe("confirmed");
+    expect(eligible(text).send).toBe(true);
+  });
+
+  it.each(["без співпраці", "комісія", "є інші варіанти", "ключі на руках"])(
+    "sends a single supporting family: %s",
+    (text) => {
+      const judged = classifySellerText(text);
+      expect(judged.level).toBe("unknown");
+      expect(judged.supportingFamilies).toHaveLength(1);
+      expect(eligible(text).send).toBe(true);
+    },
+  );
+
+  it("does not treat OLX isBusiness alone as intermediary", () => {
+    expect(eligible("Оренда", { isBusiness: true }).send).toBe(true);
+  });
+
+  it.each([
+    "без співпраці\nє інші варіанти",
+    "комісія. Підберемо варіант. Співпрацюємо з колегами",
+    "ексклюзив і супровід угоди",
+  ])("marks two independent families as likely: %s", (text) => {
+    const judged = classifySellerText(text);
+    expect(judged.level).toBe("likely");
+    expect(judged.supportingFamilies.length).toBeGreaterThanOrEqual(2);
+    const result = eligible(text).result;
+    expect(result.sellerTextLevel).toBe("likely");
+    expect(result.ownerEvidenceLevel).not.toBe("intermediary");
+  });
+
+  it("drops likely text under the client reject policy even without a seller id", () => {
+    const judged = classifyOwner({ text: "без співпраці. є інші варіанти", platformPrivate: true });
+    const listing = {
+      source: "lun",
+      sourceId: "multi",
+      url: "https://lun.ua/uk/realty/1",
+      title: "Квартира",
+      location: { raw: "Львів" },
+      propertyType: "apartment",
+      sellerType: judged.sellerType,
+      discoveredAt: new Date("2026-09-24T00:00:00.000Z"),
+      metadata: {
+        ownerEvidenceLevel: judged.ownerEvidenceLevel,
+        sellerTextLevel: judged.sellerTextLevel,
+      },
+    } satisfies Listing;
+    const gated = applySellerProfileGate(
+      [listing],
+      undefined,
+      new Date("2026-09-24T00:00:00.000Z"),
+    );
+    expect(gated.dropped).toBe(1);
+    expect(gated.profileLikelyIntermediary).toBe(1);
+  });
+
+  it("tolerates apostrophes, dashes, spaces and line breaks inside a strong phrase", () => {
+    expect(classifySellerText("рієлторську комісію - 100 %").level).toBe("confirmed");
+    expect(classifySellerText("рієлторську комісію\u2014100%").level).toBe("confirmed");
+    expect(classifySellerText("РІЄЛТОРСЬКУ   КОМІСІЮ").level).toBe("confirmed");
+    expect(classifySellerText("від\nагентства\nнерухомості").level).toBe("confirmed");
+    expect(classifySellerText("представнику агентства нерухомості").level).toBe("confirmed");
+  });
+
+  it("lets a platform-confirmed owner override strong text and still drops a structured agency", () => {
+    expect(classifySellerText("Ксенія АН").level).toBe("unknown");
+    const owner = classifyOwner({
+      platformOwner: true,
+      text: "рієлторську комісію - 100 %",
+    });
+    expect(owner.sellerType).toBe("owner");
+    expect(owner.sellerEvidence.join(" ")).toContain("overrides intermediary evidence");
+    expect(
+      isSellerEligible({
+        sellerType: owner.sellerType,
+        metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel },
+      }),
+    ).toBe(true);
+    const mixed = classifyOwner({
+      agencyName: "АН Золотий дім",
+      text: "від власника",
+    });
+    expect(mixed.ownerEvidenceLevel).toBe("conflict");
+    expect(
+      isSellerEligible({
+        sellerType: mixed.sellerType,
+        metadata: { ownerEvidenceLevel: mixed.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
+    expect(classifyOwner({}).ownerEvidenceLevel).toBe("private_unknown");
+  });
+});

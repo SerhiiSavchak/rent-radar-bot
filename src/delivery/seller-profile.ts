@@ -91,11 +91,7 @@ export function normalizeSellerAddress(raw: string | undefined): string | undefi
   if (!raw) {
     return undefined;
   }
-  const normalized = raw
-    .toLowerCase()
-    .replace(/[.,]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const normalized = raw.toLowerCase().replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
   return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -103,7 +99,9 @@ export function isPlatformConfirmedOwner(listing: {
   sellerType: SellerType;
   metadata?: Record<string, unknown> | undefined;
 }): boolean {
-  return listing.sellerType === "owner" && listing.metadata?.ownerEvidenceLevel === "platform_confirmed";
+  return (
+    listing.sellerType === "owner" && listing.metadata?.ownerEvidenceLevel === "platform_confirmed"
+  );
 }
 
 /**
@@ -182,16 +180,16 @@ export function shouldRejectSellerProfile(
 
 function readAddresses(db: DatabaseSync, source: string, sellerId: string): string[] {
   const row = db
-    .prepare(
-      "SELECT address_keys FROM seller_profile_cache WHERE source = ? AND seller_id = ?",
-    )
+    .prepare("SELECT address_keys FROM seller_profile_cache WHERE source = ? AND seller_id = ?")
     .get(source, sellerId) as CacheRow | undefined;
   if (!row) {
     return [];
   }
   try {
     const parsed = JSON.parse(row.address_keys) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
   } catch {
     return [];
   }
@@ -214,7 +212,14 @@ function writeProfile(
        evidence = excluded.evidence,
        address_keys = excluded.address_keys,
        updated_at = excluded.updated_at`,
-  ).run(source, sellerId, decision.verdict, decision.evidence, JSON.stringify(kept), now.toISOString());
+  ).run(
+    source,
+    sellerId,
+    decision.verdict,
+    decision.evidence,
+    JSON.stringify(kept),
+    now.toISOString(),
+  );
 }
 
 export function deleteExpiredSellerProfiles(db: DatabaseSync, now: Date): number {
@@ -238,6 +243,16 @@ export function applySellerProfileGate(
   for (const listing of listings) {
     const sellerId = sellerProfileId(listing);
     if (!sellerId) {
+      if (
+        listing.metadata?.sellerTextLevel === "likely" &&
+        policies.likelyPolicy === "reject" &&
+        !isPlatformConfirmedOwner(listing)
+      ) {
+        dropped += 1;
+        profileLikelyIntermediary += 1;
+        profileRejected += 1;
+        continue;
+      }
       kept.push(listing);
       continue;
     }
@@ -249,7 +264,12 @@ export function applySellerProfileGate(
       groups.set(key, [listing]);
     }
   }
-  const persist = (source: string, sellerId: string, decision: SellerProfileDecision, addresses: string[]) => {
+  const persist = (
+    source: string,
+    sellerId: string,
+    decision: SellerProfileDecision,
+    addresses: string[],
+  ) => {
     if (!db) {
       return;
     }
@@ -285,12 +305,22 @@ export function applySellerProfileGate(
       .find((value) => typeof value === "string");
     const accountCreatedAt = typeof createdRaw === "string" ? new Date(createdRaw) : undefined;
     const confirmedOwner = group.every((listing) => isPlatformConfirmedOwner(listing));
-    const decision = assessSellerProfile({
+    let decision = assessSellerProfile({
       confirmedOwner,
       addresses,
       ...(accountCreatedAt ? { accountCreatedAt } : {}),
       now,
     });
+    if (
+      !confirmedOwner &&
+      decision.verdict === "unknown" &&
+      group.some((listing) => listing.metadata?.sellerTextLevel === "likely")
+    ) {
+      decision = {
+        verdict: "profile_likely_intermediary",
+        evidence: "seller_text_families",
+      };
+    }
     persist(source, sellerId, decision, addresses);
     if (decision.verdict === "profile_likely_intermediary") {
       profileLikelyIntermediary += group.length;

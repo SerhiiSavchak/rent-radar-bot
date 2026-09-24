@@ -176,6 +176,49 @@ function geoFromCard(card: LunCard): { latitude?: number; longitude?: number } {
   return normalizeLatLng(lat, lng);
 }
 
+const LUN_REALTOR_CONTACT_TYPES = new Set([
+  "rieltor",
+  "realtor",
+  "agent",
+  "agency",
+  "intermediary",
+]);
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function trimmed(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** Structured LUN contact. The source domain alone is not a realtor role. */
+function readLunRieltorContact(value: unknown): {
+  platformAgent: boolean;
+  agencyName?: string;
+  contactName?: string;
+  notes: string[];
+} {
+  const contact = asRecord(value);
+  const contactType = trimmed(contact?.contactType)?.toLowerCase();
+  const agency = asRecord(contact?.agency);
+  const agencyName = trimmed(agency?.name);
+  const contactName = trimmed(contact?.name);
+  const structuredRole = Boolean(contactType && LUN_REALTOR_CONTACT_TYPES.has(contactType));
+  return {
+    platformAgent: structuredRole || Boolean(agencyName),
+    ...(agencyName ? { agencyName } : {}),
+    ...(contactName ? { contactName } : {}),
+    notes: [
+      ...(contactType ? [`lun.rieltorContact.contactType=${contactType}`] : []),
+      ...(agencyName ? [`lun.rieltorContact.agency=${agencyName}`] : []),
+    ],
+  };
+}
+
 function locationLabel(card: LunCard, jsonLd?: Record<string, unknown>): string {
   if (jsonLd && typeof jsonLd.name === "string" && jsonLd.name.trim()) {
     return jsonLd.name;
@@ -194,11 +237,14 @@ export function parseLunCard(
   const sourceId = String(card.id);
   const url = `https://lun.ua/uk/realty/${sourceId}`;
   const jsonDescription = typeof jsonLd?.description === "string" ? jsonLd.description : undefined;
-  const text = [card.header, card.text, jsonDescription].filter(Boolean).join("\n");
+  const contact = readLunRieltorContact(card.rieltorContact);
+  const text = [card.header, card.text, jsonDescription, contact.contactName, contact.agencyName]
+    .filter(Boolean)
+    .join("\n");
   const owner = classifyOwner({
     platformOwner: card.isOwner === true,
-    platformAgent: Boolean(card.agency),
-    agencyName: card.agency?.name,
+    platformAgent: Boolean(card.agency) || contact.platformAgent,
+    agencyName: card.agency?.name ?? contact.agencyName,
     agencyId: card.agency?.id,
     withoutCommission: card.withoutCommission === true,
     text,
@@ -207,6 +253,7 @@ export function parseLunCard(
       ...(card.isOwner === true ? ["lun.isOwner=true"] : []),
       ...(card.site?.displayName ? [`aggregated site = ${card.site.displayName}`] : []),
       ...(card.urlRaw ? [`originalUrl=${card.urlRaw}`] : []),
+      ...contact.notes,
     ],
   });
   const coords = geoFromCard(card);
