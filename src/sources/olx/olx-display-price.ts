@@ -1,5 +1,8 @@
 import type { Listing, ListingPrice } from "../../domain/listing.ts";
+import { awaitWithTimeout } from "../../utils/deadline.ts";
 import { inspectPrerenderedState } from "./olx-browser.html-extract.ts";
+
+export const OLX_DISPLAY_PRICE_TIMEOUT_MS = 20_000;
 
 /** Detail reads per cycle. Catalog JSON only exposes the converted UAH amount. */
 export const OLX_DISPLAY_PRICE_MAX = 8;
@@ -62,16 +65,27 @@ export async function readOlxDisplayedPrices(listings: Listing[]): Promise<void>
   }
   const { chromium } = await import("playwright");
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  const pendingLaunch = chromium.launch({ headless: true });
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    browser = await awaitWithTimeout(pendingLaunch, OLX_DISPLAY_PRICE_TIMEOUT_MS, "chromium.launch");
+    const page = await awaitWithTimeout(
+      browser.newPage(),
+      OLX_DISPLAY_PRICE_TIMEOUT_MS,
+      "chromium.newPage",
+    );
     for (const listing of targets) {
       try {
         const response = await page.goto(listing.url, {
           waitUntil: "domcontentloaded",
-          timeout: 20_000,
+          timeout: OLX_DISPLAY_PRICE_TIMEOUT_MS,
         });
-        const html = await response?.text();
+        const html = response
+          ? await awaitWithTimeout(
+              response.text(),
+              OLX_DISPLAY_PRICE_TIMEOUT_MS,
+              "olx.display_price.body",
+            )
+          : undefined;
         const display = html ? detailDisplayValue(inspectPrerenderedState(html).decoded) : undefined;
         if (display) {
           applyOlxDisplayPrice(listing, display);
@@ -81,8 +95,11 @@ export async function readOlxDisplayedPrices(listings: Listing[]): Promise<void>
       }
     }
   } catch {
+    void pendingLaunch.then((opened) => opened.close()).catch(() => undefined);
     // Playwright or the network failed; catalog prices still render.
   } finally {
-    await browser?.close().catch(() => undefined);
+    if (browser) {
+      await awaitWithTimeout(browser.close(), 2_000, "chromium.close").catch(() => undefined);
+    }
   }
 }

@@ -11,6 +11,7 @@ import { AppError } from "../../utils/errors.ts";
 import { headerBag, httpGet, type HttpResponse } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
 import { isRieltorTransportBlocked, resolveRieltorInspectKind } from "./rieltor-classify.ts";
+import { fingerprintRieltorBlock } from "./rieltor-fingerprint.ts";
 import { decideRieltorTransientRetry } from "./rieltor-retry.ts";
 import { buildRieltorSearchUrl, inspectRieltorHtml } from "./rieltor.parser.ts";
 import {
@@ -275,6 +276,21 @@ export class RieltorSource implements ListingSourceAdapter {
       if (isRieltorTransportBlocked({ status: response.status, bodyText: response.bodyText })) {
         blocked = true;
         httpError = true;
+        try {
+          logger.info("rieltor.block_fingerprint", {
+            fingerprint: fingerprintRieltorBlock({
+              requestedUrl: url,
+              finalUrl: response.url || url,
+              status: response.status,
+              headers: response.headers,
+              bodyText: response.bodyText,
+            }),
+          });
+        } catch (error) {
+          notes.push(
+            `${category} page ${page}: block fingerprint failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
         notes.push(
           `${category} page ${page}: transport_blocked (${response.status}); HTML 200 challenge/block page is not catalog success; no proxy/CAPTCHA/stealth retries`,
         );

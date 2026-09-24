@@ -8,15 +8,18 @@ import type {
 } from "../../domain/source.ts";
 import { getConfig } from "../../config/env.ts";
 import { AppError } from "../../utils/errors.ts";
-import { headerBag, httpGet } from "../../utils/http.ts";
+import { httpGet } from "../../utils/http.ts";
 import { logger } from "../../utils/logger.ts";
 import { bindingPollIntervalSeconds, decideDomriaTransport } from "./domria-budget.ts";
-import { extractInitialStateJson, inspectDomriaCatalog, parseDomriaInfo } from "./domria.parser.ts";
+import {
+  acquireDomriaNewest,
+  buildDomriaNewestSearchUrl,
+  parseDomriaSearchIds,
+  type DomriaNewestCategory,
+} from "./domria-newest.ts";
+import { extractInitialStateJson, parseDomriaInfo } from "./domria.parser.ts";
 import { domriaSearchResponseSchema } from "./domria.types.ts";
 import { coverageForAcquiredCards, keepAcquiredByCategory } from "../../delivery/catalog-sample.ts";
-
-const APARTMENTS_HTML = "https://dom.ria.com/uk/arenda-kvartir/lvov/";
-const HOUSES_HTML = "https://dom.ria.com/uk/arenda-domov/lvov/";
 
 export class DomriaSource implements ListingSourceAdapter {
   readonly source = "domria" as const;
@@ -24,19 +27,23 @@ export class DomriaSource implements ListingSourceAdapter {
   async healthCheck(): Promise<SourceHealth> {
     const started = Date.now();
     const config = getConfig();
-    const response = await httpGet(APARTMENTS_HTML, {
+    const response = await httpGet(buildDomriaNewestSearchUrl("apartment"), {
       timeoutMs: config.sourceTimeoutMs,
       maxRetries: 0,
+      headers: { Accept: "application/json" },
     });
+    const parsed = response.status === 200 ? parseDomriaSearchIds(response.bodyText) : undefined;
+    const healthy = response.status === 200 && parsed?.ok === true;
     return {
       source: this.source,
-      healthy: response.status === 200,
+      healthy,
       checkedAt: new Date(),
       latencyMs: Date.now() - started,
       httpStatus: response.status,
-      transport: "public HTML",
-      message:
-        response.status === 200 ? "DIM.RIA public HTML reachable" : response.bodyText.slice(0, 200),
+      transport: "public newest-first searchEngine",
+      message: healthy
+        ? "DIM.RIA newest-first search reachable"
+        : response.bodyText.slice(0, 200),
     };
   }
 
@@ -94,56 +101,53 @@ export class DomriaSource implements ListingSourceAdapter {
       });
     }
 
-    const htmlListings: Listing[] = [];
-    const pages: string[] = [];
+    const categories: DomriaNewestCategory[] = [];
     if (options?.includeApartments !== false) {
-      pages.push(APARTMENTS_HTML);
+      categories.push("apartment");
     }
     if (options?.includeHouses !== false) {
-      pages.push(HOUSES_HTML);
+      categories.push("house");
     }
-    let lastStatus: number | undefined;
-    let parserFailure = false;
-    let httpError = false;
-    let structurePresent = false;
-    for (const page of pages) {
-      const response = await httpGet(page, {
-        timeoutMs: config.sourceTimeoutMs,
-        maxRetries: config.sourceMaxRetries,
-      });
-      lastStatus = response.status;
-      notes.push(`${page} -> ${response.status} ${headerBag(response)}`);
-      if (response.status !== 200) {
-        httpError = true;
-        continue;
-      }
-      try {
-        const state = extractInitialStateJson(response.bodyText);
-        const parsed = inspectDomriaCatalog(state);
-        if (!parsed.structurePresent) {
-          parserFailure = true;
-          notes.push(`${page} parser_failure: catalog.realtyForCatalog missing`);
-          continue;
-        }
-        structurePresent = true;
-        htmlListings.push(...parsed.listings);
-      } catch (error) {
-        parserFailure = true;
-        notes.push(`HTML parse failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    return finish(
-      htmlListings,
+    const acquired = await acquireDomriaNewest({
+      categories,
+      knownIds: new Set(options?.domriaKnownIds ?? []),
+      extractState: extractInitialStateJson,
+      get: async (url) => {
+        const response = await httpGet(url, {
+          timeoutMs: config.sourceTimeoutMs,
+          maxRetries: 0,
+          headers: { Accept: "application/json,text/html;q=0.9,*/*;q=0.8" },
+        });
+        return { status: response.status, url: response.url, bodyText: response.bodyText };
+      },
+    });
+    notes.push(...acquired.notes);
+    const finished = finish(
+      acquired.listings,
       started,
-      "public HTML embedded JSON",
-      lastStatus,
+      "public newest-first searchEngine",
+      acquired.lastStatus,
       notes,
       {
-        structurePresent: structurePresent && !parserFailure,
-        parserFailure,
-        httpError,
+        structurePresent: acquired.structurePresent && !acquired.parserFailure,
+        parserFailure: acquired.parserFailure,
+        httpError: acquired.httpError,
       },
     );
+    return {
+      ...finished,
+      coverage: {
+        pagesFetched: categories.length,
+        cardsFetched: finished.listings.length,
+        boundaryReached: acquired.boundaryReached,
+        coverageTruncated: acquired.coverageTruncated || Boolean(finished.coverage?.coverageTruncated),
+        ...(acquired.persistIds ? { retainedSourceIds: acquired.persistIds } : {}),
+      },
+      health: {
+        ...finished.health,
+        healthy: finished.health.healthy && acquired.boundaryReached && !acquired.coverageTruncated,
+      },
+    };
   }
 
   private async fetchOfficial(

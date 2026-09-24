@@ -16,6 +16,8 @@ export type FetchListingsOptions = {
    * A brand-new installation leaves this unset and only seeds page 1.
    */
   rieltorBootstrapTarget?: Date;
+  /** DIM.RIA ids whose listing page was already read. Detail fetches skip these. */
+  domriaKnownIds?: readonly string[];
 };
 
 export type FetchResultKind =
@@ -58,6 +60,8 @@ export type IncrementalCoverage = {
   committedBoundary?: Partial<Record<"apartment" | "house", string>>;
   /** null clears a stored cursor. Absent means that category was not updated. */
   catchup?: Partial<Record<"apartment" | "house", { target: string; resumePage: number } | null>>;
+  /** DIM.RIA ids safely remembered after a successful listing-page read. */
+  retainedSourceIds?: string[];
 };
 
 export type SourceFetchResult = {

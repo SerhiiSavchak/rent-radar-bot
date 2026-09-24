@@ -5,8 +5,12 @@ import type { Listing } from "../src/domain/listing.ts";
 
 describe("poll cadence", () => {
   it("waits only the remainder of the interval and never overlaps a long cycle", () => {
+    expect(waitMsUntilNextPollStart(30_000, 600_000)).toBe(570_000);
     expect(waitMsUntilNextPollStart(60_000, 600_000)).toBe(540_000);
+    expect(waitMsUntilNextPollStart(120_000, 600_000)).toBe(480_000);
+    expect(waitMsUntilNextPollStart(540_000, 600_000)).toBe(60_000);
     expect(waitMsUntilNextPollStart(600_000, 600_000)).toBe(0);
+    expect(waitMsUntilNextPollStart(600_001, 600_000)).toBe(0);
     expect(waitMsUntilNextPollStart(700_000, 600_000)).toBe(0);
     expect(waitMsUntilNextPollStart(0, 600_000)).toBe(600_000);
   });

@@ -149,6 +149,40 @@ describe("RIELTOR incremental catch-up", () => {
     expect(collected.has(catalogCard(100).id)).toBe(true);
   });
 
+  it("does not advance the publication boundary across 403 then recovers on a later 200", () => {
+    const previous = "2026-09-23T08:00:00.000Z";
+    const blocked = {
+      mode: "steady" as const,
+      plannedPages: [1],
+      fetchedPages: [] as number[],
+      crossed: false,
+      failed: true,
+      catalogEnded: false,
+      previousCommitted: previous,
+    };
+    const first403 = assessRieltorWalk(blocked);
+    const second403 = assessRieltorWalk(blocked);
+    expect(first403.committed).toBeUndefined();
+    expect(second403.committed).toBeUndefined();
+    expect(first403.boundaryReached).toBe(false);
+    expect(first403.catchup?.target).toBe(previous);
+    const recovered = assessRieltorWalk({
+      mode: "catchup",
+      plannedPages: [1, 2],
+      fetchedPages: [1, 2],
+      crossed: true,
+      failed: false,
+      catalogEnded: false,
+      newest: "2026-09-23T12:00:00.000Z",
+      catchupTarget: previous,
+      previousCommitted: previous,
+    });
+    expect(recovered.boundaryReached).toBe(true);
+    expect(recovered.coverageTruncated).toBe(false);
+    expect(recovered.committed).toBe("2026-09-23T12:00:00.000Z");
+    expect(recovered.catchup).toBeNull();
+  });
+
   it("keeps the old boundary when a later catch-up page fails", () => {
     const previous = "2026-09-22T08:00:00.000Z";
     const assessed = assessRieltorWalk({

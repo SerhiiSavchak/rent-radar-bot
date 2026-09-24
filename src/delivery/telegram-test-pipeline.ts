@@ -25,6 +25,11 @@ import {
   serializeRieltorCatchup,
   type RieltorCategoryName,
 } from "../sources/rieltor/rieltor-incremental.ts";
+import {
+  DOMRIA_ACQUIRED_IDS_KEY,
+  mergeDomriaAcquiredIds,
+  parseDomriaAcquiredIds,
+} from "../sources/domria/domria-newest.ts";
 import type {
   ListingDedupe,
   OutboxItem,
@@ -785,11 +790,16 @@ export async function runTelegramTestCycle(
       const rieltorCatchup = adapter.source === "rieltor" ? readRieltorCatchup() : undefined;
       const rieltorBootstrapTarget =
         adapter.source === "rieltor" ? readRieltorBootstrapTarget() : undefined;
+      const domriaKnownIds =
+        adapter.source === "domria"
+          ? parseDomriaAcquiredIds(readMetaValue(DOMRIA_ACQUIRED_IDS_KEY))
+          : undefined;
       const result: SourceFetchResult = await adapter.inspectLatest({
         preferOwners: usesOwnerOnlySourceFilter(deps.config),
         ...(publicationWatermarks ? { publicationWatermarks } : {}),
         ...(rieltorCatchup ? { rieltorCatchup } : {}),
         ...(rieltorBootstrapTarget ? { rieltorBootstrapTarget } : {}),
+        ...(domriaKnownIds && domriaKnownIds.length > 0 ? { domriaKnownIds } : {}),
       });
       const classified = classifySourceAttempt(result);
       // Do not drop old publishedAt here — baseline must see current inventory.
@@ -827,6 +837,13 @@ export async function runTelegramTestCycle(
         raw: result.listings,
         collectedCount: result.listings.length,
       });
+      if (holdDb && adapter.source === "domria" && result.coverage?.retainedSourceIds) {
+        const previous = parseDomriaAcquiredIds(readMetaValue(DOMRIA_ACQUIRED_IDS_KEY));
+        const merged = mergeDomriaAcquiredIds(previous, result.coverage.retainedSourceIds);
+        holdDb
+          .prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)")
+          .run(DOMRIA_ACQUIRED_IDS_KEY, JSON.stringify(merged));
+      }
       if (holdDb && adapter.source === "rieltor" && result.coverage) {
         const writeMeta = holdDb.prepare(
           "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",

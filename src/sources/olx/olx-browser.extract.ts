@@ -19,6 +19,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium, type Browser, type Response } from "playwright";
+import { awaitWithTimeout } from "../../utils/deadline.ts";
 import type { Listing } from "../../domain/listing.ts";
 import {
   OLX_BROWSER_APARTMENTS_URL,
@@ -177,6 +178,8 @@ export type OlxBrowserExtractDeps = {
   categoryBudgetMs?: number;
   /** Wall-clock budget for apartments+houses. Defaults to 2*categoryBudgetMs + 5s. */
   totalBudgetMs?: number;
+  /** chromium.launch / newPage deadline. Defaults to 15s and never exceeds the run budget. */
+  launchTimeoutMs?: number;
   maxPagesPerCategory?: number;
   concurrency?: number;
   launch?: () => Promise<Browser>;
@@ -389,9 +392,17 @@ async function extractCategory(
     }
   };
 
-  const context = await browser.newContext({ locale: "uk-UA" });
+  const context = await awaitWithTimeout(
+    browser.newContext({ locale: "uk-UA" }),
+    Math.max(1, remainingMs(categoryDeadlineAt, deps.clock())),
+    "chromium.newContext",
+  );
   let pageClosed = false;
-  const page = await context.newPage();
+  const page = await awaitWithTimeout(
+    context.newPage(),
+    Math.max(1, remainingMs(categoryDeadlineAt, deps.clock())),
+    "chromium.newPage",
+  );
   const closePageBounded = async () => {
     if (pageClosed) {
       return;
@@ -824,7 +835,15 @@ export async function extractOlxListingsViaBrowser(
   }
 
   const launch = deps.launch ?? (() => chromium.launch({ headless: true }));
-  const browser = await launch();
+  const launchTimeoutMs = Math.max(1, Math.min(deps.launchTimeoutMs ?? 15_000, totalBudgetMs));
+  const pendingLaunch = launch();
+  let browser: Browser;
+  try {
+    browser = await awaitWithTimeout(pendingLaunch, launchTimeoutMs, "chromium.launch");
+  } catch (error) {
+    void pendingLaunch.then((opened) => opened.close()).catch(() => undefined);
+    throw error;
+  }
   const notes: string[] = [
     "transport=stock_playwright_chromium",
     "opt_in_only=true",
