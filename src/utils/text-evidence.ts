@@ -45,6 +45,23 @@ function unicodePhrase(source: string): RegExp {
   return new RegExp(`${CYRILLIC_WORD_START}(?:${source})`, "iu");
 }
 
+/**
+ * Nominative self-name only. No `i` flag: under `i`, JS `\p{Lu}` also matches lowercase.
+ * Phrase casing is title case or all caps; the following name must actually be uppercase.
+ */
+function nominativeAgencyNamePattern(
+  agency: "Агентство" | "Агенція",
+  realty: "нерухомості" | "недвижимости",
+): RegExp {
+  const agencySource = agency === "Агентство" ? "[А](?:гентство|ГЕНТСТВО)" : "[А](?:генція|ГЕНЦІЯ)";
+  const realtySource =
+    realty === "нерухомості" ? "[Нн](?:ерухомост|ЕРУХОМОСТ)" : "[Нн](?:едвижимост|ЕДВИЖИМОСТ)";
+  return new RegExp(
+    `${CYRILLIC_WORD_START}${agencySource}\\s+${realtySource}\\p{L}*\\s+\\p{Lu}`,
+    "u",
+  );
+}
+
 export type SellerTextLevel = "confirmed" | "likely" | "unknown";
 
 export type SellerTextSignalFamily =
@@ -122,15 +139,15 @@ const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = 
     label: "від агенції нерухомості",
   },
   {
-    pattern: /(?<![\p{L}\p{N}_])агентство\s+нерухомост\p{L}*\s+\p{Lu}/iu,
+    pattern: nominativeAgencyNamePattern("Агентство", "нерухомості"),
     label: "агентство нерухомості",
   },
   {
-    pattern: /(?<![\p{L}\p{N}_])агенція\s+нерухомост\p{L}*\s+\p{Lu}/iu,
+    pattern: nominativeAgencyNamePattern("Агенція", "нерухомості"),
     label: "агенція нерухомості",
   },
   {
-    pattern: /(?<![\p{L}\p{N}_])агентство\s+недвижимост\p{L}*\s+\p{Lu}/iu,
+    pattern: nominativeAgencyNamePattern("Агентство", "недвижимости"),
     label: "агентство недвижимости",
   },
   { pattern: /real\s+estate\s+agency/iu, label: "real estate agency" },

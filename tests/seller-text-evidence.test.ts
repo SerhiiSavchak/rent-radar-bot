@@ -354,6 +354,33 @@ describe("seller evidence review gaps", () => {
     ).toBe("confirmed");
   });
 
+  it.each([
+    ["Агентство нерухомості Золотий Дім", "агентство нерухомості"],
+    ["АГЕНТСТВО НЕРУХОМОСТІ Золотий Дім", "агентство нерухомості"],
+    ["Агенція нерухомості Рідний Дім", "агенція нерухомості"],
+    ["Агентство недвижимости Новый Дом", "агентство недвижимости"],
+  ])("confirms a cased nominative agency name: %s", (text, signal) => {
+    const judged = classifySellerText(text);
+    expect(judged.level).toBe("confirmed");
+    expect(judged.strongSignals).toContain(signal);
+    expect(eligible(text).send).toBe(false);
+  });
+
+  it.each([
+    "агентство нерухомості без комісії",
+    "агентство нерухомості квартира",
+    "агенція нерухомості пропозиції",
+    "агентство недвижимости аренда",
+    "агентство нерухомості не цікавить",
+    "агентство недвижимости не интересует",
+  ])("does not confirm a lowercase nominative agency continuation: %s", (text) => {
+    const judged = classifySellerText(text);
+    expect(judged.strongSignals).not.toContain("агентство нерухомості");
+    expect(judged.strongSignals).not.toContain("агенція нерухомості");
+    expect(judged.strongSignals).not.toContain("агентство недвижимости");
+    expect(judged.level).not.toBe("confirmed");
+  });
+
   it("treats a cased АН brand as supporting and ignores a bare acronym", () => {
     expect(classifySellerText("Ксенія АН").supportingFamilies).toEqual(["agency_brand"]);
     expect(classifySellerText("Ксенія Ан").supportingFamilies).toEqual(["agency_brand"]);
