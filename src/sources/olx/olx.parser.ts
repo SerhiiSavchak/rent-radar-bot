@@ -25,7 +25,9 @@ function sellerSignals(offer: OlxOffer) {
     typeof offer.user?.sellerType === "string" && offer.user.sellerType.trim()
       ? offer.user.sellerType.trim()
       : undefined;
-  const extra = collectTextEvidence(`${offer.title ?? ""} ${offer.description ?? ""}`);
+  const sellerName = offer.user?.name?.trim() || undefined;
+  const publicText = [offer.title, offer.description, sellerName].filter(Boolean).join("\n");
+  const extra = collectTextEvidence(publicText);
   if (offer.business === false) {
     extra.unshift(
       "OLX isBusiness/business = false (private account, not proof of property ownership)",
@@ -48,7 +50,7 @@ function sellerSignals(offer: OlxOffer) {
     platformPrivate: offer.business === false,
     isBusiness: offer.business === true,
     agencyName: company,
-    text: `${offer.title ?? ""}\n${offer.description ?? ""}`,
+    text: publicText,
     extraEvidence: extra,
   });
 }

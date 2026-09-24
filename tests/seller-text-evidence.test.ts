@@ -3,6 +3,8 @@ import { applySellerProfileGate } from "../src/delivery/seller-profile.ts";
 import { classifyOwner, isSellerEligible } from "../src/filters/owner-filter.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import { parseLunCard } from "../src/sources/lun/lun.parser.ts";
+import { parseOlxOffer } from "../src/sources/olx/olx.parser.ts";
+import { parseRieltorCard } from "../src/sources/rieltor/rieltor.parser.ts";
 import { classifySellerText } from "../src/utils/text-evidence.ts";
 
 function eligible(text: string, extra: Parameters<typeof classifyOwner>[0] = {}) {
@@ -184,5 +186,135 @@ describe("seller text evidence", () => {
       }),
     ).toBe(false);
     expect(classifyOwner({}).ownerEvidenceLevel).toBe("private_unknown");
+  });
+});
+
+function sends(listing: {
+  sellerType: Listing["sellerType"];
+  metadata?: Listing["metadata"];
+}): boolean {
+  return isSellerEligible({
+    sellerType: listing.sellerType,
+    metadata: listing.metadata,
+  });
+}
+
+function olx(name: string | undefined, description: string, company?: string) {
+  const listing = parseOlxOffer({
+    id: 1,
+    title: "Оренда квартири",
+    description,
+    url: "https://www.olx.ua/d/uk/obyavlenie/test-ID1.html",
+    business: false,
+    user: {
+      ...(name ? { name } : {}),
+      ...(company ? { company_name: company } : { company_name: null }),
+      sellerType: null,
+    },
+  });
+  if (!listing) {
+    throw new Error("olx fixture did not parse");
+  }
+  return listing;
+}
+
+function rieltor(label: string | undefined, description: string) {
+  const id = "13070001";
+  const url = `https://rieltor.ua/lvov/flats-rent/view/${id}/`;
+  const card = `
+<div class="catalog-card " data-catalog-item-id="${id}" data-longitude="24.03" data-latitude="49.84">
+  <a href="${url}" class="catalog-card-media"></a>
+  <h2 class="catalog-card-address">Зелена вул.</h2>
+  ${label ? `<div class="catalog-card-author-subtitle"><span>${label}</span></div>` : ""}
+</div>`;
+  const listing = parseRieltorCard(card, {
+    category: "apartment",
+    discoveredAt: new Date("2026-09-24T00:00:00.000Z"),
+    jsonLd: new Map([
+      [
+        url,
+        {
+          url,
+          name: "Зелена вул.",
+          description,
+        },
+      ],
+    ]),
+  });
+  if (!listing) {
+    throw new Error("rieltor fixture did not parse");
+  }
+  return listing;
+}
+
+describe("seller evidence review gaps", () => {
+  it("sends a normal OLX display name", () => {
+    expect(sends(olx("Ксенія", "Оренда квартири"))).toBe(true);
+  });
+
+  it("treats Ксенія АН in the OLX display name as supporting only", () => {
+    const listing = olx("Ксенія АН", "Оренда квартири");
+    expect(listing.metadata?.sellerTextLevel).not.toBe("likely");
+    expect(sends(listing)).toBe(true);
+    expect(classifySellerText("Ксенія АН").supportingFamilies).toEqual(["agency_brand"]);
+  });
+
+  it("drops Ксенія АН plus realtor commission in the OLX description", () => {
+    expect(sends(olx("Ксенія АН", "рієлторську комісію - 100 %"))).toBe(false);
+  });
+
+  it("still drops an OLX company_name", () => {
+    expect(sends(olx("Ксенія", "Оренда квартири", "Агенція Дім"))).toBe(false);
+  });
+
+  it("drops a RIELTOR card when the description has an agency phrase and the role is missing", () => {
+    expect(sends(rieltor(undefined, "Пропозиція від агентства нерухомості"))).toBe(false);
+  });
+
+  it("drops a RIELTOR card when the description has realtor commission and the role is missing", () => {
+    expect(sends(rieltor(undefined, "рієлторська комісія 50%"))).toBe(false);
+  });
+
+  it("keeps a neutral RIELTOR description sendable", () => {
+    expect(sends(rieltor(undefined, "Світла квартира з меблями"))).toBe(true);
+  });
+
+  it("still drops an explicit RIELTOR realtor role", () => {
+    expect(sends(rieltor("Рієлтор", "Світла квартира"))).toBe(false);
+  });
+
+  it("keeps an explicit RIELTOR owner even when the description has commission text", () => {
+    expect(sends(rieltor("Власник", "рієлторська комісія 50%"))).toBe(true);
+  });
+
+  it.each([
+    "Не агентство нерухомості, від власника",
+    "Без агентства нерухомості, власник",
+    "Не агентство недвижимости, от собственника",
+    "Я не рієлтор",
+    "Я не риелтор",
+    "Я не агент з нерухомості",
+    "З рієлторами не співпрацюю. Ключі на руках.",
+    "З риелторами не сотрудничаю. Ключи на руках.",
+    "Агентствам недвижимости не звонить",
+  ])("sends protected wording: %s", (text) => {
+    expect(classifySellerText(text).level).not.toBe("confirmed");
+    expect(classifySellerText(text).level).not.toBe("likely");
+    expect(eligible(text).send).toBe(true);
+  });
+
+  it("keeps a later strong statement after a negated role", () => {
+    expect(classifySellerText("Я не рієлтор. Рієлторська комісія 50%.").level).toBe("confirmed");
+    expect(eligible("Я не рієлтор. Рієлторська комісія 50%.").send).toBe(false);
+    expect(
+      classifySellerText("Не агентство нерухомості. Пропозиція від агентства нерухомості.").level,
+    ).toBe("confirmed");
+  });
+
+  it("counts only ключі after a protected anti-realtor collaboration phrase", () => {
+    const judged = classifySellerText("З рієлторами не співпрацюю. Ключі на руках.");
+    expect(judged.supportingFamilies).toEqual(["transaction"]);
+    expect(judged.level).toBe("unknown");
+    expect(classifySellerText("Без співпраці. Є інші варіанти.").level).toBe("likely");
   });
 });

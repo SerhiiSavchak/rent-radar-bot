@@ -235,7 +235,8 @@ export function parseRieltorCard(
     .match(/class="catalog-card-author-company"[\s\S]*?>([\s\S]*?)<\/button>/)?.[1]
     ?.replace(/<[^>]+>/g, "")
     .trim();
-  const owner = classifyRieltorRole(roleLabel, agencyName);
+  const description = typeof json?.description === "string" ? json.description : undefined;
+  const owner = classifyRieltorRole(roleLabel, agencyName, description);
   const address = textOf(cardHtml, "catalog-card-address");
   const region = textOf(cardHtml, "catalog-card-region");
   const title = address || json?.name || `RIELTOR ${id}`;
@@ -248,7 +249,6 @@ export function parseRieltorCard(
     .match(/class="catalog-card-update"[\s\S]*?<span>([^<]+)<\/span>/)?.[1]
     ?.trim();
   const publishedAt = parseJsonLdDate(json?.offers?.availabilityStarts);
-  const description = json?.description;
   const listing: Listing = {
     source: "rieltor",
     sourceId: id,
@@ -303,19 +303,25 @@ export function parseRieltorCard(
   return listing;
 }
 
-function classifyRieltorRole(roleLabel: string | undefined, agencyName: string | undefined) {
+function classifyRieltorRole(
+  roleLabel: string | undefined,
+  agencyName: string | undefined,
+  description: string | undefined,
+) {
   const platformOwner = roleLabel !== undefined && OWNER_LABEL.test(roleLabel);
   const platformAgent = roleLabel !== undefined && REALTOR_LABEL.test(roleLabel);
+  const publicText = [roleLabel, agencyName, description].filter(Boolean).join("\n");
   return classifyOwner({
     platformOwner,
     platformAgent,
     offerTypeLabel: roleLabel,
     agencyName,
+    text: publicText,
     extraEvidence: [
       ...(roleLabel
         ? [`RIELTOR card label = ${roleLabel}`]
         : ["RIELTOR card label missing or unrecognized"]),
-      ...collectTextEvidence(roleLabel),
+      ...collectTextEvidence(publicText),
     ],
   });
 }
