@@ -170,7 +170,7 @@ export function inspectOlxOfferDetailHtml(
         platformPrivate: accountType === "private",
         isBusiness: accountType === "business",
         agencyName: company,
-        sellerIdentityName: company || sellerName,
+        sellerIdentityName: sellerName,
         text,
         extraEvidence,
       })

@@ -1,7 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
+import { chromium } from "playwright";
 import type { Listing } from "../domain/listing.ts";
 import { sellerRejectionReason, classifyOwner } from "../filters/owner-filter.ts";
 import { safeStoredError } from "../storage/source-health.ts";
+import { awaitWithTimeout } from "../utils/deadline.ts";
 import { httpGet } from "../utils/http.ts";
 import { extractOlxUrlToken } from "../sources/olx/olx.parser.ts";
 import {
@@ -22,6 +24,12 @@ import {
 
 export const OLX_DETAIL_GAP_MS = 800;
 export const OLX_LINKED_DETAIL_CAP = 5;
+/** At most one stock Playwright fallback per poll cycle for exact-linked OLX. */
+export const OLX_LINKED_BROWSER_FALLBACK_CAP = 1;
+export const OLX_LINKED_BROWSER_LAUNCH_MS = 15_000;
+export const OLX_LINKED_BROWSER_NAV_MS = 20_000;
+export const OLX_LINKED_BROWSER_BODY_MS = 15_000;
+export const OLX_LINKED_BROWSER_CLOSE_MS = 2_000;
 
 type CacheRow = {
   sellerVerdict: StoredSellerVerdict;
@@ -143,8 +151,8 @@ export function classifyOlxLinkedSellerHtml(
     platformPrivate: business === false,
     isBusiness: business === true,
     agencyName: company,
-    sellerIdentityName: company || sellerName,
-    text: `${title}\n${description}\n${sellerName ?? ""}`,
+    sellerIdentityName: sellerName,
+    text: `${title}\n${description}`,
   });
   if (sellerRejectionReason({ sellerType: owner.sellerType, metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel } })) {
     return {
@@ -293,6 +301,197 @@ export async function fetchOlxDetailPage(
   return { status: response.status, finalUrl: response.url, bodyText: response.bodyText };
 }
 
+export type OlxLinkedBrowserDetailPage = RieltorDetailPage & {
+  browserClosed: boolean;
+  browserCloseTimedOut: boolean;
+  timedOut: boolean;
+  notes: string[];
+};
+
+/** Raw HTTP statuses where stock Playwright may still open the exact listing. */
+export function olxRawTransportNeedsBrowserFallback(status: number): boolean {
+  return status === 403 || status === 408 || status >= 500;
+}
+
+/**
+ * One stock Chromium launch for the exact canonical OLX listing URL only.
+ * No profile crawl, no pagination, no stealth.
+ */
+export async function fetchOlxLinkedDetailViaBrowser(
+  url: string,
+  timeoutMs: number,
+): Promise<OlxLinkedBrowserDetailPage> {
+  const notes: string[] = ["transport=stock_playwright_exact_listing"];
+  const launchMs = Math.min(OLX_LINKED_BROWSER_LAUNCH_MS, timeoutMs);
+  const navMs = Math.min(OLX_LINKED_BROWSER_NAV_MS, timeoutMs);
+  const bodyMs = Math.min(OLX_LINKED_BROWSER_BODY_MS, timeoutMs);
+  const pendingLaunch = chromium.launch({ headless: true });
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  let browserClosed = true;
+  let browserCloseTimedOut = false;
+  let timedOut = false;
+  let status = 0;
+  let finalUrl = url;
+  let bodyText = "";
+  try {
+    browser = await awaitWithTimeout(pendingLaunch, launchMs, "olx.linked.chromium.launch");
+    const context = await awaitWithTimeout(
+      browser.newContext({ locale: "uk-UA" }),
+      launchMs,
+      "olx.linked.chromium.newContext",
+    );
+    try {
+      const page = await awaitWithTimeout(
+        context.newPage(),
+        launchMs,
+        "olx.linked.chromium.newPage",
+      );
+      try {
+        const response = await page.goto(url, {
+          waitUntil: "domcontentloaded",
+          timeout: navMs,
+        });
+        if (!response) {
+          timedOut = true;
+          notes.push("navigation_empty_response");
+        } else {
+          status = response.status();
+          finalUrl = page.url();
+          try {
+            bodyText = await awaitWithTimeout(
+              response.text(),
+              bodyMs,
+              "olx.linked.response.text",
+            );
+          } catch {
+            timedOut = true;
+            notes.push("body_read_timeout");
+            bodyText = await page.content().catch(() => "");
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/timeout/i.test(message)) {
+          timedOut = true;
+          notes.push("navigation_timeout");
+        } else {
+          notes.push(`navigation_error:${message.slice(0, 120)}`);
+        }
+        finalUrl = page.url();
+      } finally {
+        await page.close().catch(() => undefined);
+      }
+    } finally {
+      await context.close().catch(() => undefined);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/timeout/i.test(message)) {
+      timedOut = true;
+    }
+    notes.push(`browser_failed:${message.slice(0, 120)}`);
+    void pendingLaunch.then((opened) => opened.close()).catch(() => undefined);
+  } finally {
+    if (browser) {
+      try {
+        await awaitWithTimeout(browser.close(), OLX_LINKED_BROWSER_CLOSE_MS, "olx.linked.chromium.close");
+        browserClosed = true;
+      } catch {
+        browserCloseTimedOut = true;
+        browserClosed = false;
+        notes.push("browser_close_timeout");
+        void browser.close().catch(() => undefined);
+      }
+    }
+  }
+  return {
+    status: status || (timedOut ? 408 : 0),
+    finalUrl,
+    bodyText,
+    browserClosed,
+    browserCloseTimedOut,
+    timedOut,
+    notes,
+  };
+}
+
+function decisionFromClassified(
+  classified: { verdict: StoredSellerVerdict; evidence: string },
+  token: string,
+  httpStatus: number,
+  requested: boolean,
+  evidencePrefix?: string,
+): LinkedSellerDecision {
+  const evidence = evidencePrefix
+    ? `${evidencePrefix}; ${classified.evidence}`
+    : classified.evidence;
+  if (classified.verdict === "confirmed_intermediary") {
+    return {
+      outcome: "detail_confirmed_agent",
+      drop: true,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
+  if (classified.verdict === "confirmed_owner") {
+    return {
+      outcome: "detail_confirmed_owner",
+      drop: false,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
+  if (classified.verdict === "parser_failure") {
+    return {
+      outcome: "detail_parser_failure",
+      drop: false,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
+  return {
+    outcome: "detail_unknown",
+    drop: false,
+    requested,
+    externalId: token,
+    httpStatus,
+    evidence,
+  };
+}
+
+function rememberVerdict(
+  db: DatabaseSync | undefined,
+  target: { token: string; url: string },
+  classified: { verdict: StoredSellerVerdict; evidence: string },
+  httpStatus: number | undefined,
+  now: Date,
+): void {
+  if (!db) {
+    return;
+  }
+  const ttl =
+    classified.verdict === "confirmed_intermediary" || classified.verdict === "confirmed_owner"
+      ? CONFIRMED_SELLER_CACHE_MS
+      : classified.verdict === "unknown"
+        ? UNKNOWN_SELLER_CACHE_MS
+        : TRANSIENT_SELLER_CACHE_MS;
+  writeOlxSellerVerification(db, {
+    externalId: target.token,
+    canonicalUrl: target.url,
+    verdict: classified.verdict,
+    evidence: classified.evidence,
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    now,
+    ttlMs: ttl,
+  });
+}
+
 export function createCycleOlxSellerVerifier(options: {
   db?: DatabaseSync | undefined;
   peers: Listing[];
@@ -300,14 +499,102 @@ export function createCycleOlxSellerVerifier(options: {
   timeoutMs: number;
   gapMs?: number;
   maxRequests?: number;
+  maxBrowserFallbacks?: number;
   fetchPage?: ((url: string, timeoutMs: number) => Promise<RieltorDetailPage>) | undefined;
+  fetchViaBrowser?:
+    | ((url: string, timeoutMs: number) => Promise<OlxLinkedBrowserDetailPage>)
+    | undefined;
 }): (listing: Listing) => Promise<LinkedSellerDecision> {
   let haltedAfterRateLimit = false;
   let lastRequestAt = 0;
   let requests = 0;
+  let browserFallbacks = 0;
   const fetchPage = options.fetchPage ?? fetchOlxDetailPage;
+  const fetchViaBrowser = options.fetchViaBrowser ?? fetchOlxLinkedDetailViaBrowser;
   const gapMs = options.gapMs ?? OLX_DETAIL_GAP_MS;
   const maxRequests = options.maxRequests ?? OLX_LINKED_DETAIL_CAP;
+  const maxBrowserFallbacks = options.maxBrowserFallbacks ?? OLX_LINKED_BROWSER_FALLBACK_CAP;
+
+  const rememberTransport = (
+    target: { token: string; url: string },
+    evidence: string,
+    httpStatus: number | undefined,
+    now: Date,
+  ): LinkedSellerDecision => {
+    if (options.db) {
+      writeOlxSellerVerification(options.db, {
+        externalId: target.token,
+        canonicalUrl: target.url,
+        verdict: "transport_failure",
+        evidence,
+        ...(httpStatus !== undefined ? { httpStatus } : {}),
+        now,
+        ttlMs: TRANSIENT_SELLER_CACHE_MS,
+      });
+    }
+    return {
+      outcome: "detail_transport_failure",
+      drop: false,
+      requested: true,
+      externalId: target.token,
+      evidence,
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+    };
+  };
+
+  const tryBrowserFallback = async (
+    target: { token: string; url: string },
+    now: Date,
+    rawStatus: number | undefined,
+    rawEvidence: string,
+  ): Promise<LinkedSellerDecision> => {
+    if (browserFallbacks >= maxBrowserFallbacks) {
+      return rememberTransport(
+        target,
+        `${rawEvidence}; browser fallback cap ${maxBrowserFallbacks} reached`,
+        rawStatus,
+        now,
+      );
+    }
+    browserFallbacks += 1;
+    let browserPage: OlxLinkedBrowserDetailPage;
+    try {
+      browserPage = await fetchViaBrowser(target.url, options.timeoutMs);
+    } catch (error) {
+      const evidence = error instanceof Error ? error.message : "browser network error";
+      return rememberTransport(
+        target,
+        `${rawEvidence}; browser fallback failed: ${evidence}`,
+        rawStatus,
+        now,
+      );
+    }
+    if (browserPage.timedOut || browserPage.status === 0 || browserPage.status >= 400) {
+      return rememberTransport(
+        target,
+        `${rawEvidence}; browser fallback status=${browserPage.status} timedOut=${browserPage.timedOut} notes=${browserPage.notes.join(",")}`,
+        browserPage.status || rawStatus,
+        now,
+      );
+    }
+    if (!trustedOlxFinalUrl(browserPage.finalUrl, target.url)) {
+      return rememberTransport(
+        target,
+        `${rawEvidence}; browser final URL is not the requested OLX listing`,
+        browserPage.status,
+        now,
+      );
+    }
+    const classified = classifyOlxLinkedSellerHtml(browserPage.bodyText, target.token);
+    rememberVerdict(options.db, target, classified, browserPage.status, now);
+    return decisionFromClassified(
+      classified,
+      target.token,
+      browserPage.status,
+      true,
+      `browser fallback after ${rawEvidence}`,
+    );
+  };
 
   return async (listing) => {
     if (listing.source !== "lun") {
@@ -376,23 +663,7 @@ export function createCycleOlxSellerVerifier(options: {
       page = await fetchPage(target.url, options.timeoutMs);
     } catch (error) {
       const evidence = error instanceof Error ? error.message : "network error";
-      if (options.db) {
-        writeOlxSellerVerification(options.db, {
-          externalId: target.token,
-          canonicalUrl: target.url,
-          verdict: "transport_failure",
-          evidence,
-          now,
-          ttlMs: TRANSIENT_SELLER_CACHE_MS,
-        });
-      }
-      return {
-        outcome: "detail_transport_failure",
-        drop: false,
-        requested: true,
-        externalId: target.token,
-        evidence,
-      };
+      return tryBrowserFallback(target, now, undefined, evidence);
     }
     if (page.status === 429) {
       haltedAfterRateLimit = true;
@@ -416,113 +687,17 @@ export function createCycleOlxSellerVerifier(options: {
         evidence: "HTTP 429",
       };
     }
-    if (page.status === 403 || page.status >= 500 || page.status === 408) {
-      if (options.db) {
-        writeOlxSellerVerification(options.db, {
-          externalId: target.token,
-          canonicalUrl: target.url,
-          verdict: "transport_failure",
-          evidence: `HTTP ${page.status}`,
-          httpStatus: page.status,
-          now,
-          ttlMs: TRANSIENT_SELLER_CACHE_MS,
-        });
-      }
-      return {
-        outcome: "detail_transport_failure",
-        drop: false,
-        requested: true,
-        externalId: target.token,
-        httpStatus: page.status,
-        evidence: `HTTP ${page.status}`,
-      };
+    if (olxRawTransportNeedsBrowserFallback(page.status)) {
+      return tryBrowserFallback(target, now, page.status, `HTTP ${page.status}`);
     }
     if (page.status !== 200) {
-      if (options.db) {
-        writeOlxSellerVerification(options.db, {
-          externalId: target.token,
-          canonicalUrl: target.url,
-          verdict: "transport_failure",
-          evidence: `HTTP ${page.status}`,
-          httpStatus: page.status,
-          now,
-          ttlMs: TRANSIENT_SELLER_CACHE_MS,
-        });
-      }
-      return {
-        outcome: "detail_transport_failure",
-        drop: false,
-        requested: true,
-        externalId: target.token,
-        httpStatus: page.status,
-        evidence: `HTTP ${page.status}`,
-      };
+      return rememberTransport(target, `HTTP ${page.status}`, page.status, now);
     }
     if (!trustedOlxFinalUrl(page.finalUrl, target.url)) {
-      return {
-        outcome: "detail_transport_failure",
-        drop: false,
-        requested: true,
-        externalId: target.token,
-        httpStatus: page.status,
-        evidence: "final URL is not the requested OLX listing",
-      };
+      return rememberTransport(target, "final URL is not the requested OLX listing", page.status, now);
     }
     const classified = classifyOlxLinkedSellerHtml(page.bodyText, target.token);
-    const ttl =
-      classified.verdict === "confirmed_intermediary" || classified.verdict === "confirmed_owner"
-        ? CONFIRMED_SELLER_CACHE_MS
-        : classified.verdict === "unknown"
-          ? UNKNOWN_SELLER_CACHE_MS
-          : TRANSIENT_SELLER_CACHE_MS;
-    if (options.db) {
-      writeOlxSellerVerification(options.db, {
-        externalId: target.token,
-        canonicalUrl: target.url,
-        verdict: classified.verdict,
-        evidence: classified.evidence,
-        httpStatus: page.status,
-        now,
-        ttlMs: ttl,
-      });
-    }
-    if (classified.verdict === "confirmed_intermediary") {
-      return {
-        outcome: "detail_confirmed_agent",
-        drop: true,
-        requested: true,
-        externalId: target.token,
-        httpStatus: page.status,
-        evidence: classified.evidence,
-      };
-    }
-    if (classified.verdict === "confirmed_owner") {
-      return {
-        outcome: "detail_confirmed_owner",
-        drop: false,
-        requested: true,
-        externalId: target.token,
-        httpStatus: page.status,
-        evidence: classified.evidence,
-      };
-    }
-    if (classified.verdict === "parser_failure") {
-      return {
-        outcome: "detail_parser_failure",
-        drop: false,
-        requested: true,
-        externalId: target.token,
-        httpStatus: page.status,
-        evidence: classified.evidence,
-      };
-    }
-    return {
-      outcome: "detail_unknown",
-      drop: false,
-      requested: true,
-      externalId: target.token,
-      httpStatus: page.status,
-      evidence: classified.evidence,
-    };
+    rememberVerdict(options.db, target, classified, page.status, now);
+    return decisionFromClassified(classified, target.token, page.status, true);
   };
 }

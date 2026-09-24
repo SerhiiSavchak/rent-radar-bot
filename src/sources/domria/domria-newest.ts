@@ -210,37 +210,6 @@ export function findDomriaListingState(state: unknown, realtyId: string): Record
     parents.pop();
   };
   visit(state);
-  if (found && characteristic1437(found) !== undefined) {
-    return found;
-  }
-  const roles: unknown[] = [];
-  const collectRoles = (node: unknown): void => {
-    const role = characteristic1437(node);
-    if (role !== undefined) {
-      roles.push(role);
-    }
-    if (!node || typeof node !== "object") {
-      return;
-    }
-    if (Array.isArray(node)) {
-      for (const item of node) {
-        collectRoles(item);
-      }
-      return;
-    }
-    for (const value of Object.values(node as Record<string, unknown>)) {
-      collectRoles(value);
-    }
-  };
-  collectRoles(state);
-  const unique = [...new Set(roles.map((role) => String(role)))];
-  if (found && unique.length === 1) {
-    const characteristics = asRecord(found.characteristics_values) ?? {};
-    return {
-      ...found,
-      characteristics_values: { ...characteristics, "1437": roles[0] },
-    };
-  }
   return found;
 }
 
@@ -324,7 +293,14 @@ export async function acquireDomriaNewest(input: {
       coverageTruncated = true;
     }
     for (const id of plan.toFetch) {
-      const loaded = await loadDomriaCandidate(id, input.get, input.extractState, discoveredAt, notes);
+      const loaded = await loadDomriaCandidate(
+        id,
+        category,
+        input.get,
+        input.extractState,
+        discoveredAt,
+        notes,
+      );
       if (!loaded.ok) {
         coverageTruncated = true;
         if (loaded.httpError) {
@@ -333,8 +309,8 @@ export async function acquireDomriaNewest(input: {
         if (loaded.parserFailure) {
           parserFailure = true;
         }
-        notes.push(`${category} stopped at ${id}; later ids stay unacquired`);
-        break;
+        notes.push(`${category} detail ${id} failed; continuing later ids`);
+        continue;
       }
       listings.push(loaded.listing);
       persistIds.push(id);
@@ -356,6 +332,7 @@ export async function acquireDomriaNewest(input: {
 
 async function loadDomriaCandidate(
   id: string,
+  category: DomriaNewestCategory,
   get: (url: string) => Promise<DomriaFetchResponse>,
   extractState: (html: string) => unknown,
   discoveredAt: Date,
@@ -431,5 +408,29 @@ async function loadDomriaCandidate(
     notes.push(`listing ${id} parser_failure: card rejected`);
     return { ok: false, parserFailure: true };
   }
-  return { ok: true, listing };
+  return { ok: true, listing: applyCategoryPropertyType(listing, category, id, notes) };
+}
+
+/**
+ * Acquisition category is trusted only when the parsed type is unknown.
+ * Explicit apartment/house contradictions are left as-is with a diagnostic note.
+ */
+export function applyCategoryPropertyType(
+  listing: Listing,
+  category: DomriaNewestCategory,
+  id: string,
+  notes: string[],
+): Listing {
+  if (listing.propertyType === "unknown") {
+    return { ...listing, propertyType: category };
+  }
+  if (
+    (listing.propertyType === "apartment" || listing.propertyType === "house") &&
+    listing.propertyType !== category
+  ) {
+    notes.push(
+      `listing ${id} propertyType=${listing.propertyType} contradicts search category=${category}; preserving parsed type`,
+    );
+  }
+  return listing;
 }

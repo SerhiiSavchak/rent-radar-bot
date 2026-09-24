@@ -184,24 +184,146 @@ describe("DIM.RIA newest-first acquisition", () => {
     expect(result.persistIds).toEqual(["20", "21", "22"]);
   });
 
-  it("does not remember ids past a failed detail read", async () => {
+  it("continues later ids after a failed detail and does not persist the failure", async () => {
     const get = scriptedGet({
-      "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([30, 31, 32]) },
+      "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([30, 31, 32, 33]) },
       "realty/data/30": { status: 200, url: "d30", bodyText: dataCard("30", "2026-09-24 10:00:00") },
       "realty-30.html": { status: 200, url: "p30", bodyText: "page" },
       "realty/data/31": { status: 503, url: "d31", bodyText: "down" },
+      "realty/data/32": { status: 200, url: "d32", bodyText: dataCard("32", "2026-09-24 11:00:00") },
+      "realty-32.html": { status: 200, url: "p32", bodyText: "page" },
+      "realty/data/33": { status: 200, url: "d33", bodyText: dataCard("33", "2026-09-24 12:00:00") },
+      "realty-33.html": { status: 200, url: "p33", bodyText: "page" },
     });
     const result = await acquireDomriaNewest({
       categories: ["apartment"],
       knownIds: new Set(),
       get,
-      extractState: () => pageState("30", 1436),
+      extractState: (html) =>
+        pageState(html.includes("33") ? "33" : html.includes("32") ? "32" : "30", 1436),
     });
-    expect(result.persistIds).toEqual(["30"]);
+    expect(result.persistIds).toEqual(["30", "32", "33"]);
+    expect(result.listings.map((item) => item.sourceId)).toEqual(["30", "32", "33"]);
     expect(result.coverageTruncated).toBe(true);
     expect(result.boundaryReached).toBe(false);
-    expect(result.listings.map((item) => item.sourceId)).toEqual(["30"]);
-    expect(get.calls.some((url) => url.includes("realty/data/32"))).toBe(false);
+    expect(result.httpError).toBe(true);
+    expect(get.calls.some((url) => url.includes("realty/data/31"))).toBe(true);
+    expect(get.calls.some((url) => url.includes("realty/data/32"))).toBe(true);
+  });
+
+  it("retries a failed id on the next cycle because it was not persisted", async () => {
+    const first = await acquireDomriaNewest({
+      categories: ["apartment"],
+      knownIds: new Set(),
+      get: scriptedGet({
+        "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([40, 41]) },
+        "realty/data/40": { status: 503, url: "d40", bodyText: "down" },
+        "realty/data/41": { status: 200, url: "d41", bodyText: dataCard("41", "2026-09-24 10:00:00") },
+        "realty-41.html": { status: 200, url: "p41", bodyText: "page" },
+      }),
+      extractState: () => pageState("41", 1436),
+    });
+    expect(first.persistIds).toEqual(["41"]);
+    const known = new Set(first.persistIds);
+    const secondGet = scriptedGet({
+      "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([40, 41]) },
+      "realty/data/40": { status: 200, url: "d40", bodyText: dataCard("40", "2026-09-24 09:00:00") },
+      "realty-40.html": { status: 200, url: "p40", bodyText: "page" },
+    });
+    const second = await acquireDomriaNewest({
+      categories: ["apartment"],
+      knownIds: known,
+      get: secondGet,
+      extractState: () => pageState("40", 1436),
+    });
+    expect(second.persistIds).toEqual(["40"]);
+    expect(secondGet.calls.some((url) => url.includes("realty/data/40"))).toBe(true);
+    expect(secondGet.calls.some((url) => url.includes("realty/data/41"))).toBe(false);
+  });
+
+  it("applies house search category when parsed property type is unknown", async () => {
+    const get = scriptedGet({
+      "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([50]) },
+      "realty/data/50": {
+        status: 200,
+        url: "d50",
+        bodyText: dataCard("50", "2026-09-24 10:00:00", {
+          realty_type_id: 99,
+          description_uk: "Оренда",
+          advert_type_name_uk: "довгострокова оренда",
+        }),
+      },
+      "realty-50.html": { status: 200, url: "p50", bodyText: "page" },
+    });
+    const result = await acquireDomriaNewest({
+      categories: ["house"],
+      knownIds: new Set(),
+      get,
+      extractState: () => pageState("50", 1436),
+    });
+    expect(result.listings[0]?.propertyType).toBe("house");
+    expect(result.listings[0]?.sellerType).toBe("owner");
+  });
+
+  it("applies apartment search category when parsed property type is unknown", async () => {
+    const get = scriptedGet({
+      "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([51]) },
+      "realty/data/51": {
+        status: 200,
+        url: "d51",
+        bodyText: dataCard("51", "2026-09-24 10:00:00", {
+          realty_type_id: 99,
+          description_uk: "Оренда",
+          advert_type_name_uk: "довгострокова оренда",
+        }),
+      },
+      "realty-51.html": { status: 200, url: "p51", bodyText: "page" },
+    });
+    const result = await acquireDomriaNewest({
+      categories: ["apartment"],
+      knownIds: new Set(),
+      get,
+      extractState: () => pageState("51", 1436),
+    });
+    expect(result.listings[0]?.propertyType).toBe("apartment");
+  });
+
+  it("does not borrow an unrelated page 1437 owner or intermediary role", async () => {
+    const ownerState = {
+      catalog: {
+        recommended: [{ realty_id: 999, characteristics_values: { "1437": 1436 } }],
+      },
+      card: { realty_id: 60 },
+    };
+    const agentState = {
+      catalog: {
+        recommended: [{ realty_id: 999, characteristics_values: { "1437": 1434 } }],
+      },
+      card: { realty_id: 61 },
+    };
+    for (const [id, state] of [
+      ["60", ownerState],
+      ["61", agentState],
+    ] as const) {
+      const get = scriptedGet({
+        "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([Number(id)]) },
+        [`realty/data/${id}`]: {
+          status: 200,
+          url: "data",
+          bodyText: dataCard(id, "2026-09-24 10:00:00", { agency_id: 0 }),
+        },
+        [`realty-${id}.html`]: { status: 200, url: "page", bodyText: "page" },
+      });
+      const result = await acquireDomriaNewest({
+        categories: ["apartment"],
+        knownIds: new Set(),
+        get,
+        extractState: () => state,
+      });
+      expect(result.listings[0]?.sellerType).toBe("unknown");
+      expect(result.listings[0]?.metadata?.ownerEvidenceLevel).not.toBe("platform_confirmed");
+      expect(result.listings[0]?.metadata?.ownerEvidenceLevel).not.toBe("intermediary");
+    }
   });
 
   it("uses the house search parameters and distinguishes parser failure from an empty id list", async () => {

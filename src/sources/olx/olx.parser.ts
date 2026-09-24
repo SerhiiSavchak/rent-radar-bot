@@ -50,7 +50,7 @@ function sellerSignals(offer: OlxOffer) {
     platformPrivate: offer.business === false,
     isBusiness: offer.business === true,
     agencyName: company,
-    sellerIdentityName: company || sellerName,
+    sellerIdentityName: sellerName,
     text: publicText,
     extraEvidence: extra,
   });

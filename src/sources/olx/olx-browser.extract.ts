@@ -975,7 +975,7 @@ export async function extractOlxListingsViaBrowser(
     listings,
     accessibilityOk,
     extractionOk,
-    browserClosed: true,
+    browserClosed: !browserCloseTimedOut,
     notes,
     budgets: { navigationTimeoutMs, categoryBudgetMs, totalBudgetMs },
     wallClockMs,
