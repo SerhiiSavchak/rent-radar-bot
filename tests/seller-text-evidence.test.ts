@@ -5,7 +5,7 @@ import type { Listing } from "../src/domain/listing.ts";
 import { parseLunCard } from "../src/sources/lun/lun.parser.ts";
 import { parseOlxOffer } from "../src/sources/olx/olx.parser.ts";
 import { parseRieltorCard } from "../src/sources/rieltor/rieltor.parser.ts";
-import { classifySellerText } from "../src/utils/text-evidence.ts";
+import { classifySellerText, classifySellerIdentityName } from "../src/utils/text-evidence.ts";
 
 function eligible(text: string, extra: Parameters<typeof classifyOwner>[0] = {}) {
   const result = classifyOwner({ text, platformPrivate: true, ...extra });
@@ -252,11 +252,11 @@ describe("seller evidence review gaps", () => {
     expect(sends(olx("Ксенія", "Оренда квартири"))).toBe(true);
   });
 
-  it("treats Ксенія АН in the OLX display name as supporting only", () => {
+  it("rejects Ксенія АН in the OLX display/profile name as agency brand", () => {
     const listing = olx("Ксенія АН", "Оренда квартири");
-    expect(listing.metadata?.sellerTextLevel).not.toBe("likely");
-    expect(sends(listing)).toBe(true);
+    expect(sends(listing)).toBe(false);
     expect(classifySellerText("Ксенія АН").supportingFamilies).toEqual(["agency_brand"]);
+    expect(classifySellerIdentityName("Ксенія АН").level).toBe("confirmed");
   });
 
   it("drops Ксенія АН plus realtor commission in the OLX description", () => {

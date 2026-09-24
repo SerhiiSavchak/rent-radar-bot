@@ -157,6 +157,11 @@ export function inspectOlxOfferDetailHtml(
     notes.push("account_type_field_absent");
   }
 
+  const sellerName =
+    typeof user?.name === "string" && user.name.trim() ? user.name.trim() : undefined;
+  const company =
+    companyNameField.present && companyNameField.value ? companyNameField.value : undefined;
+
   const owner = offer
     ? classifyOwner({
         platformOwner: platformLabel === "owner",
@@ -164,7 +169,8 @@ export function inspectOlxOfferDetailHtml(
         platformBusiness: platformLabel === "business",
         platformPrivate: accountType === "private",
         isBusiness: accountType === "business",
-        agencyName: companyNameField.present && companyNameField.value ? companyNameField.value : undefined,
+        agencyName: company,
+        sellerIdentityName: company || sellerName,
         text,
         extraEvidence,
       })

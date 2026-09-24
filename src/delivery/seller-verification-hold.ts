@@ -40,6 +40,7 @@ export function upsertSellerHold(
   listing: Listing,
   externalListingId: string,
   now: Date,
+  externalSource: "rieltor" | "olx" = "rieltor",
 ): void {
   const started = now.toISOString();
   const releaseAt = new Date(now.getTime() + SELLER_HOLD_MAX_MS).toISOString();
@@ -47,12 +48,13 @@ export function upsertSellerHold(
     `INSERT INTO seller_verification_holds (
        source, source_id, listing_json, external_source, external_listing_id,
        hold_started_at, next_check_at, attempt_count, release_at
-     ) VALUES (?, ?, ?, 'rieltor', ?, ?, ?, 1, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
      ON CONFLICT(source, source_id) DO NOTHING`,
   ).run(
     listing.source,
     listing.sourceId,
     serializeListing(listing),
+    externalSource,
     externalListingId,
     started,
     started,

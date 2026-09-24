@@ -325,6 +325,72 @@ function matchedLabels(
 }
 
 /**
+ * Seller / profile / company *name* context — not free-form listing copy.
+ * Words such as Realty, Agency, АН, рієлтор are strong here; the same tokens
+ * stay supporting or non-evidence in a description unless other rules match.
+ */
+const IDENTITY_NAME_STRONG: Array<{ pattern: RegExp; label: string }> = [
+  {
+    pattern: new RegExp(
+      `${CYRILLIC_WORD_START}агентств\\p{L}*\\s+не(?:рухомост|движимост)\\p{L}*`,
+      "iu",
+    ),
+    label: "agency realty name",
+  },
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}агенці\\p{L}*\\s+нерухомост\\p{L}*`, "iu"),
+    label: "agency realty name",
+  },
+  { pattern: /real\s+estate(?:\s+agency)?/iu, label: "real estate name" },
+  {
+    pattern: new RegExp(
+      `${CYRILLIC_WORD_START}(?:realty|realtor|rieltor|рі[єе]лтор|риелтор)(?![\\p{L}\\p{N}_])`,
+      "iu",
+    ),
+    label: "realtor/realty name",
+  },
+  {
+    pattern: new RegExp(
+      `${CYRILLIC_WORD_START}(?:agency|broker|estate)(?![\\p{L}\\p{N}_])`,
+      "iu",
+    ),
+    label: "agency/broker/estate name",
+  },
+  {
+    pattern: /(?<![\p{L}\p{N}_])[Аа][Нн](?![\p{L}\p{N}_])/u,
+    label: "АН brand",
+  },
+  {
+    pattern: new RegExp(
+      `${CYRILLIC_WORD_START}(?:агентство|агенція|агентство)(?![\\p{L}\\p{N}_])`,
+      "iu",
+    ),
+    label: "agency word name",
+  },
+];
+
+export function classifySellerIdentityName(name: string | undefined): SellerTextJudgement {
+  if (!name || !name.trim()) {
+    return {
+      level: "unknown",
+      strongSignals: [],
+      supportingSignals: [],
+      supportingFamilies: [],
+      ownerContextSignals: [],
+    };
+  }
+  const normalized = normalizeSellerText(name);
+  const strongSignals = matchedLabels(normalized, IDENTITY_NAME_STRONG, false);
+  return {
+    level: strongSignals.length > 0 ? "confirmed" : "unknown",
+    strongSignals,
+    supportingSignals: [],
+    supportingFamilies: [],
+    ownerContextSignals: [],
+  };
+}
+
+/**
  * Classifies already-available public seller text.
  * One supporting family stays unknown. Two independent families are likely.
  * A strong agency, role, or realtor-commission phrase is confirmed.

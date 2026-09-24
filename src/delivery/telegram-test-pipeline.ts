@@ -50,6 +50,10 @@ import {
   type LinkedSellerVerificationCounts,
   type RieltorDetailPage,
 } from "./rieltor-detail-seller.ts";
+import {
+  canonicalOlxDetailTarget,
+  createCycleOlxSellerVerifier,
+} from "./olx-detail-seller.ts";
 import { dispatchSourceAdminAlerts } from "./source-admin-alerts.ts";
 import { DurableDeliveryStore } from "../storage/durable-delivery-store.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
@@ -146,6 +150,9 @@ export type TelegramTestPipelineDeps = {
   /** Test double. Production uses one non-retried HTTPS GET of the rebuilt RIELTOR detail URL. */
   fetchRieltorDetail?: (url: string, timeoutMs: number) => Promise<RieltorDetailPage>;
   rieltorDetailGapMs?: number;
+  /** Test double for exact LUN→OLX original-source seller checks. */
+  fetchOlxDetail?: (url: string, timeoutMs: number) => Promise<RieltorDetailPage>;
+  olxDetailGapMs?: number;
   /**
    * Optional. The poller reads OLX listing-page display prices for cards about
    * to be sent. Tests omit this so they do not open a browser.
@@ -945,11 +952,29 @@ export async function runTelegramTestCycle(
     ...(deps.rieltorDetailGapMs !== undefined ? { gapMs: deps.rieltorDetailGapMs } : {}),
     ...(deps.fetchRieltorDetail ? { fetchPage: deps.fetchRieltorDetail } : {}),
   });
-  const allowLinkedRieltor = async (listing: Listing): Promise<boolean> => {
+  const verifyLinkedOlx = createCycleOlxSellerVerifier({
+    db:
+      deps.baseline instanceof DurableDeliveryStore
+        ? deps.baseline.verificationDatabase()
+        : undefined,
+    peers: fetchedListings,
+    now,
+    timeoutMs: deps.config.sourceTimeoutMs,
+    ...(deps.olxDetailGapMs !== undefined ? { gapMs: deps.olxDetailGapMs } : {}),
+    ...(deps.fetchOlxDetail ? { fetchPage: deps.fetchOlxDetail } : {}),
+  });
+  const verifyLinkedSeller = async (listing: Listing): Promise<LinkedSellerDecision> => {
+    const rieltor = await verifyLinkedRieltor(listing);
+    if (rieltor.outcome !== "not_required") {
+      return rieltor;
+    }
+    return verifyLinkedOlx(listing);
+  };
+  const allowLinkedSeller = async (listing: Listing): Promise<boolean> => {
     if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
       return false;
     }
-    const decision = await verifyLinkedRieltor(listing);
+    const decision = await verifyLinkedSeller(listing);
     noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);
     if (decision.drop) {
       if (holdDb) {
@@ -958,16 +983,24 @@ export async function runTelegramTestCycle(
       retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
       return false;
     }
-    const target = canonicalRieltorDetailTarget(
+    const rieltorTarget = canonicalRieltorDetailTarget(
       typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
     );
+    const olxTarget = canonicalOlxDetailTarget(
+      typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
+    );
+    const holdTarget = rieltorTarget
+      ? { id: rieltorTarget.id, source: "rieltor" as const }
+      : olxTarget
+        ? { id: olxTarget.token, source: "olx" as const }
+        : undefined;
     if (
       holdDb &&
       deps.sink.dryRun !== true &&
-      target &&
+      holdTarget &&
       shouldHoldSellerVerification(decision)
     ) {
-      upsertSellerHold(holdDb, listing, target.id, now());
+      upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
       return false;
     }
     return true;
@@ -1057,7 +1090,7 @@ export async function runTelegramTestCycle(
   };
 
   if (holdDb && deps.sink.dryRun !== true) {
-    const released = await resolveDueSellerHolds(holdDb, now(), verifyLinkedRieltor);
+    const released = await resolveDueSellerHolds(holdDb, now(), verifyLinkedSeller);
     for (const item of released) {
       if (item.action === "send") {
         await releaseHeldListing(item.listing);
@@ -1103,7 +1136,7 @@ export async function runTelegramTestCycle(
               continue;
             }
           }
-          if (!(await allowLinkedRieltor(listing))) {
+          if (!(await allowLinkedSeller(listing))) {
             continue;
           }
           const delivered = await handoff(listing, "initial_preview");
@@ -1185,7 +1218,7 @@ export async function runTelegramTestCycle(
         continue;
       }
 
-      if (!(await allowLinkedRieltor(listing))) {
+      if (!(await allowLinkedSeller(listing))) {
         continue;
       }
 

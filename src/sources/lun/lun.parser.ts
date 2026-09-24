@@ -2,7 +2,7 @@ import type { Listing } from "../../domain/listing.ts";
 import { detectPropertyType } from "../../filters/listing-filter.ts";
 import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { normalizeLatLng } from "../../utils/geo.ts";
-import { collectTextEvidence } from "../../utils/text-evidence.ts";
+import { collectTextEvidence, classifySellerIdentityName } from "../../utils/text-evidence.ts";
 import { lunCardSchema, type LunCard } from "./lun.types.ts";
 
 const NEXT_FLIGHT_PREFIX = 'self.__next_f.push([1,"';
@@ -208,8 +208,11 @@ function readLunRieltorContact(value: unknown): {
   const agencyName = trimmed(agency?.name);
   const contactName = trimmed(contact?.name);
   const structuredRole = Boolean(contactType && LUN_REALTOR_CONTACT_TYPES.has(contactType));
+  const agencyBrand = Boolean(
+    agencyName && classifySellerIdentityName(agencyName).level === "confirmed",
+  );
   return {
-    platformAgent: structuredRole || Boolean(agencyName),
+    platformAgent: structuredRole || agencyBrand,
     ...(agencyName ? { agencyName } : {}),
     ...(contactName ? { contactName } : {}),
     notes: [
@@ -243,10 +246,12 @@ export function parseLunCard(
     .join("\n");
   const owner = classifyOwner({
     platformOwner: card.isOwner === true,
+    aggregatorOwner: card.isOwner === true,
     platformAgent: Boolean(card.agency) || contact.platformAgent,
     agencyName: card.agency?.name ?? contact.agencyName,
     agencyId: card.agency?.id,
     withoutCommission: card.withoutCommission === true,
+    sellerIdentityName: contact.agencyName ?? contact.contactName,
     text,
     extraEvidence: [
       ...collectTextEvidence(text),

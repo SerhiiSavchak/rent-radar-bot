@@ -16,6 +16,7 @@ import { closeDb, getDb } from "../src/storage/db.ts";
 import { DurableDeliveryStore } from "../src/storage/durable-delivery-store.ts";
 import { applyMigrations, sqliteMigrationSql } from "../src/storage/migrations.ts";
 import { runStateCleanupIfDue } from "../src/storage/state-retention.ts";
+import { derivedOracleOfferDetailHtml } from "./fixtures/olx-offer-detail-html.ts";
 
 const seededAt = new Date("2026-09-22T08:00:00.000Z");
 const published = new Date("2026-09-22T09:00:00.000Z");
@@ -847,7 +848,7 @@ describe("linked RIELTOR seller verification", () => {
     expect(calls).toBe(0);
   });
 
-  it("does not verify a fuzzy similar apartment or an OLX isBusiness flag", async () => {
+  it("does not verify a fuzzy similar apartment or treat OLX isBusiness as linked proof", async () => {
     const path = dbPath();
     const store = new DurableDeliveryStore(getDb(path));
     const shared = {
@@ -884,7 +885,8 @@ describe("linked RIELTOR seller verification", () => {
     await seed(store, adapters);
     lunBatch.push(lun, olx);
     rieltorBatch.push(agent);
-    let calls = 0;
+    let rieltorCalls = 0;
+    let olxCalls = 0;
     const report = await runTelegramTestCycle(
       {
         adapters,
@@ -895,16 +897,34 @@ describe("linked RIELTOR seller verification", () => {
         outbox: store,
         now: () => now,
         rieltorDetailGapMs: 0,
+        olxDetailGapMs: 0,
         fetchRieltorDetail: async (url) => {
-          calls += 1;
+          rieltorCalls += 1;
           return page(realtorHtml, 200, url);
+        },
+        fetchOlxDetail: async () => {
+          olxCalls += 1;
+          return {
+            status: 200,
+            finalUrl: "https://www.olx.ua/d/uk/obyavlenie/orenda-ID11gWHG.html",
+            bodyText: derivedOracleOfferDetailHtml({
+              id: 11,
+              url: "https://www.olx.ua/d/obyavlenie/orenda-ID11gWHG.html",
+              title: "Квартира",
+              description: "Здам",
+              user: { name: "Олена", company_name: null, sellerType: null },
+              isBusiness: true,
+            }),
+          };
         },
       },
       2,
     );
-    expect(calls).toBe(0);
+    expect(rieltorCalls).toBe(0);
+    expect(olxCalls).toBe(1);
     expect(report.sentOk).toBe(2);
-    expect(report.linkedSellerVerification.detailRequests).toBe(0);
+    expect(report.linkedSellerVerification.detailRequests).toBe(1);
+    expect(report.linkedSellerVerification.detailConfirmedAgent).toBe(0);
   });
 
   it("holds an exact LUN copy on the first RIELTOR detail 403 and does not send", async () => {

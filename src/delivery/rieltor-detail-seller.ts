@@ -144,7 +144,8 @@ export function classifyRieltorDetailSeller(html: string): {
   }
   const classification = classifyOwner({
     platformOwner: position !== undefined && OWNER_LABEL.test(position),
-    platformAgent: position !== undefined && REALTOR_LABEL.test(position),
+    platformAgent:
+      (position !== undefined && REALTOR_LABEL.test(position)) || Boolean(agency),
     ...(position ? { offerTypeLabel: position } : {}),
     ...(agency ? { agencyName: agency } : {}),
     extraEvidence: [

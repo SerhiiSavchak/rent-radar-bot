@@ -1,5 +1,6 @@
 import type { SellerConfidence, SellerType } from "../domain/listing.ts";
 import {
+  classifySellerIdentityName,
   classifySellerText,
   hasExplicitIntermediaryText,
   hasExplicitSelfDeclaredOwnerText,
@@ -58,12 +59,19 @@ export type OwnerClassification = {
 
 export type OwnerSignals = {
   platformOwner?: boolean | undefined;
+  /**
+   * Aggregator claim such as LUN isOwner. Weaker than a direct platform role
+   * (DIM.RIA 1436): exact intermediary evidence on the same listing wins.
+   */
+  aggregatorOwner?: boolean | undefined;
   platformAgent?: boolean | undefined;
   platformBusiness?: boolean | undefined;
   platformPrivate?: boolean | undefined;
   offerTypeLabel?: string | undefined;
   agencyId?: number | string | null | undefined;
   agencyName?: string | null | undefined;
+  /** Profile / company / seller display name — judged in identity-name context. */
+  sellerIdentityName?: string | null | undefined;
   isBusiness?: boolean | undefined;
   withoutCommission?: boolean | undefined;
   text?: string | undefined;
@@ -81,12 +89,19 @@ export type SellerEligibilityOptions = {
   acceptSelfDeclared?: boolean;
 };
 
+function identityNameConfirmed(name: string | null | undefined): boolean {
+  return Boolean(name && name.trim() && classifySellerIdentityName(name).level === "confirmed");
+}
+
 function hasAgencyMarker(signals: OwnerSignals): boolean {
-  if (signals.agencyName && signals.agencyName.trim()) {
+  const id = signals.agencyId;
+  if (id !== undefined && id !== null && id !== 0 && id !== "") {
     return true;
   }
-  const id = signals.agencyId;
-  return id !== undefined && id !== null && id !== 0 && id !== "";
+  if (identityNameConfirmed(signals.agencyName)) {
+    return true;
+  }
+  return identityNameConfirmed(signals.sellerIdentityName);
 }
 
 function emptyClassification(
@@ -195,13 +210,38 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     });
   }
   if (signals.agencyName && signals.agencyName.trim()) {
-    evidence.push(`platform agency name = ${signals.agencyName}`);
-    pushItem(items, {
-      source: "platform",
-      type: "agency_name",
-      value: signals.agencyName.trim(),
-      strength: "strong",
-    });
+    const identity = classifySellerIdentityName(signals.agencyName);
+    if (identity.level === "confirmed") {
+      evidence.push(`seller identity name (agency) = ${signals.agencyName.trim()}`);
+      pushItem(items, {
+        source: "platform",
+        type: "agency_name",
+        value: signals.agencyName.trim(),
+        strength: "strong",
+      });
+    } else {
+      evidence.push(`platform agency name present but not agency-brand evidence = ${signals.agencyName.trim()}`);
+      pushItem(items, {
+        source: "platform",
+        type: "agency_name",
+        value: signals.agencyName.trim(),
+        strength: "context",
+      });
+    }
+  }
+  if (signals.sellerIdentityName && signals.sellerIdentityName.trim()) {
+    const identity = classifySellerIdentityName(signals.sellerIdentityName);
+    if (identity.level === "confirmed") {
+      evidence.push(
+        `seller identity name = ${signals.sellerIdentityName.trim()} (${identity.strongSignals.join(", ")})`,
+      );
+      pushItem(items, {
+        source: "seller_identity",
+        type: "profile_or_company_name",
+        value: signals.sellerIdentityName.trim(),
+        strength: "strong",
+      });
+    }
   }
   if (signals.withoutCommission === true) {
     evidence.push("platform flag withoutCommission = true (not the same as owner)");
@@ -268,11 +308,25 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   const selfDeclared = ownerClaim && !explicitIntermediaryRole && judged.level !== "likely";
   const textLevel =
     judged.level === "likely" && !explicitIntermediaryRole ? "likely" : judged.level;
-  if (signals.platformOwner === true && explicitIntermediaryRole) {
+  const aggregatorOwner = signals.aggregatorOwner === true;
+
+  if (signals.platformOwner === true && explicitIntermediaryRole && !aggregatorOwner) {
     uniqueEvidence.push("platform-confirmed owner overrides intermediary evidence");
+  }
+  if (signals.platformOwner === true && aggregatorOwner && explicitIntermediaryRole) {
+    uniqueEvidence.push("aggregator owner claim yields to exact intermediary evidence");
   }
 
   if (signals.platformOwner === true) {
+    if (aggregatorOwner && explicitIntermediaryRole) {
+      return emptyClassification(
+        "unknown",
+        ownerClaim || aggregatorOwner ? "conflict" : "intermediary",
+        uniqueEvidence,
+        items,
+        { confidence: "high", sellerTextLevel: agentCopy ? "confirmed" : "unknown" },
+      );
+    }
     return emptyClassification("owner", "platform_confirmed", uniqueEvidence, items, {
       confidence: "high",
       filterConsidersPrivateOwner: true,
