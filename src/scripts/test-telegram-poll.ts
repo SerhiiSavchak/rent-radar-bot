@@ -111,7 +111,10 @@ try {
   writeHeartbeat(heartbeatPath, {
     state: "started",
     pid: process.pid,
+    bootId: runtime.lock.bootId,
+    commit: process.env.RENT_RADAR_COMMIT?.trim() || process.env.SOAK_COMMIT?.trim() || "unknown",
     schemaVersion: runtime.schemaVersion,
+    intervalMs,
     unbounded,
     dryRun,
   });
@@ -182,22 +185,39 @@ try {
     if (report.zeroEligibleListings) {
       zeroEligibleCycles += 1;
     }
-    console.log(JSON.stringify({ message: "live:test-telegram:poll.cycle", ...report }));
+    const cycleElapsedMs = Date.now() - cycleStartedMs;
+    console.log(
+      JSON.stringify({
+        message: "live:test-telegram:poll.cycle",
+        cycleElapsedMs,
+        intervalMs,
+        cycleOverrunMs: Math.max(0, cycleElapsedMs - intervalMs),
+        decisionTrace: report.decisionTrace,
+        ...report,
+      }),
+    );
     runtime.lock.heartbeat();
     writeHeartbeat(heartbeatPath, {
       state: "cycle",
       pid: process.pid,
+      bootId: runtime.lock.bootId,
+      commit: process.env.RENT_RADAR_COMMIT?.trim() || process.env.SOAK_COMMIT?.trim() || "unknown",
       cycle,
+      cycleElapsedMs,
+      intervalMs,
       sentOk: report.sentOk,
       sentFailed: report.sentFailed,
       deliveryMode: report.deliveryMode,
       hasSourceFailures: report.hasSourceFailures,
+      partialCoverage: report.partialCoverage,
+      decisionTraceTruncated: report.decisionTrace?.truncated ?? false,
+      decisionTraceDropped: report.decisionTrace?.dropped ?? 0,
       dryRun: report.dryRun,
     });
     if (report.sentFailed > 0 || report.hasSourceFailures) {
       operationalFailureObserved = true;
     }
-    const waitMs = waitMsUntilNextPollStart(Date.now() - cycleStartedMs, intervalMs);
+    const waitMs = waitMsUntilNextPollStart(cycleElapsedMs, intervalMs);
     if ((unbounded || cycle < cycles) && !stop && waitMs > 0) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => resolve(), waitMs);

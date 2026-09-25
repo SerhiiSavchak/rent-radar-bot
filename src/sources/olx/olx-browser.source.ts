@@ -72,12 +72,16 @@ export function mapOlxBrowserExtractToFetchResult(
   const walkCoverage = result.coverage;
   const coverageTruncated =
     Boolean(capCoverage?.coverageTruncated) || Boolean(walkCoverage?.coverageTruncated);
+  // Acquired-card cap must never let a walk commit a boundary past discarded cards.
+  const allowCommit = !acquired.truncated;
   const coverage =
     walkCoverage || capCoverage
       ? {
           pagesFetched: walkCoverage?.pagesFetched ?? 1,
           cardsFetched: unique.length,
-          boundaryReached: walkCoverage?.boundaryReached ?? !coverageTruncated,
+          boundaryReached: allowCommit
+            ? (walkCoverage?.boundaryReached ?? !coverageTruncated)
+            : false,
           coverageTruncated,
           ...(walkCoverage?.oldestObservedPublication
             ? { oldestObservedPublication: walkCoverage.oldestObservedPublication }
@@ -85,9 +89,10 @@ export function mapOlxBrowserExtractToFetchResult(
           ...(walkCoverage?.newestObservedPublication
             ? { newestObservedPublication: walkCoverage.newestObservedPublication }
             : {}),
-          ...(walkCoverage?.committedBoundary
+          ...(allowCommit && walkCoverage?.committedBoundary
             ? { committedBoundary: walkCoverage.committedBoundary }
             : {}),
+          ...(walkCoverage?.catchup ? { catchup: walkCoverage.catchup } : {}),
         }
       : undefined;
 
@@ -181,6 +186,13 @@ export class OlxBrowserSource implements ListingSourceAdapter {
     if (options?.publicationWatermarks?.house) {
       publicationWatermarks.houses = options.publicationWatermarks.house;
     }
+    const catchup: NonNullable<OlxBrowserExtractDeps["catchup"]> = {};
+    if (options?.olxCatchup?.apartment) {
+      catchup.apartments = options.olxCatchup.apartment;
+    }
+    if (options?.olxCatchup?.house) {
+      catchup.houses = options.olxCatchup.house;
+    }
     const result = await extract({
       timeoutMs: this.deps.timeoutMs ?? budgets.timeoutMs,
       categoryBudgetMs: this.deps.categoryBudgetMs ?? budgets.categoryBudgetMs,
@@ -188,6 +200,8 @@ export class OlxBrowserSource implements ListingSourceAdapter {
       maxPagesPerCategory: OLX_BROWSER_PAGE_BUDGET,
       now: this.deps.now ?? (() => new Date()),
       ...(Object.keys(publicationWatermarks).length > 0 ? { publicationWatermarks } : {}),
+      ...(Object.keys(catchup).length > 0 ? { catchup } : {}),
+      ...(options?.olxBootstrapTarget ? { bootstrapTarget: options.olxBootstrapTarget } : {}),
     });
     const mapped = mapOlxBrowserExtractToFetchResult(result, {
       startedMs: started,

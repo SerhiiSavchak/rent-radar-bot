@@ -5,7 +5,10 @@ export type FetchListingsOptions = {
   includeHouses?: boolean;
   includeApartments?: boolean;
   preferOwners?: boolean;
-  /** Committed newest publication already covered, per category (RIELTOR apartment/house; OLX maps apartments→apartment, houses→house). */
+  /**
+   * Committed newest publication already covered, per category
+   * (RIELTOR apartment/house; OLX maps apartments→apartment, houses→house).
+   */
   publicationWatermarks?: Partial<Record<"apartment" | "house", Date>>;
   /** In-progress backlog cursor. Does not replace the committed watermark. */
   rieltorCatchup?: Partial<
@@ -16,6 +19,12 @@ export type FetchListingsOptions = {
    * A brand-new installation leaves this unset and only seeds page 1.
    */
   rieltorBootstrapTarget?: Date;
+  /** OLX browser catch-up cursor (apartments→apartment, houses→house). */
+  olxCatchup?: Partial<
+    Record<"apartment" | "house", { target: string; resumePage: number }>
+  >;
+  /** Existing OLX baseline without a watermark — bootstrap catch-up target. */
+  olxBootstrapTarget?: Date;
   /** DIM.RIA ids whose listing page was already read. Detail fetches skip these. */
   domriaKnownIds?: readonly string[];
 };

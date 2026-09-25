@@ -13,6 +13,7 @@ import {
   crossedOlxPublicationBoundary,
   OLX_BROWSER_PAGE_BUDGET,
   olxBrowserCoverageNotes,
+  olxCatchupKey,
   olxPublicationBoundaryKey,
   organicPublicationTimes,
   planOlxBrowserPages,
@@ -26,6 +27,7 @@ import {
 import { createCycleOlxSellerVerifier } from "../src/delivery/olx-detail-seller.ts";
 import {
   emptyOlxBrowserExtractResult,
+  mapOlxBrowserExtractToFetchResult,
   OlxBrowserSource,
 } from "../src/sources/olx/olx-browser.source.ts";
 import {
@@ -33,7 +35,7 @@ import {
   runTelegramTestCycle,
 } from "../src/delivery/telegram-test-pipeline.ts";
 import type { Listing } from "../src/domain/listing.ts";
-import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
+import type { FetchListingsOptions, ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
 import { loadConfig, resetConfigCache } from "../src/config/env.ts";
 import { parseDomriaSearchIds } from "../src/sources/domria/domria-newest.ts";
 import { DurableDeliveryStore } from "../src/storage/durable-delivery-store.ts";
@@ -137,50 +139,87 @@ describe("OLX browser coverage contract", () => {
     );
   });
 
-  it("requires majority dated organic samples; single old outlier does not cross", () => {
+  it("keeps time-stop off while HTML sort is unverified; verified mode requires all dated + no undated", () => {
     const watermark = new Date("2026-09-25T12:00:00.000Z");
+    const allOld = [
+      new Date("2026-09-24T10:00:00.000Z"),
+      new Date("2026-09-24T09:00:00.000Z"),
+      new Date("2026-09-24T08:00:00.000Z"),
+    ];
+    // Default (sort BLOCKED): never cross on dates alone.
+    expect(crossedOlxPublicationBoundary(allOld, watermark)).toBe(false);
     expect(
       crossedOlxPublicationBoundary(
         [new Date("2026-09-20T12:00:00.000Z")],
         watermark,
       ),
     ).toBe(false);
+    // Mixed dates / majority-old still false when sort unverified.
     expect(
       crossedOlxPublicationBoundary(
         [
           new Date("2026-09-25T11:50:00.000Z"),
-          new Date("2026-09-25T11:40:00.000Z"),
-          new Date("2026-09-20T12:00:00.000Z"),
-        ],
-        watermark,
-      ),
-    ).toBe(false);
-    expect(
-      crossedOlxPublicationBoundary(
-        [
-          new Date("2026-09-24T10:00:00.000Z"),
           new Date("2026-09-24T09:00:00.000Z"),
           new Date("2026-09-24T08:00:00.000Z"),
         ],
         watermark,
       ),
+    ).toBe(false);
+    // Future verified-sort path: all dated old, no undated organic.
+    expect(
+      crossedOlxPublicationBoundary(allOld, watermark, undefined, {
+        sortVerified: true,
+        undatedOrganicCount: 0,
+      }),
     ).toBe(true);
-    expect(organicPublicationTimes([{ publishedAt: new Date("2026-09-20T12:00:00.000Z"), metadata: { olxIsPromoted: true } }])).toHaveLength(0);
+    expect(
+      crossedOlxPublicationBoundary(allOld, watermark, undefined, {
+        sortVerified: true,
+        undatedOrganicCount: 1,
+      }),
+    ).toBe(false);
+    expect(
+      crossedOlxPublicationBoundary(
+        [
+          new Date("2026-09-25T11:50:00.000Z"),
+          new Date("2026-09-24T09:00:00.000Z"),
+          new Date("2026-09-24T08:00:00.000Z"),
+        ],
+        watermark,
+        undefined,
+        { sortVerified: true },
+      ),
+    ).toBe(false);
+    expect(
+      organicPublicationTimes([
+        {
+          publishedAt: new Date("2026-09-20T12:00:00.000Z"),
+          metadata: { olxIsPromoted: true },
+        },
+      ]),
+    ).toHaveLength(0);
   });
 
-  it("treats budget exhaustion as truncated and ignores zero cards without confirmed empty", () => {
+  it("treats budget exhaustion as truncated catch-up and ignores zero cards without confirmed empty", () => {
     expect(
       assessOlxBrowserWalk({
+        mode: "steady",
         plannedPages: [1, 2],
         fetchedPages: [1, 2],
         lastPageCardCount: 30,
         lastPageCatalogEvidence: "has_listings",
         crossedBoundary: false,
         failed: false,
-      }).coverageTruncated,
-    ).toBe(true);
+        previousCommitted: "2026-09-24T10:00:00.000Z",
+      }),
+    ).toMatchObject({
+      coverageTruncated: true,
+      boundaryReached: false,
+      catchup: { resumePage: 3, target: "2026-09-24T10:00:00.000Z" },
+    });
     expect(
       assessOlxBrowserWalk({
+        mode: "steady",
         plannedPages: [1, 2],
         fetchedPages: [1],
         lastPageCardCount: 0,
@@ -191,6 +230,7 @@ describe("OLX browser coverage contract", () => {
     ).toBe(false);
     expect(
       assessOlxBrowserWalk({
+        mode: "steady",
         plannedPages: [1, 2],
         fetchedPages: [1],
         lastPageCardCount: 0,
@@ -203,6 +243,24 @@ describe("OLX browser coverage contract", () => {
       boundaryReached: true,
       coverageTruncated: false,
       committed: "2026-09-25T11:00:00.000Z",
+      catchup: null,
+    });
+    expect(
+      assessOlxBrowserWalk({
+        mode: "seed",
+        plannedPages: [1],
+        fetchedPages: [1],
+        lastPageCardCount: 40,
+        lastPageCatalogEvidence: "has_listings",
+        crossedBoundary: false,
+        failed: false,
+        newestOrganic: "2026-09-25T11:00:00.000Z",
+      }),
+    ).toEqual({
+      boundaryReached: true,
+      coverageTruncated: false,
+      committed: "2026-09-25T11:00:00.000Z",
+      catchup: null,
     });
   });
 });
@@ -241,6 +299,7 @@ describe("OLX page catalog evidence", () => {
 
   it("does not treat page-two parse failure after page one as end of catalog", () => {
     const assessed = assessOlxBrowserWalk({
+      mode: "catchup",
       plannedPages: [1, 2],
       fetchedPages: [1, 2],
       lastPageCardCount: 0,
@@ -248,10 +307,12 @@ describe("OLX page catalog evidence", () => {
       crossedBoundary: false,
       failed: true,
       newestOrganic: "2026-09-25T11:00:00.000Z",
+      catchupTarget: "2026-09-25T11:00:00.000Z",
     });
     expect(assessed.boundaryReached).toBe(false);
     expect(assessed.coverageTruncated).toBe(true);
     expect(assessed.committed).toBeUndefined();
+    expect(assessed.catchup?.resumePage).toBe(2);
   });
 
   it("keeps partial cards with parse failures as has_listings", () => {
@@ -314,12 +375,17 @@ describe("OLX publication watermark wiring", () => {
     );
   });
 
-  it("seed does not advance watermark on truncated budget; steady commits on boundary", async () => {
+  it("autonomous seed commits monitoring boundary; catch-up advances without manual SQL", async () => {
     const db = new DatabaseSync(":memory:");
     applyMigrations(db);
     const store = new DurableDeliveryStore(db);
     const config = testConfig({ ENABLE_OLX_BROWSER: "true" });
     let call = 0;
+    const seenOptions: Array<{
+      watermarks?: FetchListingsOptions["publicationWatermarks"];
+      catchup?: FetchListingsOptions["olxCatchup"];
+      bootstrap?: Date;
+    }> = [];
     const olx: ListingSourceAdapter = {
       source: "olx",
       fetchLatest: async () => [],
@@ -330,10 +396,57 @@ describe("OLX publication watermark wiring", () => {
       }),
       inspectLatest: async (options) => {
         call += 1;
+        seenOptions.push({
+          ...(options?.publicationWatermarks
+            ? { watermarks: options.publicationWatermarks }
+            : {}),
+          ...(options?.olxCatchup ? { catchup: options.olxCatchup } : {}),
+          ...(options?.olxBootstrapTarget
+            ? { bootstrap: options.olxBootstrapTarget }
+            : {}),
+        });
         if (call === 1) {
+          // Fresh DB / no OLX keys: seed page-1 monitoring start.
           expect(options?.publicationWatermarks).toBeUndefined();
+          expect(options?.olxCatchup).toBeUndefined();
           return {
-            listings: [listing("olx", "seed-a"), listing("olx", "seed-b")],
+            listings: [
+              listing("olx", "seed-a", {
+                publishedAt: new Date("2026-09-25T11:00:00.000Z"),
+              }),
+              listing("olx", "seed-b", {
+                publishedAt: new Date("2026-09-25T10:30:00.000Z"),
+              }),
+            ],
+            transport: "stock_playwright_chromium",
+            dataKind: "LIVE DATA",
+            resultKind: "ok",
+            coverage: {
+              pagesFetched: 1,
+              cardsFetched: 2,
+              boundaryReached: true,
+              coverageTruncated: false,
+              committedBoundary: { apartment: "2026-09-25T11:00:00.000Z" },
+              catchup: { apartment: null, house: null },
+            },
+            health: {
+              source: "olx",
+              healthy: true,
+              checkedAt: new Date(),
+              resultKind: "ok",
+            },
+          };
+        }
+        if (call === 2) {
+          // Steady with watermark; more pages than budget → catch-up cursor.
+          expect(options?.publicationWatermarks?.apartment?.toISOString()).toBe(
+            "2026-09-25T11:00:00.000Z",
+          );
+          return {
+            listings: [
+              listing("olx", "p1"),
+              listing("olx", "p2"),
+            ],
             transport: "stock_playwright_chromium",
             dataKind: "LIVE DATA",
             resultKind: "ok",
@@ -342,6 +455,9 @@ describe("OLX publication watermark wiring", () => {
               cardsFetched: 2,
               boundaryReached: false,
               coverageTruncated: true,
+              catchup: {
+                apartment: { target: "2026-09-25T11:00:00.000Z", resumePage: 3 },
+              },
             },
             health: {
               source: "olx",
@@ -352,20 +468,23 @@ describe("OLX publication watermark wiring", () => {
             },
           };
         }
+        // Restart mid catch-up: resumePage persisted; page 1 rechecked for new listings.
+        expect(options?.olxCatchup?.apartment?.resumePage).toBe(3);
         expect(options?.publicationWatermarks?.apartment?.toISOString()).toBe(
           "2026-09-25T11:00:00.000Z",
         );
         return {
-          listings: [listing("olx", "new-1")],
+          listings: [listing("olx", "new-during-catchup")],
           transport: "stock_playwright_chromium",
           dataKind: "LIVE DATA",
           resultKind: "ok",
           coverage: {
-            pagesFetched: 1,
+            pagesFetched: 2,
             cardsFetched: 1,
             boundaryReached: true,
             coverageTruncated: false,
             committedBoundary: { apartment: "2026-09-25T12:00:00.000Z" },
+            catchup: { apartment: null },
           },
           health: {
             source: "olx",
@@ -389,16 +508,14 @@ describe("OLX publication watermark wiring", () => {
       },
       1,
     );
+    const boundary1 = db
+      .prepare("SELECT value FROM schema_meta WHERE key = ?")
+      .get(olxPublicationBoundaryKey("apartments")) as { value: string };
+    expect(boundary1.value).toBe("2026-09-25T11:00:00.000Z");
     expect(
-      db
-        .prepare("SELECT value FROM schema_meta WHERE key = ?")
-        .get(olxPublicationBoundaryKey("apartments")),
+      db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxCatchupKey("apartments")),
     ).toBeUndefined();
 
-    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)").run(
-      olxPublicationBoundaryKey("apartments"),
-      "2026-09-25T11:00:00.000Z",
-    );
     await runTelegramTestCycle(
       {
         adapters: [olx],
@@ -407,16 +524,122 @@ describe("OLX publication watermark wiring", () => {
         dedupe: store,
         baseline: store,
         outbox: store,
-        now: () => new Date("2026-09-25T13:00:00.000Z"),
+        now: () => new Date("2026-09-25T12:10:00.000Z"),
         firstRunMode: "seed",
       },
       2,
     );
-    const committed = db
+    const catchupRow = db
+      .prepare("SELECT value FROM schema_meta WHERE key = ?")
+      .get(olxCatchupKey("apartments")) as { value: string };
+    expect(JSON.parse(catchupRow.value)).toMatchObject({ resumePage: 3 });
+
+    await runTelegramTestCycle(
+      {
+        adapters: [olx],
+        config,
+        sink: drySink() as never,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date("2026-09-25T12:20:00.000Z"),
+        firstRunMode: "seed",
+      },
+      3,
+    );
+    expect(
+      db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxCatchupKey("apartments")),
+    ).toBeUndefined();
+    const boundary3 = db
       .prepare("SELECT value FROM schema_meta WHERE key = ?")
       .get(olxPublicationBoundaryKey("apartments")) as { value: string };
-    expect(committed.value).toBe("2026-09-25T12:00:00.000Z");
+    expect(boundary3.value).toBe("2026-09-25T12:00:00.000Z");
+    expect(seenOptions).toHaveLength(3);
+    expect(seenOptions[0]?.watermarks).toBeUndefined();
+    expect(seenOptions[2]?.catchup?.apartment?.resumePage).toBe(3);
     resetConfigCache();
+  });
+
+  it("existing baseline without OLX watermark keys supplies bootstrap target", async () => {
+    const db = new DatabaseSync(":memory:");
+    applyMigrations(db);
+    const store = new DurableDeliveryStore(db);
+    db.prepare(
+      `INSERT INTO source_baselines (source, established_at, last_success_at, seed_listing_count)
+       VALUES ('olx', '2026-09-20T10:00:00.000Z', '2026-09-20T10:00:00.000Z', 10)`,
+    ).run();
+    const config = testConfig({ ENABLE_OLX_BROWSER: "true" });
+    let sawBootstrap: Date | undefined;
+    const olx: ListingSourceAdapter = {
+      source: "olx",
+      fetchLatest: async () => [],
+      healthCheck: async () => ({ source: "olx", healthy: true, checkedAt: new Date() }),
+      inspectLatest: async (options) => {
+        sawBootstrap = options?.olxBootstrapTarget;
+        return {
+          listings: [listing("olx", "boot-1")],
+          transport: "stock_playwright_chromium",
+          dataKind: "LIVE DATA",
+          resultKind: "ok",
+          coverage: {
+            pagesFetched: 1,
+            cardsFetched: 1,
+            boundaryReached: true,
+            coverageTruncated: false,
+            committedBoundary: { apartment: "2026-09-25T11:00:00.000Z" },
+            catchup: { apartment: null },
+          },
+          health: { source: "olx", healthy: true, checkedAt: new Date(), resultKind: "ok" },
+        };
+      },
+    };
+    await runTelegramTestCycle(
+      {
+        adapters: [olx],
+        config,
+        sink: drySink() as never,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date("2026-09-25T12:00:00.000Z"),
+        firstRunMode: "seed",
+      },
+      1,
+    );
+    expect(sawBootstrap?.toISOString()).toBe("2026-09-20T10:00:00.000Z");
+    resetConfigCache();
+  });
+
+  it("acquired-card cap blocks boundary commit past discarded cards", () => {
+    const many = Array.from({ length: 130 }, (_, i) =>
+      listing("olx", `cap-${i}`, { propertyType: "apartment" }),
+    );
+    const mapped = mapOlxBrowserExtractToFetchResult(
+      emptyOlxBrowserExtractResult({
+        listings: many,
+        accessibilityOk: true,
+        extractionOk: true,
+        coverage: {
+          pagesFetched: 2,
+          cardsFetched: 130,
+          boundaryReached: true,
+          coverageTruncated: false,
+          committedBoundary: { apartment: "2026-09-25T12:00:00.000Z" },
+        },
+        apartments: {
+          ...emptyOlxBrowserExtractResult().apartments,
+          accessibilityOk: true,
+          validatedListingCount: 130,
+          listings: many,
+          httpStatus: 200,
+        },
+      }),
+      { startedMs: Date.now() },
+    );
+    expect(mapped.coverage?.coverageTruncated).toBe(true);
+    expect(mapped.coverage?.boundaryReached).toBe(false);
+    expect(mapped.coverage?.committedBoundary).toBeUndefined();
+    expect(mapped.listings.length).toBeLessThanOrEqual(120);
   });
 });
 

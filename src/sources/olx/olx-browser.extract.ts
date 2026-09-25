@@ -29,13 +29,16 @@ import {
   assessOlxBrowserWalk,
   buildOlxBrowserCategoryUrl,
   classifyOlxPageCatalogEvidence,
+  countUndatedOrganic,
   crossedOlxPublicationBoundary,
   olxBrowserCoverageNotes,
   olxCategoryToCoverageKey,
   organicPublicationTimes,
-  planOlxBrowserPages,
+  planOlxCategoryFetch,
   type OlxBrowserCategoryName,
+  type OlxCatchupState,
   type OlxPageCatalogEvidence,
+  type OlxWalkMode,
 } from "./olx-browser.coverage.ts";
 import {
   DEFAULT_OLX_CAPTURE_LIMITS,
@@ -200,6 +203,10 @@ export type OlxBrowserExtractDeps = {
    * must not starve houses or advance past uncollected inventory.
    */
   publicationWatermarks?: Partial<Record<OlxBrowserCategoryName, Date>>;
+  /** In-progress catch-up cursors (apartments / houses). */
+  catchup?: Partial<Record<OlxBrowserCategoryName, OlxCatchupState>>;
+  /** Existing baseline without watermark — bootstrap catch-up target (ISO date). */
+  bootstrapTarget?: Date;
   /** @deprecated Prefer publicationWatermarks. Ignored when publicationWatermarks is set. */
   publicationWatermark?: Date;
   concurrency?: number;
@@ -853,7 +860,6 @@ export async function extractOlxListingsViaBrowser(
     1,
     Math.min(deps.maxPagesPerCategory ?? 1, 3),
   );
-  const plannedPages = planOlxBrowserPages({ pageBudget: maxPages, mode: "steady" });
   const now = deps.now ?? (() => new Date());
   const clock = deps.clockMs ?? (() => Date.now());
   const commit = deps.commit ?? "unknown";
@@ -873,6 +879,8 @@ export async function extractOlxListingsViaBrowser(
     watermarks.apartments = deps.publicationWatermark;
     watermarks.houses = deps.publicationWatermark;
   }
+  const catchups = deps.catchup ?? {};
+  const bootstrap = deps.bootstrapTarget;
 
   if (deps.captureDir) {
     mkdirSync(deps.captureDir, { recursive: true, mode: 0o700 });
@@ -909,11 +917,13 @@ export async function extractOlxListingsViaBrowser(
   let coverageTruncated = false;
   let boundaryReached = true;
   const committedBoundary: NonNullable<IncrementalCoverage["committedBoundary"]> = {};
+  const catchupOut: NonNullable<IncrementalCoverage["catchup"]> = {};
+  const modesSummary: string[] = [];
   let browserCloseMs: number;
   let browserCloseTimedOut: boolean;
   try {
     const apt = await extractCategoryPages(browser, "apartments", {
-      plannedPages,
+      pageBudget: maxPages,
       navigationTimeoutMs,
       categoryBudgetMs: Math.min(categoryBudgetMs, Math.max(1, apartmentsDeadlineAt - clock())),
       now,
@@ -922,15 +932,21 @@ export async function extractOlxListingsViaBrowser(
       runDeadlineAt: apartmentsDeadlineAt,
       cleanupBudgetMs,
       ...(watermarks.apartments ? { publicationWatermark: watermarks.apartments } : {}),
+      ...(catchups.apartments ? { catchup: catchups.apartments } : {}),
+      ...(bootstrap && !watermarks.apartments && !catchups.apartments
+        ? { bootstrapTarget: bootstrap }
+        : {}),
       ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
     });
     apartments = apt.merged;
     pagesFetchedTotal += apt.fetchedPages.length;
     coverageTruncated = coverageTruncated || apt.coverageTruncated;
     boundaryReached = boundaryReached && apt.boundaryReached;
+    modesSummary.push(`apartments:${apt.mode}`);
     if (apt.committed) {
       committedBoundary[olxCategoryToCoverageKey("apartments")] = apt.committed;
     }
+    catchupOut[olxCategoryToCoverageKey("apartments")] = apt.catchup;
     notes.push(...apt.notes);
 
     const remainingForHouses = remainingMs(runDeadlineAt, clock());
@@ -944,9 +960,22 @@ export async function extractOlxListingsViaBrowser(
         "total_budget_exhausted",
         `remainingMs=${remainingForHouses}`,
       );
+      // Preserve house catch-up when apartments exhausted the wall clock.
+      const houseKey = olxCategoryToCoverageKey("houses");
+      const existing = catchups.houses;
+      const houseTarget =
+        existing?.target ??
+        watermarks.houses?.toISOString() ??
+        bootstrap?.toISOString();
+      if (houseTarget) {
+        catchupOut[houseKey] = {
+          target: houseTarget,
+          resumePage: existing?.resumePage ?? 1,
+        };
+      }
     } else {
       const hou = await extractCategoryPages(browser, "houses", {
-        plannedPages,
+        pageBudget: maxPages,
         navigationTimeoutMs: Math.min(navigationTimeoutMs, remainingForHouses),
         categoryBudgetMs: Math.min(categoryBudgetMs, remainingForHouses),
         now,
@@ -955,15 +984,21 @@ export async function extractOlxListingsViaBrowser(
         runDeadlineAt,
         cleanupBudgetMs,
         ...(watermarks.houses ? { publicationWatermark: watermarks.houses } : {}),
+        ...(catchups.houses ? { catchup: catchups.houses } : {}),
+        ...(bootstrap && !watermarks.houses && !catchups.houses
+          ? { bootstrapTarget: bootstrap }
+          : {}),
         ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
       });
       houses = hou.merged;
       pagesFetchedTotal += hou.fetchedPages.length;
       coverageTruncated = coverageTruncated || hou.coverageTruncated;
       boundaryReached = boundaryReached && hou.boundaryReached;
+      modesSummary.push(`houses:${hou.mode}`);
       if (hou.committed) {
         committedBoundary[olxCategoryToCoverageKey("houses")] = hou.committed;
       }
+      catchupOut[olxCategoryToCoverageKey("houses")] = hou.catchup;
       notes.push(...hou.notes);
     }
   } finally {
@@ -976,6 +1011,14 @@ export async function extractOlxListingsViaBrowser(
     throw new Error("OLX browser extract incomplete before browser.close()");
   }
 
+  const catchupResumeNote = (["apartment", "house"] as const)
+    .map((k) => {
+      const state = catchupOut[k];
+      return state ? `${k}:${state.resumePage}` : undefined;
+    })
+    .filter((item): item is string => item !== undefined)
+    .join(",");
+
   notes.push(
     ...olxBrowserCoverageNotes({
       distanceKm: OLX_DISTANCE_KM,
@@ -983,6 +1026,12 @@ export async function extractOlxListingsViaBrowser(
       pagesFetched: pagesFetchedTotal,
       boundaryReached,
       coverageTruncated,
+      mode: modesSummary.some((m) => m.endsWith(":catchup"))
+        ? "catchup"
+        : modesSummary.every((m) => m.endsWith(":seed"))
+          ? "seed"
+          : "steady",
+      ...(catchupResumeNote ? { catchupResume: catchupResumeNote } : {}),
     }),
   );
 
@@ -1068,6 +1117,7 @@ export async function extractOlxListingsViaBrowser(
         }
       : {}),
     ...(Object.keys(committedBoundary).length > 0 ? { committedBoundary } : {}),
+    ...(Object.keys(catchupOut).length > 0 ? { catchup: catchupOut } : {}),
   };
   return {
     apartments,
@@ -1095,7 +1145,7 @@ async function extractCategoryPages(
   browser: Browser,
   category: OlxBrowserCategoryName,
   deps: {
-    plannedPages: number[];
+    pageBudget: number;
     navigationTimeoutMs: number;
     categoryBudgetMs: number;
     now: () => Date;
@@ -1105,6 +1155,8 @@ async function extractCategoryPages(
     cleanupBudgetMs: number;
     captureDir?: string;
     publicationWatermark?: Date;
+    catchup?: OlxCatchupState;
+    bootstrapTarget?: Date;
   },
 ): Promise<{
   merged: OlxBrowserCategoryExtract;
@@ -1112,9 +1164,21 @@ async function extractCategoryPages(
   boundaryReached: boolean;
   coverageTruncated: boolean;
   committed?: string;
+  catchup: OlxCatchupState | null;
+  mode: OlxWalkMode;
   notes: string[];
 }> {
-  const notes: string[] = [];
+  const plan = planOlxCategoryFetch({
+    pageBudget: deps.pageBudget,
+    ...(deps.publicationWatermark
+      ? { committedBoundary: deps.publicationWatermark.toISOString() }
+      : {}),
+    ...(deps.catchup ? { catchup: deps.catchup } : {}),
+    ...(deps.bootstrapTarget ? { bootstrapTarget: deps.bootstrapTarget.toISOString() } : {}),
+  });
+  const notes: string[] = [
+    `${category}_plan=${plan.mode} pages=${plan.pages.join(",")} target=${plan.catchupTarget ?? "none"}`,
+  ];
   const fetchedPages: number[] = [];
   const pageExtracts: OlxBrowserCategoryExtract[] = [];
   let crossed = false;
@@ -1122,14 +1186,14 @@ async function extractCategoryPages(
   let lastPageCardCount = 0;
   let lastPageCatalogEvidence: OlxPageCatalogEvidence = "unknown";
 
-  for (const page of deps.plannedPages) {
+  for (const page of plan.pages) {
     if (remainingMs(deps.runDeadlineAt, deps.clock()) <= 0) {
       notes.push(`${category}_page_${page}_skipped_budget`);
       failed = fetchedPages.length === 0;
       break;
     }
     const url = buildOlxBrowserCategoryUrl(category, { page });
-    const pagesLeft = Math.max(1, deps.plannedPages.length - fetchedPages.length);
+    const pagesLeft = Math.max(1, plan.pages.length - fetchedPages.length);
     const pageBudget = Math.min(
       deps.categoryBudgetMs,
       Math.max(MIN_GOTO_BUDGET_MS, Math.floor(remainingMs(deps.runDeadlineAt, deps.clock()) / pagesLeft)),
@@ -1154,10 +1218,15 @@ async function extractCategoryPages(
       break;
     }
     const organic = organicPublicationTimes(extracted.listings);
-    if (crossedOlxPublicationBoundary(organic, deps.publicationWatermark)) {
+    const undated = countUndatedOrganic(extracted.listings);
+    // Time-stop stays off until HTML sort is verified (sortVerified default false).
+    if (
+      crossedOlxPublicationBoundary(organic, deps.publicationWatermark, undefined, {
+        undatedOrganicCount: undated,
+      })
+    ) {
       crossed = true;
       notes.push(`${category}_page_${page}_crossed_publication_boundary`);
-      // Keep this page's cards; do not fetch deeper pages.
       break;
     }
     if (lastPageCatalogEvidence === "confirmed_empty") {
@@ -1165,7 +1234,6 @@ async function extractCategoryPages(
       break;
     }
     if (lastPageCatalogEvidence === "parse_failed" || lastPageCatalogEvidence === "unknown") {
-      // Accessible page with zero validated cards is not end-of-catalog.
       failed = true;
       notes.push(`${category}_page_${page}_${lastPageCatalogEvidence}`);
       break;
@@ -1176,7 +1244,8 @@ async function extractCategoryPages(
   const first = pageExtracts[0];
   const newestOrganicTimes = organicPublicationTimes(mergedListings);
   const assessed = assessOlxBrowserWalk({
-    plannedPages: deps.plannedPages,
+    mode: plan.mode,
+    plannedPages: plan.pages,
     fetchedPages,
     lastPageCardCount,
     lastPageCatalogEvidence,
@@ -1189,12 +1258,17 @@ async function extractCategoryPages(
           ).toISOString(),
         }
       : {}),
+    ...(plan.catchupTarget ? { catchupTarget: plan.catchupTarget } : {}),
+    ...(deps.publicationWatermark
+      ? { previousCommitted: deps.publicationWatermark.toISOString() }
+      : {}),
   });
   notes.push(
     `${category}_pages=${fetchedPages.join(",") || "none"}`,
     `${category}_boundary=${assessed.boundaryReached}`,
     `${category}_truncated=${assessed.coverageTruncated}`,
     `${category}_catalog_evidence=${lastPageCatalogEvidence}`,
+    `${category}_catchup=${assessed.catchup ? assessed.catchup.resumePage : "none"}`,
   );
 
   const merged: OlxBrowserCategoryExtract = first
@@ -1222,6 +1296,8 @@ async function extractCategoryPages(
     boundaryReached: assessed.boundaryReached,
     coverageTruncated: assessed.coverageTruncated,
     ...(assessed.committed ? { committed: assessed.committed } : {}),
+    catchup: assessed.catchup,
+    mode: plan.mode,
     notes,
   };
 }
