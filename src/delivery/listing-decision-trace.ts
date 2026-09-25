@@ -21,6 +21,19 @@ export type ListingDecisionStage =
   | "delivered"
   | "delivery_failed";
 
+/** Stages that answer “what happened to this listing?” after collection. */
+const TERMINAL_STAGES = new Set<ListingDecisionStage>([
+  "rejected_seller",
+  "rejected_geo",
+  "rejected_other",
+  "held",
+  "deduped",
+  "suppressed_freshness",
+  "queued",
+  "delivered",
+  "delivery_failed",
+]);
+
 export type ListingDecisionRecord = {
   cycleId: number;
   source: ListingSource | string;
@@ -29,6 +42,13 @@ export type ListingDecisionRecord = {
   reasonCode: string;
   identityKey?: string;
   at?: Date;
+};
+
+export type ListingDecisionTraceFlushReport = {
+  written: number;
+  dropped: number;
+  truncated: boolean;
+  totalAttempted: number;
 };
 
 export function insertListingDecisionTrace(
@@ -44,7 +64,7 @@ export function insertListingDecisionTrace(
      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   let written = 0;
-  for (const row of records.slice(0, LISTING_DECISION_TRACE_CYCLE_CAP)) {
+  for (const row of records) {
     const id = row.sourceId?.trim();
     if (!id) {
       continue;
@@ -99,11 +119,94 @@ export function listingDecisionTraceHas(
   return Boolean(row);
 }
 
+/**
+ * Prefer terminal decisions, then one collected row per listing, fairly across
+ * sources. Absence from a truncated trace is never proof of non-collection.
+ */
+export function selectListingDecisionTraceRows(
+  rows: readonly ListingDecisionRecord[],
+  cap: number = LISTING_DECISION_TRACE_CYCLE_CAP,
+): { kept: ListingDecisionRecord[]; dropped: number } {
+  if (rows.length <= cap) {
+    return { kept: [...rows], dropped: 0 };
+  }
+  const bySource = new Map<string, ListingDecisionRecord[]>();
+  for (const row of rows) {
+    const list = bySource.get(row.source) ?? [];
+    list.push(row);
+    bySource.set(row.source, list);
+  }
+  const sources = [...bySource.keys()].sort();
+  const kept: ListingDecisionRecord[] = [];
+  const keptKeys = new Set<string>();
+  const keyOf = (row: ListingDecisionRecord) =>
+    `${row.source}|${row.sourceId}|${row.stage}|${row.reasonCode}|${row.identityKey ?? ""}`;
+
+  const takeRoundRobin = (predicate: (row: ListingDecisionRecord) => boolean) => {
+    let progress = true;
+    while (kept.length < cap && progress) {
+      progress = false;
+      for (const source of sources) {
+        if (kept.length >= cap) {
+          break;
+        }
+        const list = bySource.get(source);
+        if (!list || list.length === 0) {
+          continue;
+        }
+        const idx = list.findIndex(predicate);
+        if (idx < 0) {
+          continue;
+        }
+        const [row] = list.splice(idx, 1);
+        if (!row) {
+          continue;
+        }
+        const key = keyOf(row);
+        if (keptKeys.has(key)) {
+          continue;
+        }
+        keptKeys.add(key);
+        kept.push(row);
+        progress = true;
+      }
+    }
+  };
+
+  takeRoundRobin((row) => TERMINAL_STAGES.has(row.stage));
+  // One collected marker per listing (skip duplicate normalized when tight).
+  const collectedSeen = new Set<string>();
+  takeRoundRobin((row) => {
+    if (row.stage !== "collected") {
+      return false;
+    }
+    const id = `${row.source}|${row.sourceId}`;
+    if (collectedSeen.has(id)) {
+      return false;
+    }
+    collectedSeen.add(id);
+    return true;
+  });
+  takeRoundRobin(() => true);
+
+  return { kept, dropped: rows.length - kept.length };
+}
+
 /** In-memory buffer used for one poll cycle, then flushed. */
 export class ListingDecisionTraceBuffer {
   private readonly rows: ListingDecisionRecord[] = [];
+  private attempted = 0;
+  private lastFlush: ListingDecisionTraceFlushReport = {
+    written: 0,
+    dropped: 0,
+    truncated: false,
+    totalAttempted: 0,
+  };
 
-  constructor(private readonly cycleId: number) {}
+  constructor(
+    private readonly cycleId: number,
+    private readonly cap: number = LISTING_DECISION_TRACE_CYCLE_CAP,
+  ) {}
 
   record(
     source: string,
@@ -112,9 +215,7 @@ export class ListingDecisionTraceBuffer {
     reasonCode: string,
     identityKey?: string,
   ): void {
-    if (this.rows.length >= LISTING_DECISION_TRACE_CYCLE_CAP) {
-      return;
-    }
+    this.attempted += 1;
     this.rows.push({
       cycleId: this.cycleId,
       source,
@@ -125,11 +226,21 @@ export class ListingDecisionTraceBuffer {
     });
   }
 
-  flush(db: DatabaseSync | undefined): number {
-    if (!db || this.rows.length === 0) {
-      return 0;
-    }
-    return insertListingDecisionTrace(db, this.rows);
+  flush(db: DatabaseSync | undefined): ListingDecisionTraceFlushReport {
+    const selected = selectListingDecisionTraceRows(this.rows, this.cap);
+    const written = db ? insertListingDecisionTrace(db, selected.kept) : selected.kept.length;
+    this.lastFlush = {
+      written,
+      dropped: selected.dropped,
+      truncated: selected.dropped > 0,
+      totalAttempted: this.attempted,
+    };
+    this.rows.length = 0;
+    return this.lastFlush;
+  }
+
+  report(): ListingDecisionTraceFlushReport {
+    return this.lastFlush;
   }
 
   snapshot(): readonly ListingDecisionRecord[] {

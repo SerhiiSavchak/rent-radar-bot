@@ -26,6 +26,11 @@ import {
   type RieltorCategoryName,
 } from "../sources/rieltor/rieltor-incremental.ts";
 import {
+  olxCategoryToCoverageKey,
+  olxPublicationBoundaryKey,
+  type OlxBrowserCategoryName,
+} from "../sources/olx/olx-browser.coverage.ts";
+import {
   DOMRIA_ACQUIRED_IDS_KEY,
   mergeDomriaAcquiredIds,
   parseDomriaAcquiredIds,
@@ -42,7 +47,10 @@ import {
   type CrossSourceDecision,
 } from "./cross-source-dedup.ts";
 import { annotateListing } from "./listing-annotations.ts";
-import { ListingDecisionTraceBuffer } from "./listing-decision-trace.ts";
+import {
+  ListingDecisionTraceBuffer,
+  type ListingDecisionTraceFlushReport,
+} from "./listing-decision-trace.ts";
 import {
   canonicalRieltorDetailTarget,
   createCycleRieltorSellerVerifier,
@@ -72,8 +80,12 @@ export type TelegramSourceAttempt = {
   /**
    * Raw collected sourceIds this cycle (capped). Lets a missing Telegram listing
    * be checked against search coverage without archiving full listing payloads.
+   * When `collectedSourceIdsComplete` is false, absence from this array is not
+   * proof the listing was never collected.
    */
   collectedSourceIds?: string[];
+  collectedSourceIdsTotal?: number;
+  collectedSourceIdsComplete?: boolean;
   sellerAcceptedOwner?: number;
   sellerAcceptedSelfDeclared?: number;
   sellerAcceptedUnknown?: number;
@@ -87,13 +99,19 @@ export type TelegramSourceAttempt = {
   baselineSkippedFailure?: boolean;
 };
 
-/** Cap raw id samples in cycle logs — enough to prove presence/absence. */
+/** Cap raw id samples in cycle logs — enough to prove presence when complete. */
 export const COLLECTED_SOURCE_ID_LOG_CAP = 120;
+
+export type CollectedSourceIdsSample = {
+  ids: string[];
+  totalUnique: number;
+  complete: boolean;
+};
 
 export function collectedSourceIdsForLog(
   listings: Array<Pick<Listing, "sourceId">>,
   cap: number = COLLECTED_SOURCE_ID_LOG_CAP,
-): string[] {
+): CollectedSourceIdsSample {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const listing of listings) {
@@ -102,12 +120,15 @@ export function collectedSourceIdsForLog(
       continue;
     }
     seen.add(id);
-    ids.push(id);
-    if (ids.length >= cap) {
-      break;
+    if (ids.length < cap) {
+      ids.push(id);
     }
   }
-  return ids;
+  return {
+    ids,
+    totalUnique: seen.size,
+    complete: seen.size <= cap,
+  };
 }
 
 export type TelegramTestCycleReport = {
@@ -153,6 +174,8 @@ export type TelegramTestCycleReport = {
   zeroEligibleListings: boolean;
   hasSourceFailures: boolean;
   partialCoverage: boolean;
+  /** Bounded listing-decision trace flush; truncated traces are not complete proof. */
+  decisionTrace?: ListingDecisionTraceFlushReport;
   dedupeSurvivesRestart: boolean;
   baselineSurvivesRestart: boolean;
   restartRebaseline: boolean;
@@ -766,6 +789,18 @@ export async function runTelegramTestCycle(
     }
     return Object.keys(watermarks).length > 0 ? watermarks : undefined;
   };
+  const readOlxWatermarks = ():
+    | Partial<Record<"apartment" | "house", Date>>
+    | undefined => {
+    const watermarks: Partial<Record<"apartment" | "house", Date>> = {};
+    for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
+      const parsed = Date.parse(readMetaValue(olxPublicationBoundaryKey(category)) ?? "");
+      if (Number.isFinite(parsed)) {
+        watermarks[olxCategoryToCoverageKey(category)] = new Date(parsed);
+      }
+    }
+    return Object.keys(watermarks).length > 0 ? watermarks : undefined;
+  };
   const readRieltorCatchup = ():
     | Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>>
     | undefined => {
@@ -849,7 +884,11 @@ export async function runTelegramTestCycle(
 
     try {
       const publicationWatermarks =
-        adapter.source === "rieltor" ? readRieltorWatermarks() : undefined;
+        adapter.source === "rieltor"
+          ? readRieltorWatermarks()
+          : adapter.source === "olx"
+            ? readOlxWatermarks()
+            : undefined;
       const rieltorCatchup = adapter.source === "rieltor" ? readRieltorCatchup() : undefined;
       const rieltorBootstrapTarget =
         adapter.source === "rieltor" ? readRieltorBootstrapTarget() : undefined;
@@ -931,6 +970,19 @@ export async function runTelegramTestCycle(
           }
         }
       }
+      if (holdDb && adapter.source === "olx" && result.coverage?.committedBoundary) {
+        const writeMeta = holdDb.prepare(
+          "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+        );
+        for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
+          const committed = result.coverage.committedBoundary[olxCategoryToCoverageKey(category)];
+          if (committed) {
+            // Only advance when the walk closed the gap; never past uncollected inventory.
+            writeMeta.run(olxPublicationBoundaryKey(category), committed);
+          }
+        }
+      }
+      const collectedIds = collectedSourceIdsForLog(result.listings);
       recordAttempt({
         source: adapter.source,
         enabled: true,
@@ -938,7 +990,9 @@ export async function runTelegramTestCycle(
         capability,
         ok: classified.ok,
         listingCount: result.listings.length,
-        collectedSourceIds: collectedSourceIdsForLog(result.listings),
+        collectedSourceIds: collectedIds.ids,
+        collectedSourceIdsTotal: collectedIds.totalUnique,
+        collectedSourceIdsComplete: collectedIds.complete,
         sellerAcceptedOwner: sellerStats.sellerAcceptedOwner,
         sellerAcceptedSelfDeclared: sellerStats.sellerAcceptedSelfDeclared,
         sellerAcceptedUnknown: sellerStats.sellerAcceptedUnknown,
@@ -1327,7 +1381,7 @@ export async function runTelegramTestCycle(
       : "send_new";
 
   const endedAt = now();
-  decisionTrace.flush(holdDb);
+  const decisionTraceFlush = decisionTrace.flush(holdDb);
   const adminAlerts = await notifySourceAdmins(deps, endedAt);
   const enabledAttempts = sourceAttempts.filter((s) => s.enabled);
   const hasSourceFailures = enabledAttempts.some((s) => !s.ok);
@@ -1374,6 +1428,7 @@ export async function runTelegramTestCycle(
     zeroEligibleListings: newlyObservedCount === 0 && sentOk === 0 && !hasSourceFailures,
     hasSourceFailures,
     partialCoverage,
+    decisionTrace: decisionTraceFlush,
     dedupeSurvivesRestart: deps.baseline.survivesRestart,
     baselineSurvivesRestart: deps.baseline.survivesRestart,
     restartRebaseline: !deps.baseline.survivesRestart,

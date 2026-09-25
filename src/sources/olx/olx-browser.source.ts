@@ -85,6 +85,9 @@ export function mapOlxBrowserExtractToFetchResult(
           ...(walkCoverage?.newestObservedPublication
             ? { newestObservedPublication: walkCoverage.newestObservedPublication }
             : {}),
+          ...(walkCoverage?.committedBoundary
+            ? { committedBoundary: walkCoverage.committedBoundary }
+            : {}),
         }
       : undefined;
 
@@ -171,12 +174,20 @@ export class OlxBrowserSource implements ListingSourceAdapter {
     const config = getConfig();
     const budgets = resolveOlxBrowserBudgets();
     const extract = this.deps.extract ?? extractOlxListingsViaBrowser;
+    const publicationWatermarks: NonNullable<OlxBrowserExtractDeps["publicationWatermarks"]> = {};
+    if (options?.publicationWatermarks?.apartment) {
+      publicationWatermarks.apartments = options.publicationWatermarks.apartment;
+    }
+    if (options?.publicationWatermarks?.house) {
+      publicationWatermarks.houses = options.publicationWatermarks.house;
+    }
     const result = await extract({
       timeoutMs: this.deps.timeoutMs ?? budgets.timeoutMs,
       categoryBudgetMs: this.deps.categoryBudgetMs ?? budgets.categoryBudgetMs,
       totalBudgetMs: this.deps.totalBudgetMs ?? budgets.totalBudgetMs,
       maxPagesPerCategory: OLX_BROWSER_PAGE_BUDGET,
       now: this.deps.now ?? (() => new Date()),
+      ...(Object.keys(publicationWatermarks).length > 0 ? { publicationWatermarks } : {}),
     });
     const mapped = mapOlxBrowserExtractToFetchResult(result, {
       startedMs: started,
@@ -191,6 +202,8 @@ export class OlxBrowserSource implements ListingSourceAdapter {
       transport: OLX_BROWSER_TRANSPORT,
       ownerOnly: config.ownerOnly,
       sellerPolicy: config.sellerPolicy,
+      coverageTruncated: mapped.coverage?.coverageTruncated ?? false,
+      boundaryReached: mapped.coverage?.boundaryReached ?? false,
     });
     return mapped;
   }

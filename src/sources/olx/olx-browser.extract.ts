@@ -28,11 +28,14 @@ import {
 import {
   assessOlxBrowserWalk,
   buildOlxBrowserCategoryUrl,
+  classifyOlxPageCatalogEvidence,
   crossedOlxPublicationBoundary,
   olxBrowserCoverageNotes,
+  olxCategoryToCoverageKey,
   organicPublicationTimes,
   planOlxBrowserPages,
   type OlxBrowserCategoryName,
+  type OlxPageCatalogEvidence,
 } from "./olx-browser.coverage.ts";
 import {
   DEFAULT_OLX_CAPTURE_LIMITS,
@@ -191,7 +194,13 @@ export type OlxBrowserExtractDeps = {
   /** chromium.launch / newPage deadline. Defaults to 15s and never exceeds the run budget. */
   launchTimeoutMs?: number;
   maxPagesPerCategory?: number;
-  /** Publication watermark for newest-first walk stop (organic cards only). */
+  /**
+   * Per-category publication watermarks (apartments / houses independently).
+   * Do not share a single watermark across categories — apartment pagination
+   * must not starve houses or advance past uncollected inventory.
+   */
+  publicationWatermarks?: Partial<Record<OlxBrowserCategoryName, Date>>;
+  /** @deprecated Prefer publicationWatermarks. Ignored when publicationWatermarks is set. */
   publicationWatermark?: Date;
   concurrency?: number;
   launch?: () => Promise<Browser>;
@@ -827,6 +836,8 @@ async function extractCategory(
  * Each category walks up to `maxPagesPerCategory` newest-first pages with
  * distance/sort query params. Stopping uses organic publication times only —
  * a known or promoted card never ends the walk by itself.
+ * Half of totalBudgetMs is reserved for houses so apartment pagination cannot
+ * starve the house category.
  */
 export async function extractOlxListingsViaBrowser(
   deps: OlxBrowserExtractDeps,
@@ -848,6 +859,20 @@ export async function extractOlxListingsViaBrowser(
   const commit = deps.commit ?? "unknown";
   const runStarted = clock();
   const runDeadlineAt = runStarted + totalBudgetMs;
+  // Reserve roughly half the wall clock so apartments cannot starve houses —
+  // but never leave apartments with less than MIN_CATEGORY_START_MS on short budgets.
+  const houseReserveMs = Math.min(
+    Math.floor(totalBudgetMs / 2),
+    Math.max(0, totalBudgetMs - MIN_CATEGORY_START_MS),
+  );
+  const apartmentsDeadlineAt = Math.min(runDeadlineAt, runStarted + totalBudgetMs - houseReserveMs);
+  const watermarks: Partial<Record<OlxBrowserCategoryName, Date>> = {
+    ...(deps.publicationWatermarks ?? {}),
+  };
+  if (!deps.publicationWatermarks && deps.publicationWatermark) {
+    watermarks.apartments = deps.publicationWatermark;
+    watermarks.houses = deps.publicationWatermark;
+  }
 
   if (deps.captureDir) {
     mkdirSync(deps.captureDir, { recursive: true, mode: 0o700 });
@@ -871,6 +896,7 @@ export async function extractOlxListingsViaBrowser(
     `navigationTimeoutMs=${navigationTimeoutMs}`,
     `categoryBudgetMs=${categoryBudgetMs}`,
     `totalBudgetMs=${totalBudgetMs}`,
+    `houseBudgetReserveMs=${houseReserveMs}`,
     `cleanupBudgetMs=${cleanupBudgetMs}`,
     "html_parser_input=main_document_then_rendered_dom",
     `parserMaxHtmlBytes=${OLX_PARSER_MAX_HTML_BYTES}`,
@@ -882,25 +908,29 @@ export async function extractOlxListingsViaBrowser(
   let pagesFetchedTotal = 0;
   let coverageTruncated = false;
   let boundaryReached = true;
+  const committedBoundary: NonNullable<IncrementalCoverage["committedBoundary"]> = {};
   let browserCloseMs: number;
   let browserCloseTimedOut: boolean;
   try {
     const apt = await extractCategoryPages(browser, "apartments", {
       plannedPages,
       navigationTimeoutMs,
-      categoryBudgetMs,
+      categoryBudgetMs: Math.min(categoryBudgetMs, Math.max(1, apartmentsDeadlineAt - clock())),
       now,
       clock,
       commit,
-      runDeadlineAt,
+      runDeadlineAt: apartmentsDeadlineAt,
       cleanupBudgetMs,
-      ...(deps.publicationWatermark ? { publicationWatermark: deps.publicationWatermark } : {}),
+      ...(watermarks.apartments ? { publicationWatermark: watermarks.apartments } : {}),
       ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
     });
     apartments = apt.merged;
     pagesFetchedTotal += apt.fetchedPages.length;
     coverageTruncated = coverageTruncated || apt.coverageTruncated;
     boundaryReached = boundaryReached && apt.boundaryReached;
+    if (apt.committed) {
+      committedBoundary[olxCategoryToCoverageKey("apartments")] = apt.committed;
+    }
     notes.push(...apt.notes);
 
     const remainingForHouses = remainingMs(runDeadlineAt, clock());
@@ -924,13 +954,16 @@ export async function extractOlxListingsViaBrowser(
         commit,
         runDeadlineAt,
         cleanupBudgetMs,
-        ...(deps.publicationWatermark ? { publicationWatermark: deps.publicationWatermark } : {}),
+        ...(watermarks.houses ? { publicationWatermark: watermarks.houses } : {}),
         ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
       });
       houses = hou.merged;
       pagesFetchedTotal += hou.fetchedPages.length;
       coverageTruncated = coverageTruncated || hou.coverageTruncated;
       boundaryReached = boundaryReached && hou.boundaryReached;
+      if (hou.committed) {
+        committedBoundary[olxCategoryToCoverageKey("houses")] = hou.committed;
+      }
       notes.push(...hou.notes);
     }
   } finally {
@@ -1034,6 +1067,7 @@ export async function extractOlxListingsViaBrowser(
           ).toISOString(),
         }
       : {}),
+    ...(Object.keys(committedBoundary).length > 0 ? { committedBoundary } : {}),
   };
   return {
     apartments,
@@ -1077,6 +1111,7 @@ async function extractCategoryPages(
   fetchedPages: number[];
   boundaryReached: boolean;
   coverageTruncated: boolean;
+  committed?: string;
   notes: string[];
 }> {
   const notes: string[] = [];
@@ -1085,6 +1120,7 @@ async function extractCategoryPages(
   let crossed = false;
   let failed = false;
   let lastPageCardCount = 0;
+  let lastPageCatalogEvidence: OlxPageCatalogEvidence = "unknown";
 
   for (const page of deps.plannedPages) {
     if (remainingMs(deps.runDeadlineAt, deps.clock()) <= 0) {
@@ -1111,6 +1147,7 @@ async function extractCategoryPages(
     pageExtracts.push(extracted);
     fetchedPages.push(page);
     lastPageCardCount = extracted.listings.length;
+    lastPageCatalogEvidence = classifyOlxPageCatalogEvidence(extracted);
     if (!extracted.accessibilityOk && extracted.listings.length === 0) {
       failed = true;
       notes.push(`${category}_page_${page}_failed`);
@@ -1123,24 +1160,32 @@ async function extractCategoryPages(
       // Keep this page's cards; do not fetch deeper pages.
       break;
     }
-    if (extracted.listings.length === 0) {
-      notes.push(`${category}_page_${page}_empty`);
+    if (lastPageCatalogEvidence === "confirmed_empty") {
+      notes.push(`${category}_page_${page}_confirmed_empty`);
+      break;
+    }
+    if (lastPageCatalogEvidence === "parse_failed" || lastPageCatalogEvidence === "unknown") {
+      // Accessible page with zero validated cards is not end-of-catalog.
+      failed = true;
+      notes.push(`${category}_page_${page}_${lastPageCatalogEvidence}`);
       break;
     }
   }
 
   const mergedListings = dedupeListings(pageExtracts.flatMap((item) => item.listings));
   const first = pageExtracts[0];
+  const newestOrganicTimes = organicPublicationTimes(mergedListings);
   const assessed = assessOlxBrowserWalk({
     plannedPages: deps.plannedPages,
     fetchedPages,
     lastPageCardCount,
+    lastPageCatalogEvidence,
     crossedBoundary: crossed,
     failed,
-    ...(organicPublicationTimes(mergedListings).length > 0
+    ...(newestOrganicTimes.length > 0
       ? {
           newestOrganic: new Date(
-            Math.max(...organicPublicationTimes(mergedListings).map((d) => d.getTime())),
+            Math.max(...newestOrganicTimes.map((d) => d.getTime())),
           ).toISOString(),
         }
       : {}),
@@ -1149,6 +1194,7 @@ async function extractCategoryPages(
     `${category}_pages=${fetchedPages.join(",") || "none"}`,
     `${category}_boundary=${assessed.boundaryReached}`,
     `${category}_truncated=${assessed.coverageTruncated}`,
+    `${category}_catalog_evidence=${lastPageCatalogEvidence}`,
   );
 
   const merged: OlxBrowserCategoryExtract = first
@@ -1175,6 +1221,7 @@ async function extractCategoryPages(
     fetchedPages,
     boundaryReached: assessed.boundaryReached,
     coverageTruncated: assessed.coverageTruncated,
+    ...(assessed.committed ? { committed: assessed.committed } : {}),
     notes,
   };
 }

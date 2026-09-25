@@ -5,7 +5,7 @@ export type FetchListingsOptions = {
   includeHouses?: boolean;
   includeApartments?: boolean;
   preferOwners?: boolean;
-  /** Committed newest publication already covered, per RIELTOR category. */
+  /** Committed newest publication already covered, per category (RIELTOR apartment/house; OLX maps apartments→apartment, houses→house). */
   publicationWatermarks?: Partial<Record<"apartment" | "house", Date>>;
   /** In-progress backlog cursor. Does not replace the committed watermark. */
   rieltorCatchup?: Partial<
