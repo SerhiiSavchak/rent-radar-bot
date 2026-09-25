@@ -18,6 +18,7 @@ import {
 import { applySellerProfileGate } from "./seller-profile.ts";
 import type { SellerProfilePolicies } from "./seller-profile.ts";
 import {
+  formatRieltorCoverage,
   parseRieltorCatchup,
   rieltorCatchupKey,
   rieltorPublicationBoundaryKey,
@@ -498,14 +499,17 @@ function capabilityFor(source: string, enabled: boolean, config: AppConfig): str
   return "http";
 }
 
-function coverageDiagnostic(coverage: NonNullable<SourceFetchResult["coverage"]>): string {
+function coverageDiagnostic(
+  source: string,
+  coverage: NonNullable<SourceFetchResult["coverage"]>,
+): string {
   const incrementalWalk =
     coverage.catchup !== undefined ||
     coverage.committedBoundary !== undefined ||
     coverage.oldestObservedPublication !== undefined ||
     coverage.newestObservedPublication !== undefined;
   if (incrementalWalk) {
-    return formatOlxCoverage(coverage);
+    return source === "olx" ? formatOlxCoverage(coverage) : formatRieltorCoverage(coverage);
   }
   return [
     "acquired_response_cap",
@@ -515,7 +519,10 @@ function coverageDiagnostic(coverage: NonNullable<SourceFetchResult["coverage"]>
   ].join(" ");
 }
 
-function classifySourceAttempt(result: SourceFetchResult): {
+function classifySourceAttempt(
+  source: string,
+  result: SourceFetchResult,
+): {
   ok: boolean;
   processable: boolean;
   resultKind: string;
@@ -554,7 +561,7 @@ function classifySourceAttempt(result: SourceFetchResult): {
       ok: false,
       processable: true,
       resultKind: "coverage_degraded",
-      errorSafe: coverageDiagnostic(result.coverage),
+      errorSafe: coverageDiagnostic(source, result.coverage),
     };
   }
   if ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty") {
@@ -940,7 +947,7 @@ export async function runTelegramTestCycle(
         ...(olxBootstrapTarget ? { olxBootstrapTarget } : {}),
         ...(domriaKnownIds && domriaKnownIds.length > 0 ? { domriaKnownIds } : {}),
       });
-      const classified = classifySourceAttempt(result);
+      const classified = classifySourceAttempt(adapter.source, result);
       // Do not drop old publishedAt here — baseline must see current inventory.
       // Freshness classifier (not MAX_LISTING_AGE filter) gates what is sent as new.
       const { maxListingAgeMinutes: _ignoredAge, ...configWithoutAge } = deps.config;
