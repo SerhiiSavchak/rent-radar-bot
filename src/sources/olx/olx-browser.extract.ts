@@ -22,11 +22,18 @@ import { chromium, type Browser, type Response } from "playwright";
 import { awaitWithTimeout } from "../../utils/deadline.ts";
 import type { Listing } from "../../domain/listing.ts";
 import {
-  OLX_BROWSER_APARTMENTS_URL,
-  OLX_BROWSER_HOUSES_URL,
   classifyOlxBrowserProbe,
   type OlxBrowserOutcome,
 } from "../../probe/olx-browser-classify.ts";
+import {
+  assessOlxBrowserWalk,
+  buildOlxBrowserCategoryUrl,
+  crossedOlxPublicationBoundary,
+  olxBrowserCoverageNotes,
+  organicPublicationTimes,
+  planOlxBrowserPages,
+  type OlxBrowserCategoryName,
+} from "./olx-browser.coverage.ts";
 import {
   DEFAULT_OLX_CAPTURE_LIMITS,
   extractCardFragmentsFromHtml,
@@ -46,6 +53,8 @@ import {
   type OlxHtmlExtractDiagnostics,
 } from "./olx-browser.html-extract.ts";
 import { parseOlxOffersPayload } from "./olx.parser.ts";
+import { OLX_DISTANCE_KM } from "./olx.source.ts";
+import type { IncrementalCoverage } from "../../domain/source.ts";
 
 export type OlxBrowserExtractRejection = {
   reason: string;
@@ -169,6 +178,7 @@ export type OlxBrowserExtractResult = {
   wallClockMs: number;
   budgetExceeded: boolean;
   timing: OlxBrowserExtractTiming;
+  coverage?: IncrementalCoverage;
 };
 
 export type OlxBrowserExtractDeps = {
@@ -181,6 +191,8 @@ export type OlxBrowserExtractDeps = {
   /** chromium.launch / newPage deadline. Defaults to 15s and never exceeds the run budget. */
   launchTimeoutMs?: number;
   maxPagesPerCategory?: number;
+  /** Publication watermark for newest-first walk stop (organic cards only). */
+  publicationWatermark?: Date;
   concurrency?: number;
   launch?: () => Promise<Browser>;
   now?: () => Date;
@@ -812,6 +824,9 @@ async function extractCategory(
 
 /**
  * One Chromium launch, apartments then houses (concurrency=1), always close.
+ * Each category walks up to `maxPagesPerCategory` newest-first pages with
+ * distance/sort query params. Stopping uses organic publication times only —
+ * a known or promoted card never ends the walk by itself.
  */
 export async function extractOlxListingsViaBrowser(
   deps: OlxBrowserExtractDeps,
@@ -823,7 +838,11 @@ export async function extractOlxListingsViaBrowser(
     deps.totalBudgetMs ?? categoryBudgetMs * 2 + 5_000,
   );
   const cleanupBudgetMs = Math.max(1, deps.cleanupBudgetMs ?? DEFAULT_OLX_CLEANUP_BUDGET_MS);
-  const maxPages = Math.max(1, Math.min(deps.maxPagesPerCategory ?? 1, 2));
+  const maxPages = Math.max(
+    1,
+    Math.min(deps.maxPagesPerCategory ?? 1, 3),
+  );
+  const plannedPages = planOlxBrowserPages({ pageBudget: maxPages, mode: "steady" });
   const now = deps.now ?? (() => new Date());
   const clock = deps.clockMs ?? (() => Date.now());
   const commit = deps.commit ?? "unknown";
@@ -847,7 +866,6 @@ export async function extractOlxListingsViaBrowser(
   const notes: string[] = [
     "transport=stock_playwright_chromium",
     "opt_in_only=true",
-    "not_wired_to_telegram=true",
     `maxPagesPerCategory=${maxPages}`,
     "concurrency=1",
     `navigationTimeoutMs=${navigationTimeoutMs}`,
@@ -857,13 +875,18 @@ export async function extractOlxListingsViaBrowser(
     "html_parser_input=main_document_then_rendered_dom",
     `parserMaxHtmlBytes=${OLX_PARSER_MAX_HTML_BYTES}`,
     `diagnosticMaxHtmlBytes=${DEFAULT_OLX_CAPTURE_LIMITS.maxHtmlBytes}`,
+    `olx_browser_query=${buildOlxBrowserCategoryUrl("apartments")}`,
   ];
   let apartments: OlxBrowserCategoryExtract | undefined;
   let houses: OlxBrowserCategoryExtract | undefined;
+  let pagesFetchedTotal = 0;
+  let coverageTruncated = false;
+  let boundaryReached = true;
   let browserCloseMs: number;
   let browserCloseTimedOut: boolean;
   try {
-    apartments = await extractCategory(browser, "apartments", OLX_BROWSER_APARTMENTS_URL, {
+    const apt = await extractCategoryPages(browser, "apartments", {
+      plannedPages,
       navigationTimeoutMs,
       categoryBudgetMs,
       now,
@@ -871,19 +894,29 @@ export async function extractOlxListingsViaBrowser(
       commit,
       runDeadlineAt,
       cleanupBudgetMs,
+      ...(deps.publicationWatermark ? { publicationWatermark: deps.publicationWatermark } : {}),
       ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
     });
+    apartments = apt.merged;
+    pagesFetchedTotal += apt.fetchedPages.length;
+    coverageTruncated = coverageTruncated || apt.coverageTruncated;
+    boundaryReached = boundaryReached && apt.boundaryReached;
+    notes.push(...apt.notes);
+
     const remainingForHouses = remainingMs(runDeadlineAt, clock());
     if (remainingForHouses < MIN_CATEGORY_START_MS || clock() >= runDeadlineAt) {
       notes.push("houses_skipped_total_budget");
+      coverageTruncated = true;
+      boundaryReached = false;
       houses = emptyCategory(
         "houses",
-        OLX_BROWSER_HOUSES_URL,
+        buildOlxBrowserCategoryUrl("houses"),
         "total_budget_exhausted",
         `remainingMs=${remainingForHouses}`,
       );
     } else {
-      houses = await extractCategory(browser, "houses", OLX_BROWSER_HOUSES_URL, {
+      const hou = await extractCategoryPages(browser, "houses", {
+        plannedPages,
         navigationTimeoutMs: Math.min(navigationTimeoutMs, remainingForHouses),
         categoryBudgetMs: Math.min(categoryBudgetMs, remainingForHouses),
         now,
@@ -891,8 +924,14 @@ export async function extractOlxListingsViaBrowser(
         commit,
         runDeadlineAt,
         cleanupBudgetMs,
+        ...(deps.publicationWatermark ? { publicationWatermark: deps.publicationWatermark } : {}),
         ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
       });
+      houses = hou.merged;
+      pagesFetchedTotal += hou.fetchedPages.length;
+      coverageTruncated = coverageTruncated || hou.coverageTruncated;
+      boundaryReached = boundaryReached && hou.boundaryReached;
+      notes.push(...hou.notes);
     }
   } finally {
     const closed = await closeWithBudget(() => browser.close(), cleanupBudgetMs);
@@ -903,6 +942,16 @@ export async function extractOlxListingsViaBrowser(
   if (!apartments || !houses) {
     throw new Error("OLX browser extract incomplete before browser.close()");
   }
+
+  notes.push(
+    ...olxBrowserCoverageNotes({
+      distanceKm: OLX_DISTANCE_KM,
+      pageBudget: maxPages,
+      pagesFetched: pagesFetchedTotal,
+      boundaryReached,
+      coverageTruncated,
+    }),
+  );
 
   if (deps.captureDir) {
     writeFileSync(
@@ -969,6 +1018,23 @@ export async function extractOlxListingsViaBrowser(
   if (cleanupTimedOut) {
     notes.push("cleanup_budget_hit=true");
   }
+  const organic = organicPublicationTimes(listings);
+  const coverage: IncrementalCoverage = {
+    pagesFetched: pagesFetchedTotal,
+    cardsFetched: listings.length,
+    boundaryReached,
+    coverageTruncated,
+    ...(organic.length > 0
+      ? {
+          oldestObservedPublication: new Date(
+            Math.min(...organic.map((d) => d.getTime())),
+          ).toISOString(),
+          newestObservedPublication: new Date(
+            Math.max(...organic.map((d) => d.getTime())),
+          ).toISOString(),
+        }
+      : {}),
+  };
   return {
     apartments,
     houses,
@@ -986,6 +1052,129 @@ export async function extractOlxListingsViaBrowser(
       browserCloseMs,
       browserCloseTimedOut,
     },
+    coverage,
     ...(deps.captureDir ? { captureRootDir: deps.captureDir } : {}),
+  };
+}
+
+async function extractCategoryPages(
+  browser: Browser,
+  category: OlxBrowserCategoryName,
+  deps: {
+    plannedPages: number[];
+    navigationTimeoutMs: number;
+    categoryBudgetMs: number;
+    now: () => Date;
+    clock: () => number;
+    commit: string;
+    runDeadlineAt: number;
+    cleanupBudgetMs: number;
+    captureDir?: string;
+    publicationWatermark?: Date;
+  },
+): Promise<{
+  merged: OlxBrowserCategoryExtract;
+  fetchedPages: number[];
+  boundaryReached: boolean;
+  coverageTruncated: boolean;
+  notes: string[];
+}> {
+  const notes: string[] = [];
+  const fetchedPages: number[] = [];
+  const pageExtracts: OlxBrowserCategoryExtract[] = [];
+  let crossed = false;
+  let failed = false;
+  let lastPageCardCount = 0;
+
+  for (const page of deps.plannedPages) {
+    if (remainingMs(deps.runDeadlineAt, deps.clock()) <= 0) {
+      notes.push(`${category}_page_${page}_skipped_budget`);
+      failed = fetchedPages.length === 0;
+      break;
+    }
+    const url = buildOlxBrowserCategoryUrl(category, { page });
+    const pagesLeft = Math.max(1, deps.plannedPages.length - fetchedPages.length);
+    const pageBudget = Math.min(
+      deps.categoryBudgetMs,
+      Math.max(MIN_GOTO_BUDGET_MS, Math.floor(remainingMs(deps.runDeadlineAt, deps.clock()) / pagesLeft)),
+    );
+    const extracted = await extractCategory(browser, category, url, {
+      navigationTimeoutMs: Math.min(deps.navigationTimeoutMs, pageBudget),
+      categoryBudgetMs: pageBudget,
+      now: deps.now,
+      clock: deps.clock,
+      commit: deps.commit,
+      runDeadlineAt: deps.runDeadlineAt,
+      cleanupBudgetMs: deps.cleanupBudgetMs,
+      ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
+    });
+    pageExtracts.push(extracted);
+    fetchedPages.push(page);
+    lastPageCardCount = extracted.listings.length;
+    if (!extracted.accessibilityOk && extracted.listings.length === 0) {
+      failed = true;
+      notes.push(`${category}_page_${page}_failed`);
+      break;
+    }
+    const organic = organicPublicationTimes(extracted.listings);
+    if (crossedOlxPublicationBoundary(organic, deps.publicationWatermark)) {
+      crossed = true;
+      notes.push(`${category}_page_${page}_crossed_publication_boundary`);
+      // Keep this page's cards; do not fetch deeper pages.
+      break;
+    }
+    if (extracted.listings.length === 0) {
+      notes.push(`${category}_page_${page}_empty`);
+      break;
+    }
+  }
+
+  const mergedListings = dedupeListings(pageExtracts.flatMap((item) => item.listings));
+  const first = pageExtracts[0];
+  const assessed = assessOlxBrowserWalk({
+    plannedPages: deps.plannedPages,
+    fetchedPages,
+    lastPageCardCount,
+    crossedBoundary: crossed,
+    failed,
+    ...(organicPublicationTimes(mergedListings).length > 0
+      ? {
+          newestOrganic: new Date(
+            Math.max(...organicPublicationTimes(mergedListings).map((d) => d.getTime())),
+          ).toISOString(),
+        }
+      : {}),
+  });
+  notes.push(
+    `${category}_pages=${fetchedPages.join(",") || "none"}`,
+    `${category}_boundary=${assessed.boundaryReached}`,
+    `${category}_truncated=${assessed.coverageTruncated}`,
+  );
+
+  const merged: OlxBrowserCategoryExtract = first
+    ? {
+        ...first,
+        listings: mergedListings,
+        validatedListingCount: mergedListings.length,
+        requestedUrl: buildOlxBrowserCategoryUrl(category),
+        rejections: pageExtracts.flatMap((item) => item.rejections),
+        elapsedMs: pageExtracts.reduce((sum, item) => sum + (item.elapsedMs ?? 0), 0),
+        accessibilityOk: pageExtracts.some((item) => item.accessibilityOk),
+        timedOut: pageExtracts.some((item) => item.timedOut),
+        budgetExceeded: pageExtracts.some((item) => item.budgetExceeded),
+      }
+    : emptyCategory(
+        category,
+        buildOlxBrowserCategoryUrl(category),
+        "category_budget_exhausted",
+        "no pages fetched",
+      );
+
+  return {
+    merged,
+    fetchedPages,
+    boundaryReached: assessed.boundaryReached,
+    coverageTruncated: assessed.coverageTruncated,
+    notes,
   };
 }

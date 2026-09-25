@@ -245,6 +245,23 @@ export function deriveDomriaInspectResultKind(input: {
   return "parser_failure";
 }
 
+/** Prefer the actionable failure note over the transport-budget slogan in notes[0]. */
+export function selectDomriaHealthMessage(notes: string[]): string {
+  const TRANSPORT_SLOGAN =
+    "Production DIM.RIA acquisition is public HTML embedded JSON. The official API is not called.";
+  const actionable = [...notes]
+    .reverse()
+    .find(
+      (note) =>
+        note !== TRANSPORT_SLOGAN &&
+        (/parser_failure|transport_|blocked|timeout|missing|invalid|cap |HTTP |error|failed|unavailable|acquired/i.test(
+          note,
+        ) ||
+          note.includes(":")),
+    );
+  return actionable ?? notes[notes.length - 1] ?? notes[0] ?? "DIM.RIA returned no listings";
+}
+
 function finish(
   listings: Listing[],
   started: number,
@@ -298,7 +315,7 @@ function finish(
           ? "DIM.RIA VALID_EMPTY_RESULT: catalog structure present, zero listings"
           : healthyFinal
             ? `DIM.RIA returned ${unique.length} listings via ${transport}`
-            : (notes[0] ?? "DIM.RIA returned no listings"),
+            : selectDomriaHealthMessage(notes),
     },
   };
 }

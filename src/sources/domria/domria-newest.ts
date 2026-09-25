@@ -128,16 +128,26 @@ export function mergeDomriaAcquiredIds(
 
 export function parseDomriaSearchIds(bodyText: string):
   | { ok: true; ids: string[]; empty: boolean }
-  | { ok: false } {
+  | { ok: false; reason: string } {
+  const trimmed = bodyText.trim();
+  if (!trimmed) {
+    return { ok: false, reason: "empty_body" };
+  }
+  if (/^<!DOCTYPE|^<html[\s>]/i.test(trimmed)) {
+    return { ok: false, reason: "html_page_not_search_json" };
+  }
   let json: unknown;
   try {
     json = JSON.parse(bodyText) as unknown;
   } catch {
-    return { ok: false };
+    return { ok: false, reason: "json_parse_failed" };
   }
   const parsed = domriaSearchResponseSchema.safeParse(json);
-  if (!parsed.success || !Array.isArray(parsed.data.items)) {
-    return { ok: false };
+  if (!parsed.success) {
+    return { ok: false, reason: "schema_mismatch" };
+  }
+  if (!Array.isArray(parsed.data.items)) {
+    return { ok: false, reason: "items_missing" };
   }
   const ids = parsed.data.items
     .map((item) => String(item))
@@ -276,7 +286,9 @@ export async function acquireDomriaNewest(input: {
     if (!parsedIds.ok) {
       parserFailure = true;
       coverageTruncated = true;
-      notes.push(`${category} parser_failure: searchEngine items missing`);
+      notes.push(
+        `${category} parser_failure: searchEngine items missing (${parsedIds.reason})`,
+      );
       continue;
     }
     sawSearch = true;

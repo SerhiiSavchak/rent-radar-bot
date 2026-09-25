@@ -19,6 +19,7 @@ const DETAIL_PATH = /^\/([a-z0-9-]+)\/(flats-rent|houses-rent)\/view\/(\d+)\/?$/
 export type StoredSellerVerdict =
   | "confirmed_owner"
   | "confirmed_intermediary"
+  | "profile_likely_intermediary"
   | "unknown"
   | "rate_limited"
   | "transport_failure"
@@ -32,6 +33,7 @@ export type LinkedSellerOutcome =
   | "cache_unknown"
   | "detail_confirmed_agent"
   | "detail_confirmed_owner"
+  | "detail_profile_likely"
   | "detail_unknown"
   | "detail_rate_limited"
   | "detail_transport_failure"
@@ -63,6 +65,7 @@ export type LinkedSellerVerificationCounts = {
   cacheUnknown: number;
   detailConfirmedAgent: number;
   detailConfirmedOwner: number;
+  detailProfileLikely: number;
   detailUnknown: number;
   detailRateLimited: number;
   detailTransportFailure: number;
@@ -81,6 +84,7 @@ export function emptyLinkedSellerVerification(): LinkedSellerVerificationCounts 
     cacheUnknown: 0,
     detailConfirmedAgent: 0,
     detailConfirmedOwner: 0,
+    detailProfileLikely: 0,
     detailUnknown: 0,
     detailRateLimited: 0,
     detailTransportFailure: 0,
@@ -502,6 +506,15 @@ function decisionFromStored(row: CacheRow, externalId: string): LinkedSellerDeci
   if (row.sellerVerdict === "confirmed_intermediary") {
     return {
       outcome: "cache_confirmed_agent",
+      drop: true,
+      requested: false,
+      externalId,
+      ...(row.sellerEvidence ? { evidence: row.sellerEvidence } : {}),
+    };
+  }
+  if (row.sellerVerdict === "profile_likely_intermediary") {
+    return {
+      outcome: "detail_profile_likely",
       drop: true,
       requested: false,
       externalId,

@@ -170,6 +170,9 @@ function buildListingFromOffer(offer: OlxOffer, discoveredAt: Date): Listing | u
       ...(offer.last_refresh_time ? { lastRefreshTime: offer.last_refresh_time } : {}),
       ...(offer.pushup_time ? { pushupTime: offer.pushup_time } : {}),
       ...(offer.business !== undefined ? { olxIsBusiness: offer.business } : {}),
+      ...((offer as { is_promoted?: boolean }).is_promoted === true
+        ? { olxIsPromoted: true }
+        : {}),
       ...(offer.user?.id !== undefined ? { olxUserId: String(offer.user.id) } : {}),
       ...(offer.user ? { olxUserSellerType: offer.user.sellerType ?? null } : {}),
       ...(offer.category?.id !== undefined ? { olxCategoryId: offer.category.id } : {}),

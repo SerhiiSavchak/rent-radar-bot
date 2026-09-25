@@ -21,6 +21,7 @@ import {
   type OlxBrowserExtractDeps,
   type OlxBrowserExtractResult,
 } from "./olx-browser.extract.ts";
+import { buildOlxBrowserCategoryUrl, OLX_BROWSER_PAGE_BUDGET } from "./olx-browser.coverage.ts";
 
 export const OLX_BROWSER_TRANSPORT = "stock_playwright_chromium";
 
@@ -67,6 +68,26 @@ export function mapOlxBrowserExtractToFetchResult(
   const reportedStatus = result.apartments.httpStatus ?? result.houses.httpStatus;
   const blockedWithoutExtract = blockedStatus !== undefined && !result.extractionOk;
 
+  const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
+  const walkCoverage = result.coverage;
+  const coverageTruncated =
+    Boolean(capCoverage?.coverageTruncated) || Boolean(walkCoverage?.coverageTruncated);
+  const coverage =
+    walkCoverage || capCoverage
+      ? {
+          pagesFetched: walkCoverage?.pagesFetched ?? 1,
+          cardsFetched: unique.length,
+          boundaryReached: walkCoverage?.boundaryReached ?? !coverageTruncated,
+          coverageTruncated,
+          ...(walkCoverage?.oldestObservedPublication
+            ? { oldestObservedPublication: walkCoverage.oldestObservedPublication }
+            : {}),
+          ...(walkCoverage?.newestObservedPublication
+            ? { newestObservedPublication: walkCoverage.newestObservedPublication }
+            : {}),
+        }
+      : undefined;
+
   let resultKind: FetchResultKind;
   if (blockedWithoutExtract) {
     resultKind = "http_error";
@@ -78,8 +99,8 @@ export function mapOlxBrowserExtractToFetchResult(
     resultKind = "parser_failure";
   }
 
-  const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
-  const healthy = (resultKind === "ok" || resultKind === "valid_empty") && !acquired.truncated;
+  const healthy =
+    (resultKind === "ok" || resultKind === "valid_empty") && !coverageTruncated;
   const notes = [
     `transport=${OLX_BROWSER_TRANSPORT}`,
     "no_http_api_fallback=true",
@@ -88,8 +109,9 @@ export function mapOlxBrowserExtractToFetchResult(
     `apartments=${result.apartments.validatedListingCount}`,
     `houses=${result.houses.validatedListingCount}`,
     ...(acquired.truncated ? ["acquired_response_cap=trimmed"] : []),
+    ...(coverageTruncated ? ["olx_browser_coverage_truncated=true"] : []),
     `htmlInputKind=${result.apartments.htmlInputKind ?? "none"}/${result.houses.htmlInputKind ?? "none"}`,
-    ...result.notes.slice(0, 6),
+    ...result.notes.slice(0, 10),
   ];
 
   return {
@@ -97,7 +119,7 @@ export function mapOlxBrowserExtractToFetchResult(
     transport: OLX_BROWSER_TRANSPORT,
     dataKind: "LIVE DATA",
     resultKind,
-    ...(capCoverage ? { coverage: capCoverage } : {}),
+    ...(coverage ? { coverage } : {}),
     rawNotes: notes,
     ...(reportedStatus !== undefined ? { httpStatus: reportedStatus } : {}),
     health: {
@@ -105,16 +127,18 @@ export function mapOlxBrowserExtractToFetchResult(
       healthy,
       checkedAt: new Date(),
       latencyMs: Date.now() - options.startedMs,
-      resultKind,
+      resultKind: coverageTruncated && resultKind === "ok" ? "ok" : resultKind,
       transport: OLX_BROWSER_TRANSPORT,
       ...(reportedStatus !== undefined ? { httpStatus: reportedStatus } : {}),
       message: healthy
         ? `OLX browser extract returned ${unique.length} listings`
-        : acquired.truncated
-          ? `OLX browser extract kept ${unique.length} listings after the acquired-response cap`
-          : blockedWithoutExtract
-            ? `OLX browser transport_blocked HTTP ${blockedStatus} — not an HTTP API success and not a catalog extract`
-            : `OLX browser extract did not return listings (${resultKind})`,
+        : coverageTruncated
+          ? `OLX browser partial coverage: kept ${unique.length} listings (page/budget truncated)`
+          : acquired.truncated
+            ? `OLX browser extract kept ${unique.length} listings after the acquired-response cap`
+            : blockedWithoutExtract
+              ? `OLX browser transport_blocked HTTP ${blockedStatus} — not an HTTP API success and not a catalog extract`
+              : `OLX browser extract did not return listings (${resultKind})`,
     },
   };
 }
@@ -151,7 +175,7 @@ export class OlxBrowserSource implements ListingSourceAdapter {
       timeoutMs: this.deps.timeoutMs ?? budgets.timeoutMs,
       categoryBudgetMs: this.deps.categoryBudgetMs ?? budgets.categoryBudgetMs,
       totalBudgetMs: this.deps.totalBudgetMs ?? budgets.totalBudgetMs,
-      maxPagesPerCategory: 1,
+      maxPagesPerCategory: OLX_BROWSER_PAGE_BUDGET,
       now: this.deps.now ?? (() => new Date()),
     });
     const mapped = mapOlxBrowserExtractToFetchResult(result, {
@@ -188,17 +212,19 @@ export function emptyOlxBrowserExtractResult(
     timedOut: false,
     htmlInputKind: "none" as const,
   };
+  const apartmentsUrl = buildOlxBrowserCategoryUrl("apartments");
+  const housesUrl = buildOlxBrowserCategoryUrl("houses");
   return {
     apartments: {
       category: "apartments",
-      requestedUrl: "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
-      finalUrl: "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/",
+      requestedUrl: apartmentsUrl,
+      finalUrl: apartmentsUrl,
       ...emptyCategory,
     },
     houses: {
       category: "houses",
-      requestedUrl: "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/",
-      finalUrl: "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/",
+      requestedUrl: housesUrl,
+      finalUrl: housesUrl,
       ...emptyCategory,
     },
     listings: [],
@@ -206,7 +232,7 @@ export function emptyOlxBrowserExtractResult(
     extractionOk: false,
     browserClosed: true,
     notes: [],
-    budgets: { navigationTimeoutMs: 1, categoryBudgetMs: 1, totalBudgetMs: 1 },
+    budgets: { navigationTimeoutMs: 0, categoryBudgetMs: 0, totalBudgetMs: 0 },
     wallClockMs: 0,
     budgetExceeded: false,
     timing: {

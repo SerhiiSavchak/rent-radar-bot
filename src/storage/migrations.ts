@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 /** 4 = cross-source identities. 5 = source health and retention indexes. 6 = linked seller cache. */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const MIGRATION_1 = `
 CREATE TABLE IF NOT EXISTS listings (
@@ -214,6 +214,25 @@ CREATE TABLE IF NOT EXISTS seller_profile_cache (
 );
 `;
 
+const MIGRATION_10 = `
+CREATE TABLE IF NOT EXISTS listing_decision_trace (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cycle_id INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  identity_key TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS listing_decision_trace_lookup_idx
+  ON listing_decision_trace (source, source_id, created_at);
+CREATE INDEX IF NOT EXISTS listing_decision_trace_cycle_idx
+  ON listing_decision_trace (cycle_id, source);
+CREATE INDEX IF NOT EXISTS listing_decision_trace_created_idx
+  ON listing_decision_trace (created_at);
+`;
+
 const MIGRATIONS: Record<number, string> = {
   1: MIGRATION_1,
   2: MIGRATION_2,
@@ -224,6 +243,7 @@ const MIGRATIONS: Record<number, string> = {
   7: MIGRATION_7,
   8: MIGRATION_8,
   9: MIGRATION_9,
+  10: MIGRATION_10,
 };
 
 export function sqliteMigrationSql(version: number): string {

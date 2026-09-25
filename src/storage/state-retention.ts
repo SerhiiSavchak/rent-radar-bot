@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { deleteExpiredListingDecisionTraces } from "../delivery/listing-decision-trace.ts";
 import { deleteExpiredSellerVerifications } from "../delivery/rieltor-detail-seller.ts";
 import { deleteExpiredSellerProfiles } from "../delivery/seller-profile.ts";
 import { deleteAbandonedSellerHolds } from "../delivery/seller-verification-hold.ts";
@@ -93,6 +94,7 @@ function runStateCleanup(
   let externalSellerRowsRemoved: number;
   let sellerHoldRowsRemoved: number;
   let sellerProfileRowsRemoved: number;
+  let diagnosticRowsRemoved: number;
 
   db.exec("BEGIN IMMEDIATE;");
   try {
@@ -145,6 +147,7 @@ function runStateCleanup(
     externalSellerRowsRemoved = deleteExpiredSellerVerifications(db, now);
     sellerHoldRowsRemoved = deleteAbandonedSellerHolds(db, now);
     sellerProfileRowsRemoved = deleteExpiredSellerProfiles(db, now);
+    diagnosticRowsRemoved = deleteExpiredListingDecisionTraces(db, now);
 
     db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)").run(
       STATE_CLEANUP_META_KEY,
@@ -167,7 +170,7 @@ function runStateCleanup(
     seenRowsRemoved,
     crossSourceIdentitiesRemoved,
     sentOutboxRowsRemoved,
-    diagnosticRowsRemoved: 0,
+    diagnosticRowsRemoved,
     externalSellerRowsRemoved,
     sellerHoldRowsRemoved,
     sellerProfileRowsRemoved,

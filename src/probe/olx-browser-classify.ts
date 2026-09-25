@@ -3,11 +3,11 @@
  * Kept separate from the production OlxSource HTTP adapter.
  */
 
-export const OLX_BROWSER_APARTMENTS_URL =
-  "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
-
-export const OLX_BROWSER_HOUSES_URL =
-  "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/";
+export {
+  OLX_BROWSER_APARTMENTS_URL,
+  OLX_BROWSER_HOUSES_URL,
+  buildOlxBrowserCategoryUrl,
+} from "../sources/olx/olx-browser.coverage.ts";
 
 export type OlxBrowserOutcome =
   | "browser_accessible"

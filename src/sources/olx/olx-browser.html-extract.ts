@@ -446,6 +446,10 @@ export function adaptOracleCatalogAd(raw: unknown): Record<string, unknown> | un
       : undefined;
   const url = absoluteOlxUrl(typeof ad.url === "string" ? ad.url : undefined, ad.urlPath);
   const photos = normalizeCatalogPhotos(ad.photos);
+  const promoted =
+    ad.isPromoted === true ||
+    asRecord(ad.promotion)?.top_ad === true ||
+    asRecord(ad.promotion)?.topAd === true;
 
   return {
     id,
@@ -456,6 +460,7 @@ export function adaptOracleCatalogAd(raw: unknown): Record<string, unknown> | un
     ...(refreshed ? { last_refresh_time: refreshed } : {}),
     ...(pushup ? { pushup_time: pushup } : {}),
     ...(business !== undefined ? { business } : {}),
+    ...(promoted ? { is_promoted: true } : {}),
     ...(paramsIn.length > 0 ? { params: paramsIn } : {}),
     ...(location ? { location } : {}),
     ...(mapIn ? { map: mapIn } : {}),

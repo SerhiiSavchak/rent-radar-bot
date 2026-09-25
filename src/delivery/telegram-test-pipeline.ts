@@ -42,6 +42,7 @@ import {
   type CrossSourceDecision,
 } from "./cross-source-dedup.ts";
 import { annotateListing } from "./listing-annotations.ts";
+import { ListingDecisionTraceBuffer } from "./listing-decision-trace.ts";
 import {
   canonicalRieltorDetailTarget,
   createCycleRieltorSellerVerifier,
@@ -68,6 +69,11 @@ export type TelegramSourceAttempt = {
   capability: string;
   ok: boolean;
   listingCount: number;
+  /**
+   * Raw collected sourceIds this cycle (capped). Lets a missing Telegram listing
+   * be checked against search coverage without archiving full listing payloads.
+   */
+  collectedSourceIds?: string[];
   sellerAcceptedOwner?: number;
   sellerAcceptedSelfDeclared?: number;
   sellerAcceptedUnknown?: number;
@@ -80,6 +86,29 @@ export type TelegramSourceAttempt = {
   baselineEstablished?: boolean;
   baselineSkippedFailure?: boolean;
 };
+
+/** Cap raw id samples in cycle logs — enough to prove presence/absence. */
+export const COLLECTED_SOURCE_ID_LOG_CAP = 120;
+
+export function collectedSourceIdsForLog(
+  listings: Array<Pick<Listing, "sourceId">>,
+  cap: number = COLLECTED_SOURCE_ID_LOG_CAP,
+): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const listing of listings) {
+    const id = listing.sourceId?.trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= cap) {
+      break;
+    }
+  }
+  return ids;
+}
 
 export type TelegramTestCycleReport = {
   cycle: number;
@@ -153,6 +182,13 @@ export type TelegramTestPipelineDeps = {
   /** Test double for exact LUN→OLX original-source seller checks. */
   fetchOlxDetail?: (url: string, timeoutMs: number) => Promise<RieltorDetailPage>;
   olxDetailGapMs?: number;
+  /** Test double for bounded public OLX seller profile inventory after linked unknown. */
+  probeOlxProfile?: (input: {
+    listingUrl: string;
+    listingHtml?: string;
+    profilePath?: string;
+    timeoutMs: number;
+  }) => Promise<import("../sources/olx/olx-seller-profile.ts").OlxProfileSnapshot>;
   /**
    * Optional. The poller reads OLX listing-page display prices for cards about
    * to be sent. Tests omit this so they do not open a browser.
@@ -315,6 +351,9 @@ function noteLinkedSeller(
     case "detail_confirmed_owner":
       linked.detailConfirmedOwner += 1;
       break;
+    case "detail_profile_likely":
+      linked.detailProfileLikely += 1;
+      break;
     case "detail_unknown":
       linked.detailUnknown += 1;
       break;
@@ -350,6 +389,7 @@ function noteLinkedSeller(
 function countSellerDecisions(
   listings: Listing[],
   config: AppConfig,
+  trace?: ListingDecisionTraceBuffer,
 ): ReturnType<typeof emptySellerStats> {
   const stats = emptySellerStats();
   const { maxListingAgeMinutes: _ignoredAge, ...configWithoutAge } = config;
@@ -358,6 +398,12 @@ function countSellerDecisions(
     const bucket = sellerDecisionBucket(item.listing);
     if (bucket === "intermediary") {
       stats.sellerRejectedIntermediary += 1;
+      trace?.record(
+        item.listing.source,
+        item.listing.sourceId,
+        "rejected_seller",
+        "intermediary",
+      );
       continue;
     }
     if (bucket === "owner") {
@@ -369,8 +415,17 @@ function countSellerDecisions(
     }
     if (item.accepted && item.locationMatched) {
       stats.acceptedCount += 1;
+    } else if (!item.locationMatched) {
+      stats.otherFilterRejected += 1;
+      trace?.record(item.listing.source, item.listing.sourceId, "rejected_geo", item.locationReason);
     } else {
       stats.otherFilterRejected += 1;
+      trace?.record(
+        item.listing.source,
+        item.listing.sourceId,
+        "rejected_other",
+        item.sellerRejectionReason ?? "filter",
+      );
     }
   }
   return stats;
@@ -688,6 +743,7 @@ export async function runTelegramTestCycle(
       : deps.outbox instanceof DurableDeliveryStore
         ? deps.outbox.verificationDatabase()
         : undefined;
+  const decisionTrace = new ListingDecisionTraceBuffer(cycle);
 
   const readMetaValue = (key: string): string | undefined => {
     if (!holdDb) {
@@ -812,7 +868,11 @@ export async function runTelegramTestCycle(
       // Do not drop old publishedAt here — baseline must see current inventory.
       // Freshness classifier (not MAX_LISTING_AGE filter) gates what is sent as new.
       const { maxListingAgeMinutes: _ignoredAge, ...configWithoutAge } = deps.config;
-      const sellerStats = countSellerDecisions(result.listings, deps.config);
+      const sellerStats = countSellerDecisions(result.listings, deps.config, decisionTrace);
+      for (const listing of result.listings) {
+        decisionTrace.record(listing.source, listing.sourceId, "collected", "source_fetch");
+        decisionTrace.record(listing.source, listing.sourceId, "normalized", "listing_object");
+      }
       sellerTotals.sellerAcceptedOwner += sellerStats.sellerAcceptedOwner;
       sellerTotals.sellerAcceptedSelfDeclared += sellerStats.sellerAcceptedSelfDeclared;
       sellerTotals.sellerAcceptedUnknown += sellerStats.sellerAcceptedUnknown;
@@ -878,6 +938,7 @@ export async function runTelegramTestCycle(
         capability,
         ok: classified.ok,
         listingCount: result.listings.length,
+        collectedSourceIds: collectedSourceIdsForLog(result.listings),
         sellerAcceptedOwner: sellerStats.sellerAcceptedOwner,
         sellerAcceptedSelfDeclared: sellerStats.sellerAcceptedSelfDeclared,
         sellerAcceptedUnknown: sellerStats.sellerAcceptedUnknown,
@@ -960,8 +1021,10 @@ export async function runTelegramTestCycle(
     peers: fetchedListings,
     now,
     timeoutMs: deps.config.sourceTimeoutMs,
+    profileLikelyPolicy: deps.config.sellerProfileLikelyPolicy,
     ...(deps.olxDetailGapMs !== undefined ? { gapMs: deps.olxDetailGapMs } : {}),
     ...(deps.fetchOlxDetail ? { fetchPage: deps.fetchOlxDetail } : {}),
+    ...(deps.probeOlxProfile ? { probeProfile: deps.probeOlxProfile } : {}),
   });
   const verifyLinkedSeller = async (listing: Listing): Promise<LinkedSellerDecision> => {
     const rieltor = await verifyLinkedRieltor(listing);
@@ -1188,6 +1251,13 @@ export async function runTelegramTestCycle(
         if (decision.suppress) {
           suppressedCrossSourceDuplicate += 1;
           deps.dedupe.markSeen(listing);
+          decisionTrace.record(
+            listing.source,
+            listing.sourceId,
+            "deduped",
+            decision.verdict,
+            decision.match?.identityKey,
+          );
           continue;
         }
         if (decision.verdict === "possible_duplicate") {
@@ -1215,10 +1285,17 @@ export async function runTelegramTestCycle(
         }
         // Still mark seen so old inventory does not retry forever.
         deps.dedupe.markSeen(listing);
+        decisionTrace.record(
+          listing.source,
+          listing.sourceId,
+          "suppressed_freshness",
+          freshness.kind,
+        );
         continue;
       }
 
       if (!(await allowLinkedSeller(listing))) {
+        decisionTrace.record(listing.source, listing.sourceId, "held", "linked_seller");
         continue;
       }
 
@@ -1226,7 +1303,14 @@ export async function runTelegramTestCycle(
         freshness.kind === "new_publication" || freshness.kind === "first_noticed"
           ? freshness.kind
           : "first_noticed";
+      decisionTrace.record(listing.source, listing.sourceId, "queued", deliveryKind);
       const delivered = await handoff(listing, deliveryKind);
+      decisionTrace.record(
+        listing.source,
+        listing.sourceId,
+        delivered.sentOk > 0 ? "delivered" : "delivery_failed",
+        delivered.sentOk > 0 ? "sent" : "send_error",
+      );
       if (crossSource) {
         crossSourcePeers.push(listing);
       }
@@ -1243,6 +1327,7 @@ export async function runTelegramTestCycle(
       : "send_new";
 
   const endedAt = now();
+  decisionTrace.flush(holdDb);
   const adminAlerts = await notifySourceAdmins(deps, endedAt);
   const enabledAttempts = sourceAttempts.filter((s) => s.enabled);
   const hasSourceFailures = enabledAttempts.some((s) => !s.ok);

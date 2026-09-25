@@ -21,6 +21,19 @@ import {
   TRANSIENT_SELLER_CACHE_MS,
   UNKNOWN_SELLER_CACHE_MS,
 } from "./rieltor-detail-seller.ts";
+import {
+  shouldRejectSellerProfile,
+  type SellerProfileDeliveryPolicy,
+  type SellerProfilePolicies,
+  DEFAULT_SELLER_PROFILE_POLICIES,
+} from "./seller-profile.ts";
+import {
+  classifyOlxProfileInventory,
+  resolveOlxInventoryProbeTarget,
+  OLX_PROFILE_PROBE_BUDGET,
+  type OlxProfileSnapshot,
+} from "../sources/olx/olx-seller-profile.ts";
+import { probeOlxSellerProfile } from "../sources/olx/olx-seller-profile.browser.ts";
 
 export const OLX_DETAIL_GAP_MS = 800;
 export const OLX_LINKED_DETAIL_CAP = 5;
@@ -166,6 +179,8 @@ export function classifyOlxLinkedSellerHtml(
       evidence: owner.sellerEvidence.join("; ") || "linked OLX seller is owner",
     };
   }
+  // A linked shop/storefront URL is not intermediary proof by itself. Inventory
+  // and explicit agency/service text are classified through existing tiers.
   return {
     verdict: "unknown",
     evidence: owner.sellerEvidence.join("; ") || "linked OLX seller unresolved",
@@ -230,13 +245,18 @@ function writeOlxSellerVerification(
     input.httpStatus ?? null,
     input.verdict === "confirmed_owner" ||
       input.verdict === "confirmed_intermediary" ||
+      input.verdict === "profile_likely_intermediary" ||
       input.verdict === "unknown"
       ? null
       : safeStoredError(input.evidence, input.verdict),
   );
 }
 
-function decisionFromStored(row: CacheRow, token: string): LinkedSellerDecision {
+function decisionFromStored(
+  row: CacheRow,
+  token: string,
+  profilePolicies: SellerProfilePolicies,
+): LinkedSellerDecision {
   if (row.sellerVerdict === "confirmed_intermediary") {
     return {
       outcome: "cache_confirmed_agent",
@@ -244,6 +264,16 @@ function decisionFromStored(row: CacheRow, token: string): LinkedSellerDecision 
       requested: false,
       externalId: token,
       evidence: row.sellerEvidence ?? "cached OLX intermediary",
+    };
+  }
+  if (row.sellerVerdict === "profile_likely_intermediary") {
+    const drop = shouldRejectSellerProfile("profile_likely_intermediary", profilePolicies);
+    return {
+      outcome: "detail_profile_likely",
+      drop,
+      requested: false,
+      externalId: token,
+      evidence: row.sellerEvidence ?? "cached OLX profile_likely_intermediary",
     };
   }
   if (row.sellerVerdict === "confirmed_owner") {
@@ -504,6 +534,7 @@ function decisionFromClassified(
   httpStatus: number,
   requested: boolean,
   evidencePrefix?: string,
+  profilePolicies: SellerProfilePolicies = DEFAULT_SELLER_PROFILE_POLICIES,
 ): LinkedSellerDecision {
   const evidence = evidencePrefix
     ? `${evidencePrefix}; ${classified.evidence}`
@@ -512,6 +543,16 @@ function decisionFromClassified(
     return {
       outcome: "detail_confirmed_agent",
       drop: true,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
+  if (classified.verdict === "profile_likely_intermediary") {
+    return {
+      outcome: "detail_profile_likely",
+      drop: shouldRejectSellerProfile("profile_likely_intermediary", profilePolicies),
       requested,
       externalId: token,
       httpStatus,
@@ -559,7 +600,9 @@ function rememberVerdict(
     return;
   }
   const ttl =
-    classified.verdict === "confirmed_intermediary" || classified.verdict === "confirmed_owner"
+    classified.verdict === "confirmed_intermediary" ||
+    classified.verdict === "confirmed_owner" ||
+    classified.verdict === "profile_likely_intermediary"
       ? CONFIRMED_SELLER_CACHE_MS
       : classified.verdict === "unknown"
         ? UNKNOWN_SELLER_CACHE_MS
@@ -583,20 +626,128 @@ export function createCycleOlxSellerVerifier(options: {
   gapMs?: number;
   maxRequests?: number;
   maxBrowserFallbacks?: number;
+  maxProfileProbes?: number;
+  profileLikelyPolicy?: SellerProfileDeliveryPolicy;
   fetchPage?: ((url: string, timeoutMs: number) => Promise<RieltorDetailPage>) | undefined;
   fetchViaBrowser?:
     | ((url: string, timeoutMs: number) => Promise<OlxLinkedBrowserDetailPage>)
+    | undefined;
+  /** Test double / production Playwright profile inventory. */
+  probeProfile?:
+    | ((input: {
+        listingUrl: string;
+        listingHtml?: string;
+        profilePath?: string;
+        timeoutMs: number;
+      }) => Promise<OlxProfileSnapshot>)
     | undefined;
 }): (listing: Listing) => Promise<LinkedSellerDecision> {
   let haltedAfterRateLimit = false;
   let lastRequestAt = 0;
   let requests = 0;
   let browserFallbacks = 0;
+  let profileProbes = 0;
   const fetchPage = options.fetchPage ?? fetchOlxDetailPage;
   const fetchViaBrowser = options.fetchViaBrowser ?? fetchOlxLinkedDetailViaBrowser;
+  const probeProfile = options.probeProfile ?? probeOlxSellerProfile;
   const gapMs = options.gapMs ?? OLX_DETAIL_GAP_MS;
   const maxRequests = options.maxRequests ?? OLX_LINKED_DETAIL_CAP;
   const maxBrowserFallbacks = options.maxBrowserFallbacks ?? OLX_LINKED_BROWSER_FALLBACK_CAP;
+  const maxProfileProbes = options.maxProfileProbes ?? OLX_PROFILE_PROBE_BUDGET;
+  const profilePolicies: SellerProfilePolicies = {
+    ...DEFAULT_SELLER_PROFILE_POLICIES,
+    ...(options.profileLikelyPolicy ? { likelyPolicy: options.profileLikelyPolicy } : {}),
+  };
+
+  const applyProfileInventory = async (
+    target: { token: string; url: string },
+    classified: { verdict: StoredSellerVerdict; evidence: string },
+    html: string | undefined,
+    httpStatus: number,
+    requested: boolean,
+    now: Date,
+    evidencePrefix?: string,
+  ): Promise<LinkedSellerDecision> => {
+    if (classified.verdict !== "unknown") {
+      rememberVerdict(options.db, target, classified, httpStatus, now);
+      return decisionFromClassified(
+        classified,
+        target.token,
+        httpStatus,
+        requested,
+        evidencePrefix,
+        profilePolicies,
+      );
+    }
+    const probeTarget = html ? resolveOlxInventoryProbeTarget(html) : undefined;
+    if (!probeTarget && !html) {
+      rememberVerdict(options.db, target, classified, httpStatus, now);
+      return decisionFromClassified(
+        classified,
+        target.token,
+        httpStatus,
+        requested,
+        evidencePrefix,
+        profilePolicies,
+      );
+    }
+    if (profileProbes >= maxProfileProbes) {
+      const capped: { verdict: StoredSellerVerdict; evidence: string } = {
+        verdict: "unknown",
+        evidence: `${classified.evidence}; olx_profile_probe_cap=${maxProfileProbes}`,
+      };
+      rememberVerdict(options.db, target, capped, httpStatus, now);
+      return decisionFromClassified(
+        capped,
+        target.token,
+        httpStatus,
+        requested,
+        evidencePrefix,
+        profilePolicies,
+      );
+    }
+    profileProbes += 1;
+    let snapshot: OlxProfileSnapshot;
+    try {
+      snapshot = await probeProfile({
+        listingUrl: target.url,
+        ...(html ? { listingHtml: html } : {}),
+        ...(probeTarget ? { profilePath: probeTarget } : {}),
+        timeoutMs: options.timeoutMs,
+      });
+    } catch {
+      snapshot = { acquired: false };
+    }
+    const profileDecision = classifyOlxProfileInventory(snapshot, now);
+    if (profileDecision.verdict === "profile_likely_intermediary") {
+      const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
+        verdict: "profile_likely_intermediary",
+        evidence: `${classified.evidence}; ${profileDecision.evidence}`,
+      };
+      rememberVerdict(options.db, target, enriched, httpStatus, now);
+      return decisionFromClassified(
+        enriched,
+        target.token,
+        httpStatus,
+        requested,
+        evidencePrefix,
+        profilePolicies,
+      );
+    }
+    const merged: { verdict: StoredSellerVerdict; evidence: string } = {
+      verdict: "unknown",
+      evidence: `${classified.evidence}; ${profileDecision.evidence}`,
+    };
+    rememberVerdict(options.db, target, merged, httpStatus, now);
+    return decisionFromClassified(
+      merged,
+      target.token,
+      httpStatus,
+      requested,
+      evidencePrefix,
+      profilePolicies,
+    );
+  };
 
   const rememberTransport = (
     target: { token: string; url: string },
@@ -673,12 +824,13 @@ export function createCycleOlxSellerVerifier(options: {
       );
     }
     const classified = classifyOlxLinkedSellerHtml(browserPage.bodyText, target.token);
-    rememberVerdict(options.db, target, classified, browserPage.status, now);
-    return decisionFromClassified(
+    return applyProfileInventory(
+      target,
       classified,
-      target.token,
+      browserPage.bodyText,
       browserPage.status,
       true,
+      now,
       `browser fallback after ${rawEvidence}`,
     );
   };
@@ -718,7 +870,52 @@ export function createCycleOlxSellerVerifier(options: {
     if (options.db) {
       const cached = readOlxSellerVerification(options.db, target.token, now);
       if (cached) {
-        return decisionFromStored(cached, target.token);
+        const fromCache = decisionFromStored(cached, target.token, profilePolicies);
+        // Cached unknown still runs a bounded profile probe — that was the Sep 25 gap.
+        if (fromCache.outcome !== "cache_unknown") {
+          return fromCache;
+        }
+        if (profileProbes < maxProfileProbes) {
+          profileProbes += 1;
+          let snapshot: OlxProfileSnapshot;
+          try {
+            snapshot = await probeProfile({
+              listingUrl: target.url,
+              timeoutMs: options.timeoutMs,
+            });
+          } catch {
+            snapshot = { acquired: false };
+          }
+          const profileDecision = classifyOlxProfileInventory(snapshot, now);
+          if (profileDecision.verdict === "profile_likely_intermediary") {
+            const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
+              verdict: "profile_likely_intermediary",
+              evidence: `${fromCache.evidence ?? "cached OLX unknown"}; ${profileDecision.evidence}`,
+            };
+            rememberVerdict(options.db, target, enriched, cached.lastHttpStatus ?? 200, now);
+            return decisionFromClassified(
+              enriched,
+              target.token,
+              cached.lastHttpStatus ?? 200,
+              false,
+              undefined,
+              profilePolicies,
+            );
+          }
+          const mergedEvidence = `${fromCache.evidence ?? "cached OLX unknown"}; ${profileDecision.evidence}`;
+          rememberVerdict(
+            options.db,
+            target,
+            { verdict: "unknown", evidence: mergedEvidence },
+            cached.lastHttpStatus ?? 200,
+            now,
+          );
+          return {
+            ...fromCache,
+            evidence: mergedEvidence,
+          };
+        }
+        return fromCache;
       }
     }
     if (haltedAfterRateLimit) {
@@ -784,7 +981,6 @@ export function createCycleOlxSellerVerifier(options: {
       return rememberTransport(target, "final URL is not the requested OLX listing", page.status, now);
     }
     const classified = classifyOlxLinkedSellerHtml(page.bodyText, target.token);
-    rememberVerdict(options.db, target, classified, page.status, now);
-    return decisionFromClassified(classified, target.token, page.status, true);
+    return applyProfileInventory(target, classified, page.bodyText, page.status, true, now);
   };
 }
