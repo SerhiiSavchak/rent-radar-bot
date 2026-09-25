@@ -304,8 +304,46 @@ export async function fetchOlxDetailPage(
 export type OlxLinkedBrowserDetailPage = RieltorDetailPage & {
   browserClosed: boolean;
   browserCloseTimedOut: boolean;
+  pageCloseTimedOut: boolean;
+  contextCloseTimedOut: boolean;
+  bodyContentFallbackTimedOut: boolean;
   timedOut: boolean;
   notes: string[];
+};
+
+/** Minimal Playwright surface for exact-listing fallback + test doubles. */
+export type OlxLinkedBrowserPage = {
+  goto: (
+    url: string,
+    options?: { waitUntil?: "domcontentloaded"; timeout?: number },
+  ) => Promise<OlxLinkedBrowserResponse | null>;
+  url: () => string;
+  content: () => Promise<string>;
+  close: () => Promise<void>;
+};
+
+export type OlxLinkedBrowserResponse = {
+  status: () => number;
+  text: () => Promise<string>;
+};
+
+export type OlxLinkedBrowserContext = {
+  newPage: () => Promise<OlxLinkedBrowserPage>;
+  close: () => Promise<void>;
+};
+
+export type OlxLinkedBrowser = {
+  newContext: (options?: { locale?: string }) => Promise<OlxLinkedBrowserContext>;
+  close: () => Promise<void>;
+};
+
+export type OlxLinkedBrowserFetchDeps = {
+  launch?: () => Promise<OlxLinkedBrowser>;
+  /** Cleanup budget for page/context/browser.close. Defaults to OLX_LINKED_BROWSER_CLOSE_MS. */
+  closeBudgetMs?: number;
+  bodyBudgetMs?: number;
+  launchBudgetMs?: number;
+  navigationBudgetMs?: number;
 };
 
 /** Raw HTTP statuses where stock Playwright may still open the exact listing. */
@@ -315,24 +353,45 @@ export function olxRawTransportNeedsBrowserFallback(status: number): boolean {
 
 /**
  * One stock Chromium launch for the exact canonical OLX listing URL only.
- * No profile crawl, no pagination, no stealth.
+ * No profile crawl, no pagination, no stealth. Every await is wall-clock bounded.
  */
 export async function fetchOlxLinkedDetailViaBrowser(
   url: string,
   timeoutMs: number,
+  deps: OlxLinkedBrowserFetchDeps = {},
 ): Promise<OlxLinkedBrowserDetailPage> {
   const notes: string[] = ["transport=stock_playwright_exact_listing"];
-  const launchMs = Math.min(OLX_LINKED_BROWSER_LAUNCH_MS, timeoutMs);
-  const navMs = Math.min(OLX_LINKED_BROWSER_NAV_MS, timeoutMs);
-  const bodyMs = Math.min(OLX_LINKED_BROWSER_BODY_MS, timeoutMs);
-  const pendingLaunch = chromium.launch({ headless: true });
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-  let browserClosed = true;
+  const launchMs = Math.min(deps.launchBudgetMs ?? OLX_LINKED_BROWSER_LAUNCH_MS, timeoutMs);
+  const navMs = Math.min(deps.navigationBudgetMs ?? OLX_LINKED_BROWSER_NAV_MS, timeoutMs);
+  const bodyMs = Math.min(deps.bodyBudgetMs ?? OLX_LINKED_BROWSER_BODY_MS, timeoutMs);
+  const closeMs = Math.min(deps.closeBudgetMs ?? OLX_LINKED_BROWSER_CLOSE_MS, timeoutMs);
+  const launch = deps.launch ?? (() => chromium.launch({ headless: true }) as Promise<OlxLinkedBrowser>);
+  const pendingLaunch = launch();
+  let browser: OlxLinkedBrowser | undefined;
   let browserCloseTimedOut = false;
+  let pageCloseTimedOut = false;
+  let contextCloseTimedOut = false;
+  let bodyContentFallbackTimedOut = false;
   let timedOut = false;
   let status = 0;
   let finalUrl = url;
   let bodyText = "";
+
+  const closeOwned = async (
+    close: () => Promise<void>,
+    label: string,
+  ): Promise<"ok" | "timeout"> => {
+    try {
+      await awaitWithTimeout(close(), closeMs, label);
+      return "ok";
+    } catch {
+      notes.push(`${label}_timeout`);
+      // Detached best-effort; must not delay the poll cycle.
+      void close().catch(() => undefined);
+      return "timeout";
+    }
+  };
+
   try {
     browser = await awaitWithTimeout(pendingLaunch, launchMs, "olx.linked.chromium.launch");
     const context = await awaitWithTimeout(
@@ -364,9 +423,20 @@ export async function fetchOlxLinkedDetailViaBrowser(
               "olx.linked.response.text",
             );
           } catch {
-            timedOut = true;
             notes.push("body_read_timeout");
-            bodyText = await page.content().catch(() => "");
+            try {
+              bodyText = await awaitWithTimeout(
+                page.content(),
+                bodyMs,
+                "olx.linked.page.content",
+              );
+              notes.push("body_content_fallback_used");
+            } catch {
+              bodyContentFallbackTimedOut = true;
+              timedOut = true;
+              bodyText = "";
+              notes.push("body_content_fallback_timeout");
+            }
           }
         }
       } catch (error) {
@@ -377,12 +447,20 @@ export async function fetchOlxLinkedDetailViaBrowser(
         } else {
           notes.push(`navigation_error:${message.slice(0, 120)}`);
         }
-        finalUrl = page.url();
+        try {
+          finalUrl = page.url();
+        } catch {
+          // ignore
+        }
       } finally {
-        await page.close().catch(() => undefined);
+        if ((await closeOwned(() => page.close(), "olx.linked.page.close")) === "timeout") {
+          pageCloseTimedOut = true;
+        }
       }
     } finally {
-      await context.close().catch(() => undefined);
+      if ((await closeOwned(() => context.close(), "olx.linked.context.close")) === "timeout") {
+        contextCloseTimedOut = true;
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -390,26 +468,31 @@ export async function fetchOlxLinkedDetailViaBrowser(
       timedOut = true;
     }
     notes.push(`browser_failed:${message.slice(0, 120)}`);
-    void pendingLaunch.then((opened) => opened.close()).catch(() => undefined);
+    // Late launch must not delay the cycle; fire-and-forget close only.
+    void pendingLaunch
+      .then((opened) => {
+        void opened.close().catch(() => undefined);
+      })
+      .catch(() => undefined);
   } finally {
     if (browser) {
-      try {
-        await awaitWithTimeout(browser.close(), OLX_LINKED_BROWSER_CLOSE_MS, "olx.linked.chromium.close");
-        browserClosed = true;
-      } catch {
+      if ((await closeOwned(() => browser!.close(), "olx.linked.chromium.close")) === "timeout") {
         browserCloseTimedOut = true;
-        browserClosed = false;
-        notes.push("browser_close_timeout");
-        void browser.close().catch(() => undefined);
       }
     }
   }
+
+  const cleanupTimedOut =
+    pageCloseTimedOut || contextCloseTimedOut || browserCloseTimedOut;
   return {
     status: status || (timedOut ? 408 : 0),
     finalUrl,
     bodyText,
-    browserClosed,
+    browserClosed: !cleanupTimedOut,
     browserCloseTimedOut,
+    pageCloseTimedOut,
+    contextCloseTimedOut,
+    bodyContentFallbackTimedOut,
     timedOut,
     notes,
   };
@@ -569,7 +652,11 @@ export function createCycleOlxSellerVerifier(options: {
         now,
       );
     }
-    if (browserPage.timedOut || browserPage.status === 0 || browserPage.status >= 400) {
+    if (
+      browserPage.status === 0 ||
+      browserPage.status >= 400 ||
+      !browserPage.bodyText.trim()
+    ) {
       return rememberTransport(
         target,
         `${rawEvidence}; browser fallback status=${browserPage.status} timedOut=${browserPage.timedOut} notes=${browserPage.notes.join(",")}`,
