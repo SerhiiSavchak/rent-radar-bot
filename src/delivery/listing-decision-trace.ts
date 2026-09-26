@@ -3,7 +3,8 @@ import type { ListingSource } from "../domain/listing.ts";
 
 /**
  * Bounded per-listing pipeline decisions for missing-listing forensics.
- * Rejected/held rows are recorded without markSeen / outbox side effects.
+ * Trace inserts themselves have no side effects. Terminal linked-seller
+ * rejection is persisted via markSeen in the pipeline; temporary holds are not.
  */
 export const LISTING_DECISION_TRACE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 export const LISTING_DECISION_TRACE_CYCLE_CAP = 400;

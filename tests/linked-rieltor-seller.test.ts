@@ -687,6 +687,9 @@ describe("linked RIELTOR seller verification", () => {
       2,
     );
     expect(calls).toBe(1);
+    expect(store.hasSeen(lunLinked("4725847579", "https://rieltor.ua/lvov/flats-rent/view/13064911/"))).toBe(
+      true,
+    );
     closeDb();
     const reopened = new DurableDeliveryStore(getDb(path));
     const again = await runTelegramTestCycle(
@@ -705,8 +708,13 @@ describe("linked RIELTOR seller verification", () => {
     );
     expect(calls).toBe(1);
     expect(again.sentOk).toBe(0);
-    expect(again.linkedSellerVerification.cacheConfirmedAgent).toBe(1);
+    // Terminal reject markSeen: listing is not re-gated; cache row remains for other listings.
+    expect(again.newAfterDedupe).toBe(0);
+    expect(again.linkedSellerVerification.cacheConfirmedAgent).toBe(0);
     expect(outboxCount("4725847579")).toBe(0);
+    expect(
+      reopened.hasSeen(lunLinked("4725847579", "https://rieltor.ua/lvov/flats-rent/view/13064911/")),
+    ).toBe(true);
   });
 
   it("reuses a confirmed owner cache without a second detail request", async () => {
@@ -788,6 +796,9 @@ describe("linked RIELTOR seller verification", () => {
     getDb()
       .prepare("UPDATE external_seller_verifications SET expires_at = ?")
       .run("2020-01-01T00:00:00.000Z");
+    // Clear terminal reject seen-state so the same source id can exercise cache expiry.
+    getDb().prepare("DELETE FROM seen_listings").run();
+    getDb().prepare("DELETE FROM telegram_outbox").run();
     await runTelegramTestCycle(
       {
         adapters,
