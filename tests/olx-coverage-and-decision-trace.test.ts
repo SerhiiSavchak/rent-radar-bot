@@ -117,7 +117,7 @@ function adapterFor(
 }
 
 describe("OLX browser coverage contract", () => {
-  it("builds long-term Lviv URLs with requested 15km + newest-first keys (application BLOCKED)", () => {
+  it("builds long-term Lviv URLs with requested 15km + newest-first keys (sort BLOCKED, radius live-verified)", () => {
     const apartments = buildOlxBrowserCategoryUrl("apartments");
     const houses = buildOlxBrowserCategoryUrl("houses");
     expect(apartments).toContain("/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/");
@@ -133,10 +133,9 @@ describe("OLX browser coverage contract", () => {
       boundaryReached: false,
       coverageTruncated: true,
     });
-    expect(notes).toContain("olx_browser_radius_sort_status=blocked");
-    expect(notes.some((n) => n.includes("url_retention_or_api_analogy_is_not_html_proof"))).toBe(
-      true,
-    );
+    expect(notes).toContain("olx_browser_radius_status=live_verified_2026-09-26");
+    expect(notes).toContain("olx_browser_sort_status=blocked");
+    expect(notes.some((n) => n.includes("sort_organic_order_not_monotone"))).toBe(true);
   });
 
   it("keeps time-stop off while HTML sort is unverified; verified mode requires all dated + no undated", () => {

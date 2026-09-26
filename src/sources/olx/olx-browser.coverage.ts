@@ -9,10 +9,13 @@ import {
  * sort_by=created_at:desc, categories 1760/330.
  *
  * Browser HTML appends portal filter query keys `search[dist]` / `search[order]`.
- * HTTP 200 with those params retained in finalUrl does **not** prove the filter
- * is applied. Live suburb/order evidence for the HTML path remains
- * `olx_browser_radius_sort_status=blocked` until listing samples confirm it.
- * Do not treat URL retention or API-to-HTML analogy as coverage PASS.
+ * Live evidence 2026-09-26 (3/3 workstation cycles, listing-level):
+ * - radius (`search[dist]=15`): PASS — suburb cities (e.g. Винники, Сокільники)
+ *   appear with dist that are absent from city-only samples.
+ * - sort (`search[order]=created_at:desc`): BLOCKED — organic `createdTime` /
+ *   `lastRefreshTime` sequences are not non-increasing; URL retention alone is
+ *   not proof. Publication-time stop stays off until sort is listing-verified.
+ * Do not treat HTTP 200, fixtures, or a single OK request as coverage PASS.
  *
  * Because HTML sort is unverified, publication-time stop must not mark a walk
  * complete. Progress uses seed → committed boundary, then page catch-up cursors,
@@ -406,8 +409,9 @@ export function olxBrowserCoverageNotes(input: {
     ...(input.mode ? [`olx_browser_walk_mode=${input.mode}`] : []),
     ...(input.catchupResume ? [`olx_browser_catchup_resume=${input.catchupResume}`] : []),
     "olx_browser_sort_requested=search[order]=created_at:desc",
-    "olx_browser_radius_sort_status=blocked",
-    "olx_browser_radius_sort_note=url_retention_or_api_analogy_is_not_html_proof",
+    "olx_browser_radius_status=live_verified_2026-09-26",
+    "olx_browser_sort_status=blocked",
+    "olx_browser_radius_sort_note=radius_suburb_listing_evidence_pass_sort_organic_order_not_monotone",
     "olx_browser_time_stop=disabled_until_html_sort_verified",
     "olx_browser_stop=seed_commit_or_confirmed_empty_or_catchup_budget",
   ];

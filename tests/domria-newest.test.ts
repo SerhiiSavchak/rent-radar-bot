@@ -5,6 +5,7 @@ import { isSellerEligible } from "../src/filters/owner-filter.ts";
 import {
   acquireDomriaNewest,
   buildDomriaNewestSearchUrl,
+  classifyDomriaSearchBody,
   mergeDomriaAcquiredIds,
   planDomriaDetailFetches,
   type DomriaFetchResponse,
@@ -377,5 +378,28 @@ describe("DIM.RIA newest-first acquisition", () => {
     expect(freshness.kind).toBe("late_discovered");
     expect(freshness.deliverable).toBe(false);
     expect(mergeDomriaAcquiredIds(["1"], ["2"])).toEqual(["1", "2"]);
+  });
+
+  it("classifies searchEngine body shapes for recurrence diagnostics without claiming history", async () => {
+    expect(classifyDomriaSearchBody('{"count":2,"items":[1,2]}').kind).toBe("json_ok");
+    expect(classifyDomriaSearchBody('{"count":0,"items":[]}').kind).toBe("json_empty");
+    expect(classifyDomriaSearchBody("<!DOCTYPE html><html></html>").kind).toBe("html");
+    expect(classifyDomriaSearchBody('{"count":1}').kind).toBe("json_missing_items");
+    const get = scriptedGet({
+      "searchEngine/v2/": {
+        status: 200,
+        url: "search",
+        bodyText: "<html><body>challenge</body></html>",
+      },
+    });
+    const result = await acquireDomriaNewest({
+      categories: ["apartment"],
+      knownIds: new Set(),
+      get,
+      extractState: () => ({}),
+    });
+    expect(result.parserFailure).toBe(true);
+    expect(result.notes.some((n) => n.includes("body_kind=html"))).toBe(true);
+    expect(result.notes.some((n) => n.includes("historical_root_cause=unresolved"))).toBe(true);
   });
 });

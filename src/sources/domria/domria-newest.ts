@@ -126,6 +126,39 @@ export function mergeDomriaAcquiredIds(
   return merged.slice(Math.max(0, merged.length - cap));
 }
 
+/**
+ * Bounded body-shape classifier for searchEngine responses.
+ * Used for recurrence diagnostics; does not claim a historical root cause.
+ */
+export function classifyDomriaSearchBody(bodyText: string): {
+  kind: "json_ok" | "json_empty" | "json_missing_items" | "html" | "other";
+  reason?: string;
+  preview: string;
+} {
+  const trimmed = bodyText.trim();
+  const preview = trimmed.slice(0, 120).replace(/\s+/g, " ");
+  if (!trimmed) {
+    return { kind: "other", reason: "empty_body", preview };
+  }
+  if (/^<!DOCTYPE|^<html[\s>]/i.test(trimmed) || /^</.test(trimmed)) {
+    return { kind: "html", reason: "html_page_not_search_json", preview };
+  }
+  const parsed = parseDomriaSearchIds(bodyText);
+  if (parsed.ok && parsed.empty) {
+    return { kind: "json_empty", preview };
+  }
+  if (parsed.ok) {
+    return { kind: "json_ok", preview };
+  }
+  if (parsed.reason === "html_page_not_search_json") {
+    return { kind: "html", reason: parsed.reason, preview };
+  }
+  if (parsed.reason === "items_missing" || parsed.reason === "schema_mismatch") {
+    return { kind: "json_missing_items", reason: parsed.reason, preview };
+  }
+  return { kind: "other", reason: parsed.reason, preview };
+}
+
 export function parseDomriaSearchIds(bodyText: string):
   | { ok: true; ids: string[]; empty: boolean }
   | { ok: false; reason: string } {
@@ -286,8 +319,14 @@ export async function acquireDomriaNewest(input: {
     if (!parsedIds.ok) {
       parserFailure = true;
       coverageTruncated = true;
+      const bodyClass = classifyDomriaSearchBody(search.bodyText);
       notes.push(
-        `${category} parser_failure: searchEngine items missing (${parsedIds.reason})`,
+        `${category} parser_failure: searchEngine items missing (${parsedIds.reason}) body_kind=${bodyClass.kind}${
+          bodyClass.reason ? ` class_reason=${bodyClass.reason}` : ""
+        } preview=${JSON.stringify(bodyClass.preview)}`,
+      );
+      notes.push(
+        `${category} historical_root_cause=unresolved; body_kind classifies recurrence only`,
       );
       continue;
     }

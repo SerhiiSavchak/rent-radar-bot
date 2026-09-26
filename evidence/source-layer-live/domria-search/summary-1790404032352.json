@@ -1,0 +1,142 @@
+{
+  "probe": "domria-searchengine-repeated",
+  "commit": "8e0710b",
+  "cycles": 3,
+  "currentLiveStatus": "PASS_CURRENT",
+  "historicalStatus": "UNRESOLVED",
+  "note": "PASS_CURRENT is only about repeated live searchEngine JSON now. Historical Sep 25 cause remains UNRESOLVED.",
+  "cyclesDetail": [
+    {
+      "cycle": 1,
+      "at": "2026-09-26T06:27:05.813Z",
+      "samples": [
+        {
+          "label": "apartment_p0",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":320,\"items\":[34966637,34964256,34964081,34964058,34963911,34963110,34963062,34962929,34962665,34962565,34962503",
+          "parseOk": true,
+          "idCount": 20,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        },
+        {
+          "label": "house_p0",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":8,\"items\":[34949645,34931898,34803891,34692886,34548368,34396921,34206795,33715497]}",
+          "parseOk": true,
+          "idCount": 8,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        },
+        {
+          "label": "apartment_p1",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":320,\"items\":[34960008,34959754,34957620,34957452,34957177,34957161,34956828,34956644,34956389,34956166,34954972",
+          "parseOk": true,
+          "idCount": 20,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        }
+      ],
+      "verdict": {
+        "currentLiveSearchOk": true,
+        "historicalParserFailureResolved": false,
+        "historicalNote": "Evidence for Sep 25 underlying failure was not retained; current OK cycles must not be labeled as historical resolution."
+      }
+    },
+    {
+      "cycle": 2,
+      "at": "2026-09-26T06:27:08.881Z",
+      "samples": [
+        {
+          "label": "apartment_p0",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":320,\"items\":[34966637,34964256,34964081,34964058,34963911,34963110,34963062,34962929,34962665,34962565,34962503",
+          "parseOk": true,
+          "idCount": 20,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        },
+        {
+          "label": "house_p0",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":8,\"items\":[34949645,34931898,34803891,34692886,34548368,34396921,34206795,33715497]}",
+          "parseOk": true,
+          "idCount": 8,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        },
+        {
+          "label": "apartment_p1",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":320,\"items\":[34960008,34959754,34957620,34957452,34957177,34957161,34956828,34956644,34956389,34956166,34954972",
+          "parseOk": true,
+          "idCount": 20,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        }
+      ],
+      "verdict": {
+        "currentLiveSearchOk": true,
+        "historicalParserFailureResolved": false,
+        "historicalNote": "Evidence for Sep 25 underlying failure was not retained; current OK cycles must not be labeled as historical resolution."
+      }
+    },
+    {
+      "cycle": 3,
+      "at": "2026-09-26T06:27:12.352Z",
+      "samples": [
+        {
+          "label": "apartment_p0",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":320,\"items\":[34966637,34964256,34964081,34964058,34963911,34963110,34963062,34962929,34962665,34962565,34962503",
+          "parseOk": true,
+          "idCount": 20,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        },
+        {
+          "label": "house_p0",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":8,\"items\":[34949645,34931898,34803891,34692886,34548368,34396921,34206795,33715497]}",
+          "parseOk": true,
+          "idCount": 8,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        },
+        {
+          "label": "apartment_p1",
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "bodyKind": "json_ok",
+          "bodyPreview": "{\"count\":320,\"items\":[34960008,34959754,34957620,34957452,34957177,34957161,34956828,34956644,34956389,34956166,34954972",
+          "parseOk": true,
+          "idCount": 20,
+          "empty": false,
+          "diagnosticHint": "catalog JSON with items"
+        }
+      ],
+      "verdict": {
+        "currentLiveSearchOk": true,
+        "historicalParserFailureResolved": false,
+        "historicalNote": "Evidence for Sep 25 underlying failure was not retained; current OK cycles must not be labeled as historical resolution."
+      }
+    }
+  ]
+}

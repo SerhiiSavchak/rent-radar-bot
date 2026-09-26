@@ -1,0 +1,318 @@
+{
+  "probe": "lun-pagination",
+  "commit": "8e0710b",
+  "cycles": 3,
+  "paginationStatus": "PASS",
+  "note": "Adapter currently fetches page1 URLs only. PASS here means a live deeper page returned novel ids.",
+  "cyclesDetail": [
+    {
+      "cycle": 1,
+      "at": "2026-09-26T06:26:44.360Z",
+      "page1": {
+        "status": 200,
+        "validatedCardCount": 24,
+        "idCount": 24,
+        "nextHints": []
+      },
+      "candidates": [
+        {
+          "label": "page2_query",
+          "status": 200,
+          "validatedCardCount": 22,
+          "novelIdCount": 22,
+          "novelIds": [
+            "4726294300",
+            "4726293118",
+            "4726255601",
+            "4726248517",
+            "4726244105"
+          ],
+          "sameAsPage1": false
+        },
+        {
+          "label": "page2_path",
+          "status": 404,
+          "validatedCardCount": 0,
+          "novelIdCount": 0,
+          "novelIds": [],
+          "sameAsPage1": false
+        },
+        {
+          "label": "offset24",
+          "status": 200,
+          "validatedCardCount": 24,
+          "novelIdCount": 0,
+          "novelIds": [],
+          "sameAsPage1": true
+        },
+        {
+          "label": "page2_uk",
+          "status": 200,
+          "validatedCardCount": 22,
+          "novelIdCount": 22,
+          "novelIds": [
+            "4726294300",
+            "4726293118",
+            "4726255601",
+            "4726248517",
+            "4726244105"
+          ],
+          "sameAsPage1": false
+        }
+      ],
+      "rows": [
+        {
+          "label": "page1",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 24,
+          "nextHints": []
+        },
+        {
+          "label": "page2_query",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 22,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/ru?page=2"
+          ]
+        },
+        {
+          "label": "page2_path",
+          "status": 404,
+          "resultKind": "parser_failure",
+          "validatedCardCount": 0,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/page/2/ru"
+          ]
+        },
+        {
+          "label": "offset24",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 24,
+          "nextHints": []
+        },
+        {
+          "label": "page2_uk",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 22,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/ru?page=2"
+          ]
+        }
+      ],
+      "verdict": {
+        "paginationListingEvidence": true,
+        "status": "PASS"
+      }
+    },
+    {
+      "cycle": 2,
+      "at": "2026-09-26T06:26:51.606Z",
+      "page1": {
+        "status": 200,
+        "validatedCardCount": 24,
+        "idCount": 24,
+        "nextHints": []
+      },
+      "candidates": [
+        {
+          "label": "page2_query",
+          "status": 200,
+          "validatedCardCount": 22,
+          "novelIdCount": 22,
+          "novelIds": [
+            "4726294300",
+            "4726293118",
+            "4726255601",
+            "4726248517",
+            "4726244105"
+          ],
+          "sameAsPage1": false
+        },
+        {
+          "label": "page2_path",
+          "status": 404,
+          "validatedCardCount": 0,
+          "novelIdCount": 0,
+          "novelIds": [],
+          "sameAsPage1": false
+        },
+        {
+          "label": "offset24",
+          "status": 200,
+          "validatedCardCount": 24,
+          "novelIdCount": 0,
+          "novelIds": [],
+          "sameAsPage1": true
+        },
+        {
+          "label": "page2_uk",
+          "status": 200,
+          "validatedCardCount": 22,
+          "novelIdCount": 22,
+          "novelIds": [
+            "4726294300",
+            "4726293118",
+            "4726255601",
+            "4726248517",
+            "4726244105"
+          ],
+          "sameAsPage1": false
+        }
+      ],
+      "rows": [
+        {
+          "label": "page1",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 24,
+          "nextHints": []
+        },
+        {
+          "label": "page2_query",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 22,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/ru?page=2"
+          ]
+        },
+        {
+          "label": "page2_path",
+          "status": 404,
+          "resultKind": "parser_failure",
+          "validatedCardCount": 0,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/page/2/ru"
+          ]
+        },
+        {
+          "label": "offset24",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 24,
+          "nextHints": []
+        },
+        {
+          "label": "page2_uk",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 22,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/ru?page=2"
+          ]
+        }
+      ],
+      "verdict": {
+        "paginationListingEvidence": true,
+        "status": "PASS"
+      }
+    },
+    {
+      "cycle": 3,
+      "at": "2026-09-26T06:27:00.575Z",
+      "page1": {
+        "status": 200,
+        "validatedCardCount": 24,
+        "idCount": 24,
+        "nextHints": []
+      },
+      "candidates": [
+        {
+          "label": "page2_query",
+          "status": 200,
+          "validatedCardCount": 22,
+          "novelIdCount": 22,
+          "novelIds": [
+            "4726294300",
+            "4726293118",
+            "4726255601",
+            "4726248517",
+            "4726244105"
+          ],
+          "sameAsPage1": false
+        },
+        {
+          "label": "page2_path",
+          "status": 404,
+          "validatedCardCount": 0,
+          "novelIdCount": 0,
+          "novelIds": [],
+          "sameAsPage1": false
+        },
+        {
+          "label": "offset24",
+          "status": 200,
+          "validatedCardCount": 24,
+          "novelIdCount": 0,
+          "novelIds": [],
+          "sameAsPage1": true
+        },
+        {
+          "label": "page2_uk",
+          "status": 200,
+          "validatedCardCount": 22,
+          "novelIdCount": 22,
+          "novelIds": [
+            "4726294300",
+            "4726293118",
+            "4726255601",
+            "4726248517",
+            "4726244105"
+          ],
+          "sameAsPage1": false
+        }
+      ],
+      "rows": [
+        {
+          "label": "page1",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 24,
+          "nextHints": []
+        },
+        {
+          "label": "page2_query",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 22,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/ru?page=2"
+          ]
+        },
+        {
+          "label": "page2_path",
+          "status": 404,
+          "resultKind": "parser_failure",
+          "validatedCardCount": 0,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/page/2/ru"
+          ]
+        },
+        {
+          "label": "offset24",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 24,
+          "nextHints": []
+        },
+        {
+          "label": "page2_uk",
+          "status": 200,
+          "resultKind": "ok",
+          "validatedCardCount": 22,
+          "nextHints": [
+            "href=[\"']([^\"']*page[=/]→/rent/lviv/flats/ru?page=2"
+          ]
+        }
+      ],
+      "verdict": {
+        "paginationListingEvidence": true,
+        "status": "PASS"
+      }
+    }
+  ]
+}

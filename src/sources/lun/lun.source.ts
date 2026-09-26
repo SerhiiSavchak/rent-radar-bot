@@ -20,6 +20,21 @@ export const LUN_FLATS_URL = "https://lun.ua/rent/lviv/flats";
 export const LUN_HOUSES_URL = "https://lun.ua/rent/lviv/houses";
 
 /**
+ * Live-verified 2026-09-26: `?page=2` returns novel listing ids vs page 1
+ * (3/3 workstation cycles). Path `/page/2` is 404; `?offset=24` duplicates page 1.
+ */
+export const LUN_POLL_PAGE_BUDGET = 2;
+
+export function buildLunCategoryPageUrl(baseUrl: string, page: number): string {
+  if (page <= 1) {
+    return baseUrl;
+  }
+  const url = new URL(baseUrl);
+  url.searchParams.set("page", String(page));
+  return url.toString();
+}
+
+/**
  * When LUN_CAPTURE_DIR is set (prefer ~/rent-radar-runtime/...), write a bounded
  * sample of failing HTML outside the git worktree for later framing verification.
  */
@@ -85,13 +100,16 @@ export class LunSource implements ListingSourceAdapter {
     const started = Date.now();
     const config = getConfig();
     const notes: string[] = [];
-    const pages: string[] = [];
+    const categories: string[] = [];
     if (options?.includeApartments !== false) {
-      pages.push(LUN_FLATS_URL);
+      categories.push(LUN_FLATS_URL);
     }
     if (options?.includeHouses !== false) {
-      pages.push(LUN_HOUSES_URL);
+      categories.push(LUN_HOUSES_URL);
     }
+    const pageBudget = Math.max(1, Math.min(LUN_POLL_PAGE_BUDGET, 3));
+    notes.push(`lun_page_budget=${pageBudget}`);
+    notes.push("lun_pagination=query_page_live_verified_2026-09-26");
 
     const listings: Listing[] = [];
     let lastStatus: number | undefined;
@@ -102,41 +120,68 @@ export class LunSource implements ListingSourceAdapter {
     let validatedCardCount = 0;
     let hasJsonLd = false;
     let hasRscCards = false;
+    let pagesFetched = 0;
+    let coverageTruncated = false;
 
-    for (const page of pages) {
-      const response = await httpGet(page, {
-        timeoutMs: config.sourceTimeoutMs,
-        maxRetries: config.sourceMaxRetries,
-      });
-      lastStatus = response.status;
-      notes.push(`${page} -> ${response.status} ${headerBag(response)}`);
-      if (response.status !== 200) {
-        httpError = true;
-        continue;
-      }
-      const inspection = inspectLunHtml(response.bodyText);
-      hasJsonLd = hasJsonLd || inspection.hasJsonLdList;
-      hasRscCards = hasRscCards || inspection.hasRscCardsMarker;
-      extractedCardCount += inspection.rawCardCount;
-      validatedCardCount += inspection.validatedCardCount;
-      notes.push(
-        `${page} integrity: rsc=${inspection.hasRscCardsMarker} jsonld=${inspection.hasJsonLdList} rawCards=${inspection.rawCardCount} validated=${inspection.validatedCardCount} kind=${inspection.resultKind} cardsParseFailed=${inspection.cardsParseFailed} payloads=${inspection.hasNextFlight}`,
-      );
-      if (inspection.resultKind === "parser_failure") {
-        parserFailure = true;
-        const capture = maybeCaptureLunFailure(
-          page,
-          response.bodyText,
-          inspection.cardsParseFailed ? "cards_json_parse_failed" : "missing_rsc_cards_marker",
-        );
-        if (capture) {
-          notes.push(`capture=${capture}`);
+    for (const categoryUrl of categories) {
+      for (let page = 1; page <= pageBudget; page += 1) {
+        const pageUrl = buildLunCategoryPageUrl(categoryUrl, page);
+        const response = await httpGet(pageUrl, {
+          timeoutMs: config.sourceTimeoutMs,
+          maxRetries: config.sourceMaxRetries,
+        });
+        lastStatus = response.status;
+        notes.push(`${pageUrl} -> ${response.status} ${headerBag(response)}`);
+        if (response.status !== 200) {
+          httpError = true;
+          if (page === 1) {
+            break;
+          }
+          // Deeper-page transport loss after page-1 success → partial coverage.
+          coverageTruncated = true;
+          notes.push(`${pageUrl} coverage_truncated=deeper_http`);
+          break;
         }
-        continue;
+        const inspection = inspectLunHtml(response.bodyText);
+        hasJsonLd = hasJsonLd || inspection.hasJsonLdList;
+        hasRscCards = hasRscCards || inspection.hasRscCardsMarker;
+        extractedCardCount += inspection.rawCardCount;
+        validatedCardCount += inspection.validatedCardCount;
+        notes.push(
+          `${pageUrl} integrity: rsc=${inspection.hasRscCardsMarker} jsonld=${inspection.hasJsonLdList} rawCards=${inspection.rawCardCount} validated=${inspection.validatedCardCount} kind=${inspection.resultKind} cardsParseFailed=${inspection.cardsParseFailed} payloads=${inspection.hasNextFlight}`,
+        );
+        if (inspection.resultKind === "parser_failure") {
+          parserFailure = true;
+          const capture = maybeCaptureLunFailure(
+            pageUrl,
+            response.bodyText,
+            inspection.cardsParseFailed ? "cards_json_parse_failed" : "missing_rsc_cards_marker",
+          );
+          if (capture) {
+            notes.push(`capture=${capture}`);
+          }
+          if (page === 1) {
+            break;
+          }
+          coverageTruncated = true;
+          notes.push(`${pageUrl} coverage_truncated=deeper_parser`);
+          break;
+        }
+        sawStructure = true;
+        pagesFetched += 1;
+        listings.push(...inspection.listings);
+        if (inspection.listings.length === 0) {
+          // Confirmed empty deeper page — category walk complete within budget.
+          break;
+        }
+        if (page === pageBudget) {
+          // Bounded sample only (no LUN catch-up cursor). Do not flip coverage_degraded
+          // every poll just because the catalog has more than pageBudget pages.
+          notes.push(`${categoryUrl} sample_complete_within_budget=true deeper_pages_may_exist`);
+        }
       }
-      sawStructure = true;
-      listings.push(...inspection.listings);
     }
+    notes.push(`lun_pages_fetched=${pagesFetched}`);
 
     const acquired = keepAcquiredByCategory(dedupe(listings));
     const unique = acquired.kept;
@@ -144,6 +189,7 @@ export class LunSource implements ListingSourceAdapter {
       notes.push(
         `acquired-response cap kept ${unique.length} cards; a normal first page is below the cap`,
       );
+      coverageTruncated = true;
     }
     // Partial success: if any page yielded listings, prefer ok over masking as parser_failure.
     const resultKind =
@@ -157,14 +203,30 @@ export class LunSource implements ListingSourceAdapter {
               ? "valid_empty"
               : "http_error";
     const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
-    const healthy = (resultKind === "ok" || resultKind === "valid_empty") && !acquired.truncated;
-    logger.info("lun.inspect", { count: unique.length, status: lastStatus, resultKind });
+    const coverage =
+      coverageTruncated || capCoverage
+        ? {
+            pagesFetched: Math.max(pagesFetched, capCoverage?.pagesFetched ?? 1),
+            cardsFetched: unique.length,
+            boundaryReached: false,
+            coverageTruncated: true,
+          }
+        : undefined;
+    const healthy =
+      (resultKind === "ok" || resultKind === "valid_empty") && !coverageTruncated;
+    logger.info("lun.inspect", {
+      count: unique.length,
+      status: lastStatus,
+      resultKind,
+      pagesFetched,
+      coverageTruncated,
+    });
     return {
       listings: unique,
       transport: "embedded JSON (Next.js RSC cards + JSON-LD)",
       dataKind: "LIVE DATA",
       resultKind,
-      ...(capCoverage ? { coverage: capCoverage } : {}),
+      ...(coverage ? { coverage } : {}),
       ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
       rawNotes: notes,
       integrity: {
@@ -181,10 +243,12 @@ export class LunSource implements ListingSourceAdapter {
         healthy,
         checkedAt: new Date(),
         latencyMs: Date.now() - started,
-        resultKind,
+        resultKind: coverageTruncated && resultKind === "ok" ? "ok" : resultKind,
         ...(lastStatus !== undefined ? { httpStatus: lastStatus } : {}),
         transport: "embedded JSON (Next.js RSC cards + JSON-LD)",
-        message: messageFor(resultKind, unique.length, lastStatus),
+        message: coverageTruncated
+          ? `LUN partial coverage: kept ${unique.length} listings (cap or deeper-page failure)`
+          : messageFor(resultKind, unique.length, lastStatus),
       },
     };
   }

@@ -1,0 +1,252 @@
+{
+  "probe": "olx-html-radius-sort",
+  "commit": "8e0710b",
+  "cycles": 3,
+  "radiusStatus": "PASS",
+  "sortStatus": "BLOCKED",
+  "note": "PASS requires listing-level suburb/order evidence on every cycle; URL retention alone is insufficient.",
+  "cyclesDetail": [
+    {
+      "cycle": 1,
+      "at": "2026-09-26T06:30:53.373Z",
+      "cityOnly": {
+        "status": 200,
+        "adCount": 51,
+        "cities": [
+          "Львів"
+        ],
+        "suburbs": [],
+        "paramsRetained": {
+          "dist": false,
+          "order": false
+        }
+      },
+      "withDist": {
+        "status": 200,
+        "adCount": 52,
+        "cities": [
+          "Львів"
+        ],
+        "suburbs": [],
+        "paramsRetained": {
+          "dist": true,
+          "order": false
+        },
+        "organicNonIncreasing": false
+      },
+      "withDistOrder": {
+        "status": 200,
+        "adCount": 52,
+        "organicDatedCount": 24,
+        "organicCreatedHead": [
+          1790401260,
+          1790401258,
+          1787943733,
+          1790396269,
+          1790381181,
+          1790378461,
+          1790375845,
+          1788557965
+        ],
+        "organicNonIncreasing": false,
+        "oldestOrganic": 1611959334,
+        "newestOrganic": 1790401260,
+        "paramsRetained": {
+          "dist": true,
+          "order": true
+        },
+        "suburbs": [
+          "Винники",
+          "Сокільники"
+        ]
+      },
+      "page2": {
+        "status": 200,
+        "adCount": 51,
+        "organicDatedCount": 20,
+        "organicCreatedHead": [
+          1790354640,
+          1790353740,
+          1787651539,
+          1790353708,
+          1790281073,
+          1790351468,
+          1779191691,
+          1790351519
+        ],
+        "organicNonIncreasing": false,
+        "oldestOrganic": 1771345004,
+        "newestOrganic": 1790354640
+      },
+      "verdict": {
+        "urlRetentionOnly": true,
+        "radiusListingEvidence": true,
+        "sortListingEvidence": false,
+        "radiusStatus": "PASS",
+        "sortStatus": "BLOCKED",
+        "sortBlockReason": "organic_created_not_non_increasing"
+      }
+    },
+    {
+      "cycle": 2,
+      "at": "2026-09-26T06:31:05.769Z",
+      "cityOnly": {
+        "status": 200,
+        "adCount": 51,
+        "cities": [
+          "Львів"
+        ],
+        "suburbs": [],
+        "paramsRetained": {
+          "dist": false,
+          "order": false
+        }
+      },
+      "withDist": {
+        "status": 200,
+        "adCount": 52,
+        "cities": [
+          "Львів"
+        ],
+        "suburbs": [],
+        "paramsRetained": {
+          "dist": true,
+          "order": false
+        },
+        "organicNonIncreasing": false
+      },
+      "withDistOrder": {
+        "status": 200,
+        "adCount": 52,
+        "organicDatedCount": 24,
+        "organicCreatedHead": [
+          1790401260,
+          1790401258,
+          1787943733,
+          1790396269,
+          1790381181,
+          1790378461,
+          1790375845,
+          1788557965
+        ],
+        "organicNonIncreasing": false,
+        "oldestOrganic": 1611959334,
+        "newestOrganic": 1790401260,
+        "paramsRetained": {
+          "dist": true,
+          "order": true
+        },
+        "suburbs": [
+          "Винники",
+          "Сокільники"
+        ]
+      },
+      "page2": {
+        "status": 200,
+        "adCount": 51,
+        "organicDatedCount": 20,
+        "organicCreatedHead": [
+          1790354640,
+          1790353740,
+          1787651539,
+          1790353708,
+          1790281073,
+          1790351468,
+          1779191691,
+          1790351519
+        ],
+        "organicNonIncreasing": false,
+        "oldestOrganic": 1771345004,
+        "newestOrganic": 1790354640
+      },
+      "verdict": {
+        "urlRetentionOnly": true,
+        "radiusListingEvidence": true,
+        "sortListingEvidence": false,
+        "radiusStatus": "PASS",
+        "sortStatus": "BLOCKED",
+        "sortBlockReason": "organic_created_not_non_increasing"
+      }
+    },
+    {
+      "cycle": 3,
+      "at": "2026-09-26T06:31:17.589Z",
+      "cityOnly": {
+        "status": 200,
+        "adCount": 51,
+        "cities": [
+          "Львів"
+        ],
+        "suburbs": [],
+        "paramsRetained": {
+          "dist": false,
+          "order": false
+        }
+      },
+      "withDist": {
+        "status": 200,
+        "adCount": 52,
+        "cities": [
+          "Львів"
+        ],
+        "suburbs": [],
+        "paramsRetained": {
+          "dist": true,
+          "order": false
+        },
+        "organicNonIncreasing": false
+      },
+      "withDistOrder": {
+        "status": 200,
+        "adCount": 52,
+        "organicDatedCount": 24,
+        "organicCreatedHead": [
+          1790401260,
+          1790401258,
+          1787943733,
+          1790396269,
+          1790381181,
+          1790378461,
+          1790375845,
+          1788557965
+        ],
+        "organicNonIncreasing": false,
+        "oldestOrganic": 1611959334,
+        "newestOrganic": 1790401260,
+        "paramsRetained": {
+          "dist": true,
+          "order": true
+        },
+        "suburbs": [
+          "Сокільники"
+        ]
+      },
+      "page2": {
+        "status": 200,
+        "adCount": 51,
+        "organicDatedCount": 20,
+        "organicCreatedHead": [
+          1790354640,
+          1790353740,
+          1787651539,
+          1790353708,
+          1790281073,
+          1790351468,
+          1779191691,
+          1790351519
+        ],
+        "organicNonIncreasing": false,
+        "oldestOrganic": 1771345004,
+        "newestOrganic": 1790354640
+      },
+      "verdict": {
+        "urlRetentionOnly": true,
+        "radiusListingEvidence": true,
+        "sortListingEvidence": false,
+        "radiusStatus": "PASS",
+        "sortStatus": "BLOCKED",
+        "sortBlockReason": "organic_created_not_non_increasing"
+      }
+    }
+  ]
+}
