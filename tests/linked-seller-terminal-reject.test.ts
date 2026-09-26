@@ -667,4 +667,77 @@ describe("linked-seller terminal rejection (Batch 1)", () => {
     expect(store.hasSeen(stuck)).toBe(false);
     expect(outboxCount(STUCK_LUN_ID)).toBe(0);
   });
+
+  it("same-cycle dry-run preserves an existing seller hold", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const lunBatch: Listing[] = [];
+    const olxBatch: Listing[] = [];
+    const adapters = [adapter("lun", () => lunBatch), adapter("olx", () => olxBatch)];
+    await seed(store, adapters);
+
+    const stuck = lunLinkedOlx(STUCK_LUN_ID, STUCK_OLX_URL);
+    upsertSellerHold(getDb(), stuck, STUCK_OLX_TOKEN, now, "olx");
+    expect(holdCount()).toBe(1);
+    const holdBefore = getDb()
+      .prepare(
+        `SELECT source, source_id, external_source, external_listing_id
+         FROM seller_verification_holds WHERE source_id = ?`,
+      )
+      .get(STUCK_LUN_ID) as {
+      source: string;
+      source_id: string;
+      external_source: string;
+      external_listing_id: string;
+    };
+
+    lunBatch.push(stuck);
+    olxBatch.push(olxAgentPeer(STUCK_OLX_TOKEN));
+
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_OLX: "true" }),
+        sink: new TelegramTestSink({
+          botToken: "1:token",
+          chatId: "listing",
+          testMode: true,
+          dryRun: true,
+          timeoutMs: 1000,
+          maxRetries: 0,
+          fetchImpl: (async () => {
+            throw new Error("no network");
+          }) as unknown as typeof fetch,
+        }),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        olxDetailGapMs: 0,
+        fetchOlxDetail: async () => {
+          throw new Error("no detail");
+        },
+      },
+      2,
+    );
+
+    expect(report.dryRun).toBe(true);
+    expect(report.linkedSellerVerification.sameCycleConfirmedAgent).toBe(1);
+    expect(report.sentOk).toBe(0);
+    expect(store.hasSeen(stuck)).toBe(false);
+    expect(outboxCount(STUCK_LUN_ID)).toBe(0);
+    expect(holdCount()).toBe(1);
+    const holdAfter = getDb()
+      .prepare(
+        `SELECT source, source_id, external_source, external_listing_id
+         FROM seller_verification_holds WHERE source_id = ?`,
+      )
+      .get(STUCK_LUN_ID) as {
+      source: string;
+      source_id: string;
+      external_source: string;
+      external_listing_id: string;
+    };
+    expect(holdAfter).toEqual(holdBefore);
+  });
 });
