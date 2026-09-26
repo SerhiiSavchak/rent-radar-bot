@@ -1,0 +1,3083 @@
+{
+  "probe": "olx-html-sort-only",
+  "commit": "753fc7d",
+  "cycles": 3,
+  "category": "apartments",
+  "sortStatus": "BLOCKED",
+  "timeStop": "disabled",
+  "note": "PASS requires listing-level organic createdTime order on every cycle (within page + page boundary). HTTP 200 / URL retention alone is insufficient. Time-stop remains disabled regardless.",
+  "cyclesDetail": [
+    {
+      "cycle": 1,
+      "at": "2026-09-26T07:15:15.248Z",
+      "category": "apartments",
+      "pageBudget": 2,
+      "productionQuery": {
+        "distanceKm": 15,
+        "order": "created_at:desc",
+        "page1Url": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "page2Url": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2"
+      },
+      "page1": {
+        "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "status": 200,
+        "paramsRetained": {
+          "dist": true,
+          "order": true,
+          "page": true
+        },
+        "hasPrerendered": true,
+        "listingCount": 52,
+        "organicDatedCount": 29,
+        "organicCreatedHead": [
+          1790405906,
+          1790405818,
+          1790404453,
+          1790404305,
+          1780217411,
+          1780137675,
+          1780137263,
+          1780134633,
+          1780134060,
+          1779983013,
+          1779982758,
+          1779981010
+        ],
+        "oldestOrganic": 1779980403,
+        "newestOrganic": 1790405906,
+        "withinPageNonIncreasing": false,
+        "withinPageFailure": {
+          "reason": "organic_created_not_non_increasing",
+          "breakIndex": 14
+        },
+        "listings": [
+          {
+            "id": "935641473",
+            "page": 1,
+            "position": 1,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T17:55:55+03:00",
+            "createdTimeEpoch": 1790088955,
+            "lastRefreshTimeIso": "2026-09-24T17:57:07+03:00"
+          },
+          {
+            "id": "935689427",
+            "page": 1,
+            "position": 2,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T10:12:51+03:00",
+            "createdTimeEpoch": 1790147571,
+            "lastRefreshTimeIso": "2026-09-25T18:47:44+03:00"
+          },
+          {
+            "id": "935514541",
+            "page": 1,
+            "position": 3,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T15:50:00+03:00",
+            "createdTimeEpoch": 1789995000,
+            "lastRefreshTimeIso": "2026-09-25T16:04:31+03:00"
+          },
+          {
+            "id": "936003331",
+            "page": 1,
+            "position": 4,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:58:26+03:00",
+            "createdTimeEpoch": 1790405906,
+            "lastRefreshTimeIso": "2026-09-26T09:59:27+03:00"
+          },
+          {
+            "id": "936003192",
+            "page": 1,
+            "position": 5,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:56:58+03:00",
+            "createdTimeEpoch": 1790405818,
+            "lastRefreshTimeIso": "2026-09-26T09:57:59+03:00"
+          },
+          {
+            "id": "936002449",
+            "page": 1,
+            "position": 6,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T09:46:44+03:00",
+            "createdTimeEpoch": 1790405204,
+            "lastRefreshTimeIso": "2026-09-26T09:47:45+03:00"
+          },
+          {
+            "id": "936001417",
+            "page": 1,
+            "position": 7,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:34:13+03:00",
+            "createdTimeEpoch": 1790404453,
+            "lastRefreshTimeIso": "2026-09-26T09:35:14+03:00"
+          },
+          {
+            "id": "935296441",
+            "page": 1,
+            "position": 8,
+            "promoted": true,
+            "createdTimeIso": "2026-09-19T12:33:55+03:00",
+            "createdTimeEpoch": 1789810435,
+            "lastRefreshTimeIso": "2026-09-26T09:46:04+03:00"
+          },
+          {
+            "id": "936001258",
+            "page": 1,
+            "position": 9,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:31:45+03:00",
+            "createdTimeEpoch": 1790404305,
+            "lastRefreshTimeIso": "2026-09-26T09:32:46+03:00"
+          },
+          {
+            "id": "924946011",
+            "page": 1,
+            "position": 10,
+            "promoted": false,
+            "createdTimeIso": "2026-05-31T11:50:11+03:00",
+            "createdTimeEpoch": 1780217411,
+            "lastRefreshTimeIso": "2026-09-26T09:31:10+03:00"
+          },
+          {
+            "id": "924872340",
+            "page": 1,
+            "position": 11,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T13:41:15+03:00",
+            "createdTimeEpoch": 1780137675,
+            "lastRefreshTimeIso": "2026-09-26T09:30:56+03:00"
+          },
+          {
+            "id": "924871548",
+            "page": 1,
+            "position": 12,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T13:34:23+03:00",
+            "createdTimeEpoch": 1780137263,
+            "lastRefreshTimeIso": "2026-09-26T09:30:52+03:00"
+          },
+          {
+            "id": "924866953",
+            "page": 1,
+            "position": 13,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T12:50:33+03:00",
+            "createdTimeEpoch": 1780134633,
+            "lastRefreshTimeIso": "2026-09-26T09:30:49+03:00"
+          },
+          {
+            "id": "935497273",
+            "page": 1,
+            "position": 14,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T13:45:34+03:00",
+            "createdTimeEpoch": 1789987534,
+            "lastRefreshTimeIso": "2026-09-25T13:46:53+03:00"
+          },
+          {
+            "id": "934347832",
+            "page": 1,
+            "position": 15,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T23:02:36+03:00",
+            "createdTimeEpoch": 1788984156,
+            "lastRefreshTimeIso": "2026-09-25T22:12:38+03:00"
+          },
+          {
+            "id": "933128280",
+            "page": 1,
+            "position": 16,
+            "promoted": true,
+            "createdTimeIso": "2026-08-28T16:34:45+03:00",
+            "createdTimeEpoch": 1787924085,
+            "lastRefreshTimeIso": "2026-09-25T23:55:51+03:00"
+          },
+          {
+            "id": "924865900",
+            "page": 1,
+            "position": 17,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T12:41:00+03:00",
+            "createdTimeEpoch": 1780134060,
+            "lastRefreshTimeIso": "2026-09-26T09:30:43+03:00"
+          },
+          {
+            "id": "924732422",
+            "page": 1,
+            "position": 18,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:43:33+03:00",
+            "createdTimeEpoch": 1779983013,
+            "lastRefreshTimeIso": "2026-09-26T09:29:39+03:00"
+          },
+          {
+            "id": "924732027",
+            "page": 1,
+            "position": 19,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:39:18+03:00",
+            "createdTimeEpoch": 1779982758,
+            "lastRefreshTimeIso": "2026-09-26T09:28:44+03:00"
+          },
+          {
+            "id": "924729293",
+            "page": 1,
+            "position": 20,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:10:10+03:00",
+            "createdTimeEpoch": 1779981010,
+            "lastRefreshTimeIso": "2026-09-26T09:28:40+03:00"
+          },
+          {
+            "id": "924728761",
+            "page": 1,
+            "position": 21,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:04:50+03:00",
+            "createdTimeEpoch": 1779980690,
+            "lastRefreshTimeIso": "2026-09-26T09:27:07+03:00"
+          },
+          {
+            "id": "924728316",
+            "page": 1,
+            "position": 22,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:00:03+03:00",
+            "createdTimeEpoch": 1779980403,
+            "lastRefreshTimeIso": "2026-09-26T09:26:47+03:00"
+          },
+          {
+            "id": "936000137",
+            "page": 1,
+            "position": 23,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T09:11:33+03:00",
+            "createdTimeEpoch": 1790403093,
+            "lastRefreshTimeIso": "2026-09-26T09:14:09+03:00"
+          },
+          {
+            "id": "925528176",
+            "page": 1,
+            "position": 24,
+            "promoted": true,
+            "createdTimeIso": "2026-06-06T13:11:15+03:00",
+            "createdTimeEpoch": 1780740675,
+            "lastRefreshTimeIso": "2026-09-26T09:09:12+03:00"
+          },
+          {
+            "id": "935998907",
+            "page": 1,
+            "position": 25,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T08:41:00+03:00",
+            "createdTimeEpoch": 1790401260,
+            "lastRefreshTimeIso": "2026-09-26T08:42:03+03:00"
+          },
+          {
+            "id": "935998905",
+            "page": 1,
+            "position": 26,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T08:40:58+03:00",
+            "createdTimeEpoch": 1790401258,
+            "lastRefreshTimeIso": "2026-09-26T08:44:17+03:00"
+          },
+          {
+            "id": "934642843",
+            "page": 1,
+            "position": 27,
+            "promoted": true,
+            "createdTimeIso": "2026-09-13T08:36:08+03:00",
+            "createdTimeEpoch": 1789277768,
+            "lastRefreshTimeIso": "2026-09-24T12:22:27+03:00"
+          },
+          {
+            "id": "929215998",
+            "page": 1,
+            "position": 28,
+            "promoted": true,
+            "createdTimeIso": "2026-07-17T16:08:45+03:00",
+            "createdTimeEpoch": 1784293725,
+            "lastRefreshTimeIso": "2026-09-23T13:02:44+03:00"
+          },
+          {
+            "id": "935133251",
+            "page": 1,
+            "position": 29,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T16:12:15+03:00",
+            "createdTimeEpoch": 1789650735,
+            "lastRefreshTimeIso": "2026-09-25T18:08:21+03:00"
+          },
+          {
+            "id": "933157711",
+            "page": 1,
+            "position": 30,
+            "promoted": false,
+            "createdTimeIso": "2026-08-28T22:02:13+03:00",
+            "createdTimeEpoch": 1787943733,
+            "lastRefreshTimeIso": "2026-09-26T08:06:55+03:00"
+          },
+          {
+            "id": "935996870",
+            "page": 1,
+            "position": 31,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T07:17:49+03:00",
+            "createdTimeEpoch": 1790396269,
+            "lastRefreshTimeIso": "2026-09-26T07:18:50+03:00"
+          },
+          {
+            "id": "935995583",
+            "page": 1,
+            "position": 32,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T03:06:21+03:00",
+            "createdTimeEpoch": 1790381181,
+            "lastRefreshTimeIso": "2026-09-26T03:07:21+03:00"
+          },
+          {
+            "id": "935995247",
+            "page": 1,
+            "position": 33,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T02:21:01+03:00",
+            "createdTimeEpoch": 1790378461,
+            "lastRefreshTimeIso": "2026-09-26T02:24:17+03:00"
+          },
+          {
+            "id": "935994813",
+            "page": 1,
+            "position": 34,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T01:37:25+03:00",
+            "createdTimeEpoch": 1790375845,
+            "lastRefreshTimeIso": "2026-09-26T01:39:23+03:00"
+          },
+          {
+            "id": "935993802",
+            "page": 1,
+            "position": 35,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T00:39:27+03:00",
+            "createdTimeEpoch": 1790372367,
+            "lastRefreshTimeIso": "2026-09-26T00:46:45+03:00"
+          },
+          {
+            "id": "933835828",
+            "page": 1,
+            "position": 36,
+            "promoted": false,
+            "createdTimeIso": "2026-09-05T00:39:25+03:00",
+            "createdTimeEpoch": 1788557965,
+            "lastRefreshTimeIso": "2026-09-26T00:39:28+03:00"
+          },
+          {
+            "id": "913047588",
+            "page": 1,
+            "position": 37,
+            "promoted": true,
+            "createdTimeIso": "2026-01-30T12:27:04+02:00",
+            "createdTimeEpoch": 1769768824,
+            "lastRefreshTimeIso": "2026-09-26T00:24:21+03:00"
+          },
+          {
+            "id": "933128280",
+            "page": 1,
+            "position": 38,
+            "promoted": true,
+            "createdTimeIso": "2026-08-28T16:34:45+03:00",
+            "createdTimeEpoch": 1787924085,
+            "lastRefreshTimeIso": "2026-09-25T23:55:51+03:00"
+          },
+          {
+            "id": "935991561",
+            "page": 1,
+            "position": 39,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T23:35:42+03:00",
+            "createdTimeEpoch": 1790368542,
+            "lastRefreshTimeIso": "2026-09-25T23:39:09+03:00"
+          },
+          {
+            "id": "935481225",
+            "page": 1,
+            "position": 40,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T11:46:07+03:00",
+            "createdTimeEpoch": 1789980367,
+            "lastRefreshTimeIso": "2026-09-24T10:31:57+03:00"
+          },
+          {
+            "id": "840362744",
+            "page": 1,
+            "position": 41,
+            "promoted": true,
+            "createdTimeIso": "2024-03-28T18:39:57+02:00",
+            "createdTimeEpoch": 1711643997,
+            "lastRefreshTimeIso": "2026-09-25T13:27:11+03:00"
+          },
+          {
+            "id": "935052356",
+            "page": 1,
+            "position": 42,
+            "promoted": true,
+            "createdTimeIso": "2026-09-16T19:23:50+03:00",
+            "createdTimeEpoch": 1789575830,
+            "lastRefreshTimeIso": "2026-09-24T12:33:30+03:00"
+          },
+          {
+            "id": "935174397",
+            "page": 1,
+            "position": 43,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T23:40:55+03:00",
+            "createdTimeEpoch": 1789677655,
+            "lastRefreshTimeIso": "2026-09-25T23:08:21+03:00"
+          },
+          {
+            "id": "935672177",
+            "page": 1,
+            "position": 44,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T22:54:35+03:00",
+            "createdTimeEpoch": 1790106875,
+            "lastRefreshTimeIso": "2026-09-25T22:55:09+03:00"
+          },
+          {
+            "id": "935987043",
+            "page": 1,
+            "position": 45,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:22:56+03:00",
+            "createdTimeEpoch": 1790364176,
+            "lastRefreshTimeIso": "2026-09-25T22:23:57+03:00"
+          },
+          {
+            "id": "935987058",
+            "page": 1,
+            "position": 46,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:23:06+03:00",
+            "createdTimeEpoch": 1790364186,
+            "lastRefreshTimeIso": "2026-09-25T22:26:14+03:00"
+          },
+          {
+            "id": "934347832",
+            "page": 1,
+            "position": 47,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T23:02:36+03:00",
+            "createdTimeEpoch": 1788984156,
+            "lastRefreshTimeIso": "2026-09-25T22:12:38+03:00"
+          },
+          {
+            "id": "935985685",
+            "page": 1,
+            "position": 48,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:05:08+03:00",
+            "createdTimeEpoch": 1790363108,
+            "lastRefreshTimeIso": "2026-09-25T22:06:09+03:00"
+          },
+          {
+            "id": "934338458",
+            "page": 1,
+            "position": 49,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T21:01:40+03:00",
+            "createdTimeEpoch": 1788976900,
+            "lastRefreshTimeIso": "2026-09-25T21:34:56+03:00"
+          },
+          {
+            "id": "931599314",
+            "page": 1,
+            "position": 50,
+            "promoted": false,
+            "createdTimeIso": "2026-08-12T18:48:32+03:00",
+            "createdTimeEpoch": 1786549712,
+            "lastRefreshTimeIso": "2026-09-25T21:34:48+03:00"
+          },
+          {
+            "id": "934530740",
+            "page": 1,
+            "position": 51,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T21:32:52+03:00",
+            "createdTimeEpoch": 1789151572,
+            "lastRefreshTimeIso": "2026-09-25T21:32:55+03:00"
+          },
+          {
+            "id": "935981350",
+            "page": 1,
+            "position": 52,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:16:29+03:00",
+            "createdTimeEpoch": 1790360189,
+            "lastRefreshTimeIso": "2026-09-25T21:27:12+03:00"
+          }
+        ]
+      },
+      "page2": {
+        "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+        "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+        "status": 200,
+        "paramsRetained": {
+          "dist": true,
+          "order": true,
+          "page": true
+        },
+        "hasPrerendered": true,
+        "listingCount": 52,
+        "organicDatedCount": 16,
+        "organicCreatedHead": [
+          1790359820,
+          1790359233,
+          1790358726,
+          1790173980,
+          1790343413,
+          1789147462,
+          1789747972,
+          1790354640,
+          1787651539,
+          1790353708,
+          1779191691,
+          1790351519
+        ],
+        "oldestOrganic": 1771345004,
+        "newestOrganic": 1790359820,
+        "withinPageNonIncreasing": false,
+        "withinPageFailure": {
+          "reason": "organic_created_not_non_increasing",
+          "breakIndex": 4
+        },
+        "listings": [
+          {
+            "id": "935096151",
+            "page": 2,
+            "position": 1,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T11:22:01+03:00",
+            "createdTimeEpoch": 1789633321,
+            "lastRefreshTimeIso": "2026-09-23T11:25:35+03:00"
+          },
+          {
+            "id": "935846243",
+            "page": 2,
+            "position": 2,
+            "promoted": true,
+            "createdTimeIso": "2026-09-24T16:21:20+03:00",
+            "createdTimeEpoch": 1790256080,
+            "lastRefreshTimeIso": "2026-09-24T16:42:29+03:00"
+          },
+          {
+            "id": "930787435",
+            "page": 2,
+            "position": 3,
+            "promoted": true,
+            "createdTimeIso": "2026-08-03T19:47:18+03:00",
+            "createdTimeEpoch": 1785775638,
+            "lastRefreshTimeIso": "2026-09-25T19:00:00+03:00"
+          },
+          {
+            "id": "935662522",
+            "page": 2,
+            "position": 4,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T21:14:44+03:00",
+            "createdTimeEpoch": 1790100884,
+            "lastRefreshTimeIso": "2026-09-25T21:21:08+03:00"
+          },
+          {
+            "id": "935455420",
+            "page": 2,
+            "position": 5,
+            "promoted": true,
+            "createdTimeIso": "2026-09-20T23:34:24+03:00",
+            "createdTimeEpoch": 1789936464,
+            "lastRefreshTimeIso": "2026-09-25T21:17:35+03:00"
+          },
+          {
+            "id": "926281997",
+            "page": 2,
+            "position": 6,
+            "promoted": true,
+            "createdTimeIso": "2026-06-14T18:18:38+03:00",
+            "createdTimeEpoch": 1781450318,
+            "lastRefreshTimeIso": "2026-09-25T21:15:57+03:00"
+          },
+          {
+            "id": "935980814",
+            "page": 2,
+            "position": 7,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:10:20+03:00",
+            "createdTimeEpoch": 1790359820,
+            "lastRefreshTimeIso": "2026-09-25T21:11:21+03:00"
+          },
+          {
+            "id": "935979976",
+            "page": 2,
+            "position": 8,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:00:33+03:00",
+            "createdTimeEpoch": 1790359233,
+            "lastRefreshTimeIso": "2026-09-25T21:03:21+03:00"
+          },
+          {
+            "id": "899461559",
+            "page": 2,
+            "position": 9,
+            "promoted": true,
+            "createdTimeIso": "2025-09-09T20:04:59+03:00",
+            "createdTimeEpoch": 1757437499,
+            "lastRefreshTimeIso": "2026-09-25T20:57:14+03:00"
+          },
+          {
+            "id": "935979305",
+            "page": 2,
+            "position": 10,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T20:52:06+03:00",
+            "createdTimeEpoch": 1790358726,
+            "lastRefreshTimeIso": "2026-09-25T20:55:34+03:00"
+          },
+          {
+            "id": "935549790",
+            "page": 2,
+            "position": 11,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T20:39:32+03:00",
+            "createdTimeEpoch": 1790012372,
+            "lastRefreshTimeIso": "2026-09-25T20:41:24+03:00"
+          },
+          {
+            "id": "935526874",
+            "page": 2,
+            "position": 12,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T17:14:00+03:00",
+            "createdTimeEpoch": 1790000040,
+            "lastRefreshTimeIso": "2026-09-25T20:33:50+03:00"
+          },
+          {
+            "id": "935643338",
+            "page": 2,
+            "position": 13,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T18:12:54+03:00",
+            "createdTimeEpoch": 1790089974,
+            "lastRefreshTimeIso": "2026-09-25T20:32:56+03:00"
+          },
+          {
+            "id": "935504085",
+            "page": 2,
+            "position": 14,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T14:35:28+03:00",
+            "createdTimeEpoch": 1789990528,
+            "lastRefreshTimeIso": "2026-09-25T18:00:38+03:00"
+          },
+          {
+            "id": "934398508",
+            "page": 2,
+            "position": 15,
+            "promoted": true,
+            "createdTimeIso": "2026-09-10T15:04:51+03:00",
+            "createdTimeEpoch": 1789041891,
+            "lastRefreshTimeIso": "2026-09-24T15:04:55+03:00"
+          },
+          {
+            "id": "935748089",
+            "page": 2,
+            "position": 16,
+            "promoted": false,
+            "createdTimeIso": "2026-09-23T17:33:00+03:00",
+            "createdTimeEpoch": 1790173980,
+            "lastRefreshTimeIso": "2026-09-23T17:36:08+03:00"
+          },
+          {
+            "id": "935955066",
+            "page": 2,
+            "position": 17,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T16:36:53+03:00",
+            "createdTimeEpoch": 1790343413,
+            "lastRefreshTimeIso": "2026-09-25T20:32:14+03:00"
+          },
+          {
+            "id": "934525333",
+            "page": 2,
+            "position": 18,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T20:24:22+03:00",
+            "createdTimeEpoch": 1789147462,
+            "lastRefreshTimeIso": "2026-09-25T20:24:26+03:00"
+          },
+          {
+            "id": "935250046",
+            "page": 2,
+            "position": 19,
+            "promoted": false,
+            "createdTimeIso": "2026-09-18T19:12:52+03:00",
+            "createdTimeEpoch": 1789747972,
+            "lastRefreshTimeIso": "2026-09-25T20:17:57+03:00"
+          },
+          {
+            "id": "935481672",
+            "page": 2,
+            "position": 20,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T11:49:42+03:00",
+            "createdTimeEpoch": 1789980582,
+            "lastRefreshTimeIso": "2026-09-25T20:01:35+03:00"
+          },
+          {
+            "id": "935545158",
+            "page": 2,
+            "position": 21,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T19:58:56+03:00",
+            "createdTimeEpoch": 1790009936,
+            "lastRefreshTimeIso": "2026-09-25T20:01:12+03:00"
+          },
+          {
+            "id": "934222228",
+            "page": 2,
+            "position": 22,
+            "promoted": true,
+            "createdTimeIso": "2026-09-08T18:34:11+03:00",
+            "createdTimeEpoch": 1788881651,
+            "lastRefreshTimeIso": "2026-09-25T20:00:59+03:00"
+          },
+          {
+            "id": "935973616",
+            "page": 2,
+            "position": 23,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T19:44:00+03:00",
+            "createdTimeEpoch": 1790354640,
+            "lastRefreshTimeIso": "2026-09-25T19:54:18+03:00"
+          },
+          {
+            "id": "935338897",
+            "page": 2,
+            "position": 24,
+            "promoted": true,
+            "createdTimeIso": "2026-09-19T19:02:13+03:00",
+            "createdTimeEpoch": 1789833733,
+            "lastRefreshTimeIso": "2026-09-25T19:47:20+03:00"
+          },
+          {
+            "id": "935972519",
+            "page": 2,
+            "position": 25,
+            "promoted": true,
+            "createdTimeIso": "2026-09-25T19:30:54+03:00",
+            "createdTimeEpoch": 1790353854,
+            "lastRefreshTimeIso": "2026-09-25T19:37:30+03:00"
+          },
+          {
+            "id": "935252365",
+            "page": 2,
+            "position": 26,
+            "promoted": true,
+            "createdTimeIso": "2026-09-18T19:39:41+03:00",
+            "createdTimeEpoch": 1789749581,
+            "lastRefreshTimeIso": "2026-09-25T19:39:48+03:00"
+          },
+          {
+            "id": "934074559",
+            "page": 2,
+            "position": 27,
+            "promoted": true,
+            "createdTimeIso": "2026-09-07T13:48:35+03:00",
+            "createdTimeEpoch": 1788778115,
+            "lastRefreshTimeIso": "2026-09-25T11:49:30+03:00"
+          },
+          {
+            "id": "914404295",
+            "page": 2,
+            "position": 28,
+            "promoted": true,
+            "createdTimeIso": "2026-02-14T14:11:56+02:00",
+            "createdTimeEpoch": 1771071116,
+            "lastRefreshTimeIso": "2026-09-23T13:22:38+03:00"
+          },
+          {
+            "id": "934070116",
+            "page": 2,
+            "position": 29,
+            "promoted": true,
+            "createdTimeIso": "2026-09-07T13:17:46+03:00",
+            "createdTimeEpoch": 1788776266,
+            "lastRefreshTimeIso": "2026-09-24T17:10:05+03:00"
+          },
+          {
+            "id": "932791588",
+            "page": 2,
+            "position": 30,
+            "promoted": false,
+            "createdTimeIso": "2026-08-25T12:52:19+03:00",
+            "createdTimeEpoch": 1787651539,
+            "lastRefreshTimeIso": "2026-09-25T19:38:32+03:00"
+          },
+          {
+            "id": "935651831",
+            "page": 2,
+            "position": 31,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T19:34:01+03:00",
+            "createdTimeEpoch": 1790094841,
+            "lastRefreshTimeIso": "2026-09-25T19:36:09+03:00"
+          },
+          {
+            "id": "935972317",
+            "page": 2,
+            "position": 32,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T19:28:28+03:00",
+            "createdTimeEpoch": 1790353708,
+            "lastRefreshTimeIso": "2026-09-25T19:31:15+03:00"
+          },
+          {
+            "id": "935156249",
+            "page": 2,
+            "position": 33,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T19:54:49+03:00",
+            "createdTimeEpoch": 1789664089,
+            "lastRefreshTimeIso": "2026-09-25T19:22:32+03:00"
+          },
+          {
+            "id": "932276417",
+            "page": 2,
+            "position": 34,
+            "promoted": true,
+            "createdTimeIso": "2026-08-19T19:48:48+03:00",
+            "createdTimeEpoch": 1787158128,
+            "lastRefreshTimeIso": "2026-09-25T19:20:57+03:00"
+          },
+          {
+            "id": "934185418",
+            "page": 2,
+            "position": 35,
+            "promoted": true,
+            "createdTimeIso": "2026-09-08T13:49:51+03:00",
+            "createdTimeEpoch": 1788864591,
+            "lastRefreshTimeIso": "2026-09-25T19:10:16+03:00"
+          },
+          {
+            "id": "930787435",
+            "page": 2,
+            "position": 36,
+            "promoted": true,
+            "createdTimeIso": "2026-08-03T19:47:18+03:00",
+            "createdTimeEpoch": 1785775638,
+            "lastRefreshTimeIso": "2026-09-25T19:00:00+03:00"
+          },
+          {
+            "id": "923854346",
+            "page": 2,
+            "position": 37,
+            "promoted": false,
+            "createdTimeIso": "2026-05-19T14:54:51+03:00",
+            "createdTimeEpoch": 1779191691,
+            "lastRefreshTimeIso": "2026-09-25T18:59:52+03:00"
+          },
+          {
+            "id": "935123420",
+            "page": 2,
+            "position": 38,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T14:56:58+03:00",
+            "createdTimeEpoch": 1789646218,
+            "lastRefreshTimeIso": "2026-09-25T18:57:09+03:00"
+          },
+          {
+            "id": "935969190",
+            "page": 2,
+            "position": 39,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:51:59+03:00",
+            "createdTimeEpoch": 1790351519,
+            "lastRefreshTimeIso": "2026-09-25T18:56:00+03:00"
+          },
+          {
+            "id": "935057859",
+            "page": 2,
+            "position": 40,
+            "promoted": true,
+            "createdTimeIso": "2026-09-16T20:28:35+03:00",
+            "createdTimeEpoch": 1789579715,
+            "lastRefreshTimeIso": "2026-09-25T12:10:37+03:00"
+          },
+          {
+            "id": "935726063",
+            "page": 2,
+            "position": 41,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T14:46:12+03:00",
+            "createdTimeEpoch": 1790163972,
+            "lastRefreshTimeIso": "2026-09-23T14:47:16+03:00"
+          },
+          {
+            "id": "935729604",
+            "page": 2,
+            "position": 42,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T15:11:56+03:00",
+            "createdTimeEpoch": 1790165516,
+            "lastRefreshTimeIso": "2026-09-23T15:12:58+03:00"
+          },
+          {
+            "id": "935491203",
+            "page": 2,
+            "position": 43,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T13:00:27+03:00",
+            "createdTimeEpoch": 1789984827,
+            "lastRefreshTimeIso": "2026-09-25T18:50:43+03:00"
+          },
+          {
+            "id": "935968557",
+            "page": 2,
+            "position": 44,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:44:44+03:00",
+            "createdTimeEpoch": 1790351084,
+            "lastRefreshTimeIso": "2026-09-25T18:48:32+03:00"
+          },
+          {
+            "id": "935689427",
+            "page": 2,
+            "position": 45,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T10:12:51+03:00",
+            "createdTimeEpoch": 1790147571,
+            "lastRefreshTimeIso": "2026-09-25T18:47:44+03:00"
+          },
+          {
+            "id": "934516183",
+            "page": 2,
+            "position": 46,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T18:36:49+03:00",
+            "createdTimeEpoch": 1789141009,
+            "lastRefreshTimeIso": "2026-09-25T18:36:52+03:00"
+          },
+          {
+            "id": "914714519",
+            "page": 2,
+            "position": 47,
+            "promoted": false,
+            "createdTimeIso": "2026-02-17T18:16:44+02:00",
+            "createdTimeEpoch": 1771345004,
+            "lastRefreshTimeIso": "2026-09-25T18:34:23+03:00"
+          },
+          {
+            "id": "933609141",
+            "page": 2,
+            "position": 48,
+            "promoted": true,
+            "createdTimeIso": "2026-09-02T18:35:25+03:00",
+            "createdTimeEpoch": 1788363325,
+            "lastRefreshTimeIso": "2026-09-25T18:27:15+03:00"
+          },
+          {
+            "id": "935133251",
+            "page": 2,
+            "position": 49,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T16:12:15+03:00",
+            "createdTimeEpoch": 1789650735,
+            "lastRefreshTimeIso": "2026-09-25T18:08:21+03:00"
+          },
+          {
+            "id": "935964301",
+            "page": 2,
+            "position": 50,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:02:20+03:00",
+            "createdTimeEpoch": 1790348540,
+            "lastRefreshTimeIso": "2026-09-25T18:05:35+03:00"
+          },
+          {
+            "id": "935504085",
+            "page": 2,
+            "position": 51,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T14:35:28+03:00",
+            "createdTimeEpoch": 1789990528,
+            "lastRefreshTimeIso": "2026-09-25T18:00:38+03:00"
+          },
+          {
+            "id": "931190695",
+            "page": 2,
+            "position": 52,
+            "promoted": true,
+            "createdTimeIso": "2026-08-08T13:31:25+03:00",
+            "createdTimeEpoch": 1786185085,
+            "lastRefreshTimeIso": "2026-09-25T17:57:00+03:00"
+          }
+        ]
+      },
+      "verdict": {
+        "urlRetentionOnly": true,
+        "pageContinuity": false,
+        "sortListingEvidence": false,
+        "sortStatus": "BLOCKED",
+        "sortBlockReason": "page1_organic_created_not_non_increasing"
+      }
+    },
+    {
+      "cycle": 2,
+      "at": "2026-09-26T07:15:24.943Z",
+      "category": "apartments",
+      "pageBudget": 2,
+      "productionQuery": {
+        "distanceKm": 15,
+        "order": "created_at:desc",
+        "page1Url": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "page2Url": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2"
+      },
+      "page1": {
+        "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "status": 200,
+        "paramsRetained": {
+          "dist": true,
+          "order": true,
+          "page": true
+        },
+        "hasPrerendered": true,
+        "listingCount": 52,
+        "organicDatedCount": 29,
+        "organicCreatedHead": [
+          1790405906,
+          1790405818,
+          1790404453,
+          1790404305,
+          1780217411,
+          1780137675,
+          1780137263,
+          1780134633,
+          1780134060,
+          1779983013,
+          1779982758,
+          1779981010
+        ],
+        "oldestOrganic": 1779980403,
+        "newestOrganic": 1790405906,
+        "withinPageNonIncreasing": false,
+        "withinPageFailure": {
+          "reason": "organic_created_not_non_increasing",
+          "breakIndex": 14
+        },
+        "listings": [
+          {
+            "id": "935052356",
+            "page": 1,
+            "position": 1,
+            "promoted": true,
+            "createdTimeIso": "2026-09-16T19:23:50+03:00",
+            "createdTimeEpoch": 1789575830,
+            "lastRefreshTimeIso": "2026-09-24T12:33:30+03:00"
+          },
+          {
+            "id": "935641473",
+            "page": 1,
+            "position": 2,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T17:55:55+03:00",
+            "createdTimeEpoch": 1790088955,
+            "lastRefreshTimeIso": "2026-09-24T17:57:07+03:00"
+          },
+          {
+            "id": "935689427",
+            "page": 1,
+            "position": 3,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T10:12:51+03:00",
+            "createdTimeEpoch": 1790147571,
+            "lastRefreshTimeIso": "2026-09-25T18:47:44+03:00"
+          },
+          {
+            "id": "936003331",
+            "page": 1,
+            "position": 4,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:58:26+03:00",
+            "createdTimeEpoch": 1790405906,
+            "lastRefreshTimeIso": "2026-09-26T09:59:27+03:00"
+          },
+          {
+            "id": "936003192",
+            "page": 1,
+            "position": 5,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:56:58+03:00",
+            "createdTimeEpoch": 1790405818,
+            "lastRefreshTimeIso": "2026-09-26T09:57:59+03:00"
+          },
+          {
+            "id": "936002449",
+            "page": 1,
+            "position": 6,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T09:46:44+03:00",
+            "createdTimeEpoch": 1790405204,
+            "lastRefreshTimeIso": "2026-09-26T09:47:45+03:00"
+          },
+          {
+            "id": "936001417",
+            "page": 1,
+            "position": 7,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:34:13+03:00",
+            "createdTimeEpoch": 1790404453,
+            "lastRefreshTimeIso": "2026-09-26T09:35:14+03:00"
+          },
+          {
+            "id": "935296441",
+            "page": 1,
+            "position": 8,
+            "promoted": true,
+            "createdTimeIso": "2026-09-19T12:33:55+03:00",
+            "createdTimeEpoch": 1789810435,
+            "lastRefreshTimeIso": "2026-09-26T09:46:04+03:00"
+          },
+          {
+            "id": "936001258",
+            "page": 1,
+            "position": 9,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:31:45+03:00",
+            "createdTimeEpoch": 1790404305,
+            "lastRefreshTimeIso": "2026-09-26T09:32:46+03:00"
+          },
+          {
+            "id": "924946011",
+            "page": 1,
+            "position": 10,
+            "promoted": false,
+            "createdTimeIso": "2026-05-31T11:50:11+03:00",
+            "createdTimeEpoch": 1780217411,
+            "lastRefreshTimeIso": "2026-09-26T09:31:10+03:00"
+          },
+          {
+            "id": "924872340",
+            "page": 1,
+            "position": 11,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T13:41:15+03:00",
+            "createdTimeEpoch": 1780137675,
+            "lastRefreshTimeIso": "2026-09-26T09:30:56+03:00"
+          },
+          {
+            "id": "924871548",
+            "page": 1,
+            "position": 12,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T13:34:23+03:00",
+            "createdTimeEpoch": 1780137263,
+            "lastRefreshTimeIso": "2026-09-26T09:30:52+03:00"
+          },
+          {
+            "id": "924866953",
+            "page": 1,
+            "position": 13,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T12:50:33+03:00",
+            "createdTimeEpoch": 1780134633,
+            "lastRefreshTimeIso": "2026-09-26T09:30:49+03:00"
+          },
+          {
+            "id": "934347832",
+            "page": 1,
+            "position": 14,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T23:02:36+03:00",
+            "createdTimeEpoch": 1788984156,
+            "lastRefreshTimeIso": "2026-09-25T22:12:38+03:00"
+          },
+          {
+            "id": "933128280",
+            "page": 1,
+            "position": 15,
+            "promoted": true,
+            "createdTimeIso": "2026-08-28T16:34:45+03:00",
+            "createdTimeEpoch": 1787924085,
+            "lastRefreshTimeIso": "2026-09-25T23:55:51+03:00"
+          },
+          {
+            "id": "934642843",
+            "page": 1,
+            "position": 16,
+            "promoted": true,
+            "createdTimeIso": "2026-09-13T08:36:08+03:00",
+            "createdTimeEpoch": 1789277768,
+            "lastRefreshTimeIso": "2026-09-24T12:22:27+03:00"
+          },
+          {
+            "id": "924865900",
+            "page": 1,
+            "position": 17,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T12:41:00+03:00",
+            "createdTimeEpoch": 1780134060,
+            "lastRefreshTimeIso": "2026-09-26T09:30:43+03:00"
+          },
+          {
+            "id": "924732422",
+            "page": 1,
+            "position": 18,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:43:33+03:00",
+            "createdTimeEpoch": 1779983013,
+            "lastRefreshTimeIso": "2026-09-26T09:29:39+03:00"
+          },
+          {
+            "id": "924732027",
+            "page": 1,
+            "position": 19,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:39:18+03:00",
+            "createdTimeEpoch": 1779982758,
+            "lastRefreshTimeIso": "2026-09-26T09:28:44+03:00"
+          },
+          {
+            "id": "924729293",
+            "page": 1,
+            "position": 20,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:10:10+03:00",
+            "createdTimeEpoch": 1779981010,
+            "lastRefreshTimeIso": "2026-09-26T09:28:40+03:00"
+          },
+          {
+            "id": "924728761",
+            "page": 1,
+            "position": 21,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:04:50+03:00",
+            "createdTimeEpoch": 1779980690,
+            "lastRefreshTimeIso": "2026-09-26T09:27:07+03:00"
+          },
+          {
+            "id": "924728316",
+            "page": 1,
+            "position": 22,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:00:03+03:00",
+            "createdTimeEpoch": 1779980403,
+            "lastRefreshTimeIso": "2026-09-26T09:26:47+03:00"
+          },
+          {
+            "id": "936000137",
+            "page": 1,
+            "position": 23,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T09:11:33+03:00",
+            "createdTimeEpoch": 1790403093,
+            "lastRefreshTimeIso": "2026-09-26T09:14:09+03:00"
+          },
+          {
+            "id": "925528176",
+            "page": 1,
+            "position": 24,
+            "promoted": true,
+            "createdTimeIso": "2026-06-06T13:11:15+03:00",
+            "createdTimeEpoch": 1780740675,
+            "lastRefreshTimeIso": "2026-09-26T09:09:12+03:00"
+          },
+          {
+            "id": "935998907",
+            "page": 1,
+            "position": 25,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T08:41:00+03:00",
+            "createdTimeEpoch": 1790401260,
+            "lastRefreshTimeIso": "2026-09-26T08:42:03+03:00"
+          },
+          {
+            "id": "935998905",
+            "page": 1,
+            "position": 26,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T08:40:58+03:00",
+            "createdTimeEpoch": 1790401258,
+            "lastRefreshTimeIso": "2026-09-26T08:44:17+03:00"
+          },
+          {
+            "id": "935133251",
+            "page": 1,
+            "position": 27,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T16:12:15+03:00",
+            "createdTimeEpoch": 1789650735,
+            "lastRefreshTimeIso": "2026-09-25T18:08:21+03:00"
+          },
+          {
+            "id": "935481225",
+            "page": 1,
+            "position": 28,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T11:46:07+03:00",
+            "createdTimeEpoch": 1789980367,
+            "lastRefreshTimeIso": "2026-09-24T10:31:57+03:00"
+          },
+          {
+            "id": "935096151",
+            "page": 1,
+            "position": 29,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T11:22:01+03:00",
+            "createdTimeEpoch": 1789633321,
+            "lastRefreshTimeIso": "2026-09-23T11:25:35+03:00"
+          },
+          {
+            "id": "933157711",
+            "page": 1,
+            "position": 30,
+            "promoted": false,
+            "createdTimeIso": "2026-08-28T22:02:13+03:00",
+            "createdTimeEpoch": 1787943733,
+            "lastRefreshTimeIso": "2026-09-26T08:06:55+03:00"
+          },
+          {
+            "id": "935996870",
+            "page": 1,
+            "position": 31,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T07:17:49+03:00",
+            "createdTimeEpoch": 1790396269,
+            "lastRefreshTimeIso": "2026-09-26T07:18:50+03:00"
+          },
+          {
+            "id": "935995583",
+            "page": 1,
+            "position": 32,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T03:06:21+03:00",
+            "createdTimeEpoch": 1790381181,
+            "lastRefreshTimeIso": "2026-09-26T03:07:21+03:00"
+          },
+          {
+            "id": "935995247",
+            "page": 1,
+            "position": 33,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T02:21:01+03:00",
+            "createdTimeEpoch": 1790378461,
+            "lastRefreshTimeIso": "2026-09-26T02:24:17+03:00"
+          },
+          {
+            "id": "935994813",
+            "page": 1,
+            "position": 34,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T01:37:25+03:00",
+            "createdTimeEpoch": 1790375845,
+            "lastRefreshTimeIso": "2026-09-26T01:39:23+03:00"
+          },
+          {
+            "id": "935993802",
+            "page": 1,
+            "position": 35,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T00:39:27+03:00",
+            "createdTimeEpoch": 1790372367,
+            "lastRefreshTimeIso": "2026-09-26T00:46:45+03:00"
+          },
+          {
+            "id": "933835828",
+            "page": 1,
+            "position": 36,
+            "promoted": false,
+            "createdTimeIso": "2026-09-05T00:39:25+03:00",
+            "createdTimeEpoch": 1788557965,
+            "lastRefreshTimeIso": "2026-09-26T00:39:28+03:00"
+          },
+          {
+            "id": "913047588",
+            "page": 1,
+            "position": 37,
+            "promoted": true,
+            "createdTimeIso": "2026-01-30T12:27:04+02:00",
+            "createdTimeEpoch": 1769768824,
+            "lastRefreshTimeIso": "2026-09-26T00:24:21+03:00"
+          },
+          {
+            "id": "933128280",
+            "page": 1,
+            "position": 38,
+            "promoted": true,
+            "createdTimeIso": "2026-08-28T16:34:45+03:00",
+            "createdTimeEpoch": 1787924085,
+            "lastRefreshTimeIso": "2026-09-25T23:55:51+03:00"
+          },
+          {
+            "id": "935991561",
+            "page": 1,
+            "position": 39,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T23:35:42+03:00",
+            "createdTimeEpoch": 1790368542,
+            "lastRefreshTimeIso": "2026-09-25T23:39:09+03:00"
+          },
+          {
+            "id": "935846243",
+            "page": 1,
+            "position": 40,
+            "promoted": true,
+            "createdTimeIso": "2026-09-24T16:21:20+03:00",
+            "createdTimeEpoch": 1790256080,
+            "lastRefreshTimeIso": "2026-09-24T16:42:29+03:00"
+          },
+          {
+            "id": "930787435",
+            "page": 1,
+            "position": 41,
+            "promoted": true,
+            "createdTimeIso": "2026-08-03T19:47:18+03:00",
+            "createdTimeEpoch": 1785775638,
+            "lastRefreshTimeIso": "2026-09-25T19:00:00+03:00"
+          },
+          {
+            "id": "935514541",
+            "page": 1,
+            "position": 42,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T15:50:00+03:00",
+            "createdTimeEpoch": 1789995000,
+            "lastRefreshTimeIso": "2026-09-25T16:04:31+03:00"
+          },
+          {
+            "id": "935174397",
+            "page": 1,
+            "position": 43,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T23:40:55+03:00",
+            "createdTimeEpoch": 1789677655,
+            "lastRefreshTimeIso": "2026-09-25T23:08:21+03:00"
+          },
+          {
+            "id": "935672177",
+            "page": 1,
+            "position": 44,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T22:54:35+03:00",
+            "createdTimeEpoch": 1790106875,
+            "lastRefreshTimeIso": "2026-09-25T22:55:09+03:00"
+          },
+          {
+            "id": "935987043",
+            "page": 1,
+            "position": 45,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:22:56+03:00",
+            "createdTimeEpoch": 1790364176,
+            "lastRefreshTimeIso": "2026-09-25T22:23:57+03:00"
+          },
+          {
+            "id": "935987058",
+            "page": 1,
+            "position": 46,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:23:06+03:00",
+            "createdTimeEpoch": 1790364186,
+            "lastRefreshTimeIso": "2026-09-25T22:26:14+03:00"
+          },
+          {
+            "id": "934347832",
+            "page": 1,
+            "position": 47,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T23:02:36+03:00",
+            "createdTimeEpoch": 1788984156,
+            "lastRefreshTimeIso": "2026-09-25T22:12:38+03:00"
+          },
+          {
+            "id": "935985685",
+            "page": 1,
+            "position": 48,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:05:08+03:00",
+            "createdTimeEpoch": 1790363108,
+            "lastRefreshTimeIso": "2026-09-25T22:06:09+03:00"
+          },
+          {
+            "id": "934338458",
+            "page": 1,
+            "position": 49,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T21:01:40+03:00",
+            "createdTimeEpoch": 1788976900,
+            "lastRefreshTimeIso": "2026-09-25T21:34:56+03:00"
+          },
+          {
+            "id": "931599314",
+            "page": 1,
+            "position": 50,
+            "promoted": false,
+            "createdTimeIso": "2026-08-12T18:48:32+03:00",
+            "createdTimeEpoch": 1786549712,
+            "lastRefreshTimeIso": "2026-09-25T21:34:48+03:00"
+          },
+          {
+            "id": "934530740",
+            "page": 1,
+            "position": 51,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T21:32:52+03:00",
+            "createdTimeEpoch": 1789151572,
+            "lastRefreshTimeIso": "2026-09-25T21:32:55+03:00"
+          },
+          {
+            "id": "935981350",
+            "page": 1,
+            "position": 52,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:16:29+03:00",
+            "createdTimeEpoch": 1790360189,
+            "lastRefreshTimeIso": "2026-09-25T21:27:12+03:00"
+          }
+        ]
+      },
+      "page2": {
+        "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+        "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+        "status": 200,
+        "paramsRetained": {
+          "dist": true,
+          "order": true,
+          "page": true
+        },
+        "hasPrerendered": true,
+        "listingCount": 51,
+        "organicDatedCount": 15,
+        "organicCreatedHead": [
+          1790359820,
+          1790359233,
+          1790358726,
+          1790343413,
+          1789147462,
+          1789747972,
+          1790354640,
+          1787651539,
+          1790353708,
+          1779191691,
+          1790351519,
+          1790351084
+        ],
+        "oldestOrganic": 1771345004,
+        "newestOrganic": 1790359820,
+        "withinPageNonIncreasing": false,
+        "withinPageFailure": {
+          "reason": "organic_created_not_non_increasing",
+          "breakIndex": 5
+        },
+        "listings": [
+          {
+            "id": "934398508",
+            "page": 2,
+            "position": 1,
+            "promoted": true,
+            "createdTimeIso": "2026-09-10T15:04:51+03:00",
+            "createdTimeEpoch": 1789041891,
+            "lastRefreshTimeIso": "2026-09-24T15:04:55+03:00"
+          },
+          {
+            "id": "934074559",
+            "page": 2,
+            "position": 2,
+            "promoted": true,
+            "createdTimeIso": "2026-09-07T13:48:35+03:00",
+            "createdTimeEpoch": 1788778115,
+            "lastRefreshTimeIso": "2026-09-25T11:49:30+03:00"
+          },
+          {
+            "id": "924852707",
+            "page": 2,
+            "position": 3,
+            "promoted": true,
+            "createdTimeIso": "2026-05-30T10:09:15+03:00",
+            "createdTimeEpoch": 1780124955,
+            "lastRefreshTimeIso": "2026-09-24T19:03:26+03:00"
+          },
+          {
+            "id": "935662522",
+            "page": 2,
+            "position": 4,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T21:14:44+03:00",
+            "createdTimeEpoch": 1790100884,
+            "lastRefreshTimeIso": "2026-09-25T21:21:08+03:00"
+          },
+          {
+            "id": "935455420",
+            "page": 2,
+            "position": 5,
+            "promoted": true,
+            "createdTimeIso": "2026-09-20T23:34:24+03:00",
+            "createdTimeEpoch": 1789936464,
+            "lastRefreshTimeIso": "2026-09-25T21:17:35+03:00"
+          },
+          {
+            "id": "926281997",
+            "page": 2,
+            "position": 6,
+            "promoted": true,
+            "createdTimeIso": "2026-06-14T18:18:38+03:00",
+            "createdTimeEpoch": 1781450318,
+            "lastRefreshTimeIso": "2026-09-25T21:15:57+03:00"
+          },
+          {
+            "id": "935980814",
+            "page": 2,
+            "position": 7,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:10:20+03:00",
+            "createdTimeEpoch": 1790359820,
+            "lastRefreshTimeIso": "2026-09-25T21:11:21+03:00"
+          },
+          {
+            "id": "935979976",
+            "page": 2,
+            "position": 8,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:00:33+03:00",
+            "createdTimeEpoch": 1790359233,
+            "lastRefreshTimeIso": "2026-09-25T21:03:21+03:00"
+          },
+          {
+            "id": "899461559",
+            "page": 2,
+            "position": 9,
+            "promoted": true,
+            "createdTimeIso": "2025-09-09T20:04:59+03:00",
+            "createdTimeEpoch": 1757437499,
+            "lastRefreshTimeIso": "2026-09-25T20:57:14+03:00"
+          },
+          {
+            "id": "935979305",
+            "page": 2,
+            "position": 10,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T20:52:06+03:00",
+            "createdTimeEpoch": 1790358726,
+            "lastRefreshTimeIso": "2026-09-25T20:55:34+03:00"
+          },
+          {
+            "id": "935549790",
+            "page": 2,
+            "position": 11,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T20:39:32+03:00",
+            "createdTimeEpoch": 1790012372,
+            "lastRefreshTimeIso": "2026-09-25T20:41:24+03:00"
+          },
+          {
+            "id": "935526874",
+            "page": 2,
+            "position": 12,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T17:14:00+03:00",
+            "createdTimeEpoch": 1790000040,
+            "lastRefreshTimeIso": "2026-09-25T20:33:50+03:00"
+          },
+          {
+            "id": "935643338",
+            "page": 2,
+            "position": 13,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T18:12:54+03:00",
+            "createdTimeEpoch": 1790089974,
+            "lastRefreshTimeIso": "2026-09-25T20:32:56+03:00"
+          },
+          {
+            "id": "935329353",
+            "page": 2,
+            "position": 14,
+            "promoted": true,
+            "createdTimeIso": "2026-09-19T17:30:33+03:00",
+            "createdTimeEpoch": 1789828233,
+            "lastRefreshTimeIso": "2026-09-19T17:31:28+03:00"
+          },
+          {
+            "id": "935545158",
+            "page": 2,
+            "position": 15,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T19:58:56+03:00",
+            "createdTimeEpoch": 1790009936,
+            "lastRefreshTimeIso": "2026-09-25T20:01:12+03:00"
+          },
+          {
+            "id": "935057859",
+            "page": 2,
+            "position": 16,
+            "promoted": true,
+            "createdTimeIso": "2026-09-16T20:28:35+03:00",
+            "createdTimeEpoch": 1789579715,
+            "lastRefreshTimeIso": "2026-09-25T12:10:37+03:00"
+          },
+          {
+            "id": "935955066",
+            "page": 2,
+            "position": 17,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T16:36:53+03:00",
+            "createdTimeEpoch": 1790343413,
+            "lastRefreshTimeIso": "2026-09-25T20:32:14+03:00"
+          },
+          {
+            "id": "934525333",
+            "page": 2,
+            "position": 18,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T20:24:22+03:00",
+            "createdTimeEpoch": 1789147462,
+            "lastRefreshTimeIso": "2026-09-25T20:24:26+03:00"
+          },
+          {
+            "id": "935250046",
+            "page": 2,
+            "position": 19,
+            "promoted": false,
+            "createdTimeIso": "2026-09-18T19:12:52+03:00",
+            "createdTimeEpoch": 1789747972,
+            "lastRefreshTimeIso": "2026-09-25T20:17:57+03:00"
+          },
+          {
+            "id": "935481672",
+            "page": 2,
+            "position": 20,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T11:49:42+03:00",
+            "createdTimeEpoch": 1789980582,
+            "lastRefreshTimeIso": "2026-09-25T20:01:35+03:00"
+          },
+          {
+            "id": "934222228",
+            "page": 2,
+            "position": 21,
+            "promoted": true,
+            "createdTimeIso": "2026-09-08T18:34:11+03:00",
+            "createdTimeEpoch": 1788881651,
+            "lastRefreshTimeIso": "2026-09-25T20:00:59+03:00"
+          },
+          {
+            "id": "935973616",
+            "page": 2,
+            "position": 22,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T19:44:00+03:00",
+            "createdTimeEpoch": 1790354640,
+            "lastRefreshTimeIso": "2026-09-25T19:54:18+03:00"
+          },
+          {
+            "id": "935338897",
+            "page": 2,
+            "position": 23,
+            "promoted": true,
+            "createdTimeIso": "2026-09-19T19:02:13+03:00",
+            "createdTimeEpoch": 1789833733,
+            "lastRefreshTimeIso": "2026-09-25T19:47:20+03:00"
+          },
+          {
+            "id": "935972519",
+            "page": 2,
+            "position": 24,
+            "promoted": true,
+            "createdTimeIso": "2026-09-25T19:30:54+03:00",
+            "createdTimeEpoch": 1790353854,
+            "lastRefreshTimeIso": "2026-09-25T19:37:30+03:00"
+          },
+          {
+            "id": "935252365",
+            "page": 2,
+            "position": 25,
+            "promoted": true,
+            "createdTimeIso": "2026-09-18T19:39:41+03:00",
+            "createdTimeEpoch": 1789749581,
+            "lastRefreshTimeIso": "2026-09-25T19:39:48+03:00"
+          },
+          {
+            "id": "935726063",
+            "page": 2,
+            "position": 26,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T14:46:12+03:00",
+            "createdTimeEpoch": 1790163972,
+            "lastRefreshTimeIso": "2026-09-23T14:47:16+03:00"
+          },
+          {
+            "id": "935729604",
+            "page": 2,
+            "position": 27,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T15:11:56+03:00",
+            "createdTimeEpoch": 1790165516,
+            "lastRefreshTimeIso": "2026-09-23T15:12:58+03:00"
+          },
+          {
+            "id": "931996810",
+            "page": 2,
+            "position": 28,
+            "promoted": true,
+            "createdTimeIso": "2026-08-17T01:13:35+03:00",
+            "createdTimeEpoch": 1786918415,
+            "lastRefreshTimeIso": "2026-09-24T10:31:57+03:00"
+          },
+          {
+            "id": "932791588",
+            "page": 2,
+            "position": 29,
+            "promoted": false,
+            "createdTimeIso": "2026-08-25T12:52:19+03:00",
+            "createdTimeEpoch": 1787651539,
+            "lastRefreshTimeIso": "2026-09-25T19:38:32+03:00"
+          },
+          {
+            "id": "935651831",
+            "page": 2,
+            "position": 30,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T19:34:01+03:00",
+            "createdTimeEpoch": 1790094841,
+            "lastRefreshTimeIso": "2026-09-25T19:36:09+03:00"
+          },
+          {
+            "id": "935972317",
+            "page": 2,
+            "position": 31,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T19:28:28+03:00",
+            "createdTimeEpoch": 1790353708,
+            "lastRefreshTimeIso": "2026-09-25T19:31:15+03:00"
+          },
+          {
+            "id": "935156249",
+            "page": 2,
+            "position": 32,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T19:54:49+03:00",
+            "createdTimeEpoch": 1789664089,
+            "lastRefreshTimeIso": "2026-09-25T19:22:32+03:00"
+          },
+          {
+            "id": "932276417",
+            "page": 2,
+            "position": 33,
+            "promoted": true,
+            "createdTimeIso": "2026-08-19T19:48:48+03:00",
+            "createdTimeEpoch": 1787158128,
+            "lastRefreshTimeIso": "2026-09-25T19:20:57+03:00"
+          },
+          {
+            "id": "934185418",
+            "page": 2,
+            "position": 34,
+            "promoted": true,
+            "createdTimeIso": "2026-09-08T13:49:51+03:00",
+            "createdTimeEpoch": 1788864591,
+            "lastRefreshTimeIso": "2026-09-25T19:10:16+03:00"
+          },
+          {
+            "id": "930787435",
+            "page": 2,
+            "position": 35,
+            "promoted": true,
+            "createdTimeIso": "2026-08-03T19:47:18+03:00",
+            "createdTimeEpoch": 1785775638,
+            "lastRefreshTimeIso": "2026-09-25T19:00:00+03:00"
+          },
+          {
+            "id": "923854346",
+            "page": 2,
+            "position": 36,
+            "promoted": false,
+            "createdTimeIso": "2026-05-19T14:54:51+03:00",
+            "createdTimeEpoch": 1779191691,
+            "lastRefreshTimeIso": "2026-09-25T18:59:52+03:00"
+          },
+          {
+            "id": "935123420",
+            "page": 2,
+            "position": 37,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T14:56:58+03:00",
+            "createdTimeEpoch": 1789646218,
+            "lastRefreshTimeIso": "2026-09-25T18:57:09+03:00"
+          },
+          {
+            "id": "935969190",
+            "page": 2,
+            "position": 38,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:51:59+03:00",
+            "createdTimeEpoch": 1790351519,
+            "lastRefreshTimeIso": "2026-09-25T18:56:00+03:00"
+          },
+          {
+            "id": "913047588",
+            "page": 2,
+            "position": 39,
+            "promoted": true,
+            "createdTimeIso": "2026-01-30T12:27:04+02:00",
+            "createdTimeEpoch": 1769768824,
+            "lastRefreshTimeIso": "2026-09-26T00:24:21+03:00"
+          },
+          {
+            "id": "887778799",
+            "page": 2,
+            "position": 40,
+            "promoted": true,
+            "createdTimeIso": "2025-05-15T23:33:17+03:00",
+            "createdTimeEpoch": 1747341197,
+            "lastRefreshTimeIso": "2026-09-24T10:49:19+03:00"
+          },
+          {
+            "id": "935497153",
+            "page": 2,
+            "position": 41,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T13:44:39+03:00",
+            "createdTimeEpoch": 1789987479,
+            "lastRefreshTimeIso": "2026-09-25T13:49:21+03:00"
+          },
+          {
+            "id": "935491203",
+            "page": 2,
+            "position": 42,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T13:00:27+03:00",
+            "createdTimeEpoch": 1789984827,
+            "lastRefreshTimeIso": "2026-09-25T18:50:43+03:00"
+          },
+          {
+            "id": "935968557",
+            "page": 2,
+            "position": 43,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:44:44+03:00",
+            "createdTimeEpoch": 1790351084,
+            "lastRefreshTimeIso": "2026-09-25T18:48:32+03:00"
+          },
+          {
+            "id": "935689427",
+            "page": 2,
+            "position": 44,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T10:12:51+03:00",
+            "createdTimeEpoch": 1790147571,
+            "lastRefreshTimeIso": "2026-09-25T18:47:44+03:00"
+          },
+          {
+            "id": "934516183",
+            "page": 2,
+            "position": 45,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T18:36:49+03:00",
+            "createdTimeEpoch": 1789141009,
+            "lastRefreshTimeIso": "2026-09-25T18:36:52+03:00"
+          },
+          {
+            "id": "914714519",
+            "page": 2,
+            "position": 46,
+            "promoted": false,
+            "createdTimeIso": "2026-02-17T18:16:44+02:00",
+            "createdTimeEpoch": 1771345004,
+            "lastRefreshTimeIso": "2026-09-25T18:34:23+03:00"
+          },
+          {
+            "id": "933609141",
+            "page": 2,
+            "position": 47,
+            "promoted": true,
+            "createdTimeIso": "2026-09-02T18:35:25+03:00",
+            "createdTimeEpoch": 1788363325,
+            "lastRefreshTimeIso": "2026-09-25T18:27:15+03:00"
+          },
+          {
+            "id": "935133251",
+            "page": 2,
+            "position": 48,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T16:12:15+03:00",
+            "createdTimeEpoch": 1789650735,
+            "lastRefreshTimeIso": "2026-09-25T18:08:21+03:00"
+          },
+          {
+            "id": "935964301",
+            "page": 2,
+            "position": 49,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:02:20+03:00",
+            "createdTimeEpoch": 1790348540,
+            "lastRefreshTimeIso": "2026-09-25T18:05:35+03:00"
+          },
+          {
+            "id": "935504085",
+            "page": 2,
+            "position": 50,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T14:35:28+03:00",
+            "createdTimeEpoch": 1789990528,
+            "lastRefreshTimeIso": "2026-09-25T18:00:38+03:00"
+          },
+          {
+            "id": "931190695",
+            "page": 2,
+            "position": 51,
+            "promoted": true,
+            "createdTimeIso": "2026-08-08T13:31:25+03:00",
+            "createdTimeEpoch": 1786185085,
+            "lastRefreshTimeIso": "2026-09-25T17:57:00+03:00"
+          }
+        ]
+      },
+      "verdict": {
+        "urlRetentionOnly": true,
+        "pageContinuity": false,
+        "sortListingEvidence": false,
+        "sortStatus": "BLOCKED",
+        "sortBlockReason": "page1_organic_created_not_non_increasing"
+      }
+    },
+    {
+      "cycle": 3,
+      "at": "2026-09-26T07:15:34.260Z",
+      "category": "apartments",
+      "pageBudget": 2,
+      "productionQuery": {
+        "distanceKm": 15,
+        "order": "created_at:desc",
+        "page1Url": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "page2Url": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2"
+      },
+      "page1": {
+        "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+        "status": 200,
+        "paramsRetained": {
+          "dist": true,
+          "order": true,
+          "page": true
+        },
+        "hasPrerendered": true,
+        "listingCount": 52,
+        "organicDatedCount": 29,
+        "organicCreatedHead": [
+          1790405906,
+          1790405818,
+          1790404453,
+          1790404305,
+          1780217411,
+          1780137675,
+          1780137263,
+          1780134633,
+          1780134060,
+          1779983013,
+          1779982758,
+          1779981010
+        ],
+        "oldestOrganic": 1779980403,
+        "newestOrganic": 1790405906,
+        "withinPageNonIncreasing": false,
+        "withinPageFailure": {
+          "reason": "organic_created_not_non_increasing",
+          "breakIndex": 14
+        },
+        "listings": [
+          {
+            "id": "935641473",
+            "page": 1,
+            "position": 1,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T17:55:55+03:00",
+            "createdTimeEpoch": 1790088955,
+            "lastRefreshTimeIso": "2026-09-24T17:57:07+03:00"
+          },
+          {
+            "id": "935689427",
+            "page": 1,
+            "position": 2,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T10:12:51+03:00",
+            "createdTimeEpoch": 1790147571,
+            "lastRefreshTimeIso": "2026-09-25T18:47:44+03:00"
+          },
+          {
+            "id": "935514541",
+            "page": 1,
+            "position": 3,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T15:50:00+03:00",
+            "createdTimeEpoch": 1789995000,
+            "lastRefreshTimeIso": "2026-09-25T16:04:31+03:00"
+          },
+          {
+            "id": "936003331",
+            "page": 1,
+            "position": 4,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:58:26+03:00",
+            "createdTimeEpoch": 1790405906,
+            "lastRefreshTimeIso": "2026-09-26T09:59:27+03:00"
+          },
+          {
+            "id": "936003192",
+            "page": 1,
+            "position": 5,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:56:58+03:00",
+            "createdTimeEpoch": 1790405818,
+            "lastRefreshTimeIso": "2026-09-26T09:57:59+03:00"
+          },
+          {
+            "id": "936002449",
+            "page": 1,
+            "position": 6,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T09:46:44+03:00",
+            "createdTimeEpoch": 1790405204,
+            "lastRefreshTimeIso": "2026-09-26T09:47:45+03:00"
+          },
+          {
+            "id": "936001417",
+            "page": 1,
+            "position": 7,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:34:13+03:00",
+            "createdTimeEpoch": 1790404453,
+            "lastRefreshTimeIso": "2026-09-26T09:35:14+03:00"
+          },
+          {
+            "id": "935296441",
+            "page": 1,
+            "position": 8,
+            "promoted": true,
+            "createdTimeIso": "2026-09-19T12:33:55+03:00",
+            "createdTimeEpoch": 1789810435,
+            "lastRefreshTimeIso": "2026-09-26T09:46:04+03:00"
+          },
+          {
+            "id": "936001258",
+            "page": 1,
+            "position": 9,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T09:31:45+03:00",
+            "createdTimeEpoch": 1790404305,
+            "lastRefreshTimeIso": "2026-09-26T09:32:46+03:00"
+          },
+          {
+            "id": "924946011",
+            "page": 1,
+            "position": 10,
+            "promoted": false,
+            "createdTimeIso": "2026-05-31T11:50:11+03:00",
+            "createdTimeEpoch": 1780217411,
+            "lastRefreshTimeIso": "2026-09-26T09:31:10+03:00"
+          },
+          {
+            "id": "924872340",
+            "page": 1,
+            "position": 11,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T13:41:15+03:00",
+            "createdTimeEpoch": 1780137675,
+            "lastRefreshTimeIso": "2026-09-26T09:30:56+03:00"
+          },
+          {
+            "id": "924871548",
+            "page": 1,
+            "position": 12,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T13:34:23+03:00",
+            "createdTimeEpoch": 1780137263,
+            "lastRefreshTimeIso": "2026-09-26T09:30:52+03:00"
+          },
+          {
+            "id": "924866953",
+            "page": 1,
+            "position": 13,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T12:50:33+03:00",
+            "createdTimeEpoch": 1780134633,
+            "lastRefreshTimeIso": "2026-09-26T09:30:49+03:00"
+          },
+          {
+            "id": "935497273",
+            "page": 1,
+            "position": 14,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T13:45:34+03:00",
+            "createdTimeEpoch": 1789987534,
+            "lastRefreshTimeIso": "2026-09-25T13:46:53+03:00"
+          },
+          {
+            "id": "934347832",
+            "page": 1,
+            "position": 15,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T23:02:36+03:00",
+            "createdTimeEpoch": 1788984156,
+            "lastRefreshTimeIso": "2026-09-25T22:12:38+03:00"
+          },
+          {
+            "id": "933128280",
+            "page": 1,
+            "position": 16,
+            "promoted": true,
+            "createdTimeIso": "2026-08-28T16:34:45+03:00",
+            "createdTimeEpoch": 1787924085,
+            "lastRefreshTimeIso": "2026-09-25T23:55:51+03:00"
+          },
+          {
+            "id": "924865900",
+            "page": 1,
+            "position": 17,
+            "promoted": false,
+            "createdTimeIso": "2026-05-30T12:41:00+03:00",
+            "createdTimeEpoch": 1780134060,
+            "lastRefreshTimeIso": "2026-09-26T09:30:43+03:00"
+          },
+          {
+            "id": "924732422",
+            "page": 1,
+            "position": 18,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:43:33+03:00",
+            "createdTimeEpoch": 1779983013,
+            "lastRefreshTimeIso": "2026-09-26T09:29:39+03:00"
+          },
+          {
+            "id": "924732027",
+            "page": 1,
+            "position": 19,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:39:18+03:00",
+            "createdTimeEpoch": 1779982758,
+            "lastRefreshTimeIso": "2026-09-26T09:28:44+03:00"
+          },
+          {
+            "id": "924729293",
+            "page": 1,
+            "position": 20,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:10:10+03:00",
+            "createdTimeEpoch": 1779981010,
+            "lastRefreshTimeIso": "2026-09-26T09:28:40+03:00"
+          },
+          {
+            "id": "924728761",
+            "page": 1,
+            "position": 21,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:04:50+03:00",
+            "createdTimeEpoch": 1779980690,
+            "lastRefreshTimeIso": "2026-09-26T09:27:07+03:00"
+          },
+          {
+            "id": "924728316",
+            "page": 1,
+            "position": 22,
+            "promoted": false,
+            "createdTimeIso": "2026-05-28T18:00:03+03:00",
+            "createdTimeEpoch": 1779980403,
+            "lastRefreshTimeIso": "2026-09-26T09:26:47+03:00"
+          },
+          {
+            "id": "936000137",
+            "page": 1,
+            "position": 23,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T09:11:33+03:00",
+            "createdTimeEpoch": 1790403093,
+            "lastRefreshTimeIso": "2026-09-26T09:14:09+03:00"
+          },
+          {
+            "id": "925528176",
+            "page": 1,
+            "position": 24,
+            "promoted": true,
+            "createdTimeIso": "2026-06-06T13:11:15+03:00",
+            "createdTimeEpoch": 1780740675,
+            "lastRefreshTimeIso": "2026-09-26T09:09:12+03:00"
+          },
+          {
+            "id": "935998907",
+            "page": 1,
+            "position": 25,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T08:41:00+03:00",
+            "createdTimeEpoch": 1790401260,
+            "lastRefreshTimeIso": "2026-09-26T08:42:03+03:00"
+          },
+          {
+            "id": "935998905",
+            "page": 1,
+            "position": 26,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T08:40:58+03:00",
+            "createdTimeEpoch": 1790401258,
+            "lastRefreshTimeIso": "2026-09-26T08:44:17+03:00"
+          },
+          {
+            "id": "934642843",
+            "page": 1,
+            "position": 27,
+            "promoted": true,
+            "createdTimeIso": "2026-09-13T08:36:08+03:00",
+            "createdTimeEpoch": 1789277768,
+            "lastRefreshTimeIso": "2026-09-24T12:22:27+03:00"
+          },
+          {
+            "id": "929215998",
+            "page": 1,
+            "position": 28,
+            "promoted": true,
+            "createdTimeIso": "2026-07-17T16:08:45+03:00",
+            "createdTimeEpoch": 1784293725,
+            "lastRefreshTimeIso": "2026-09-23T13:02:44+03:00"
+          },
+          {
+            "id": "935133251",
+            "page": 1,
+            "position": 29,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T16:12:15+03:00",
+            "createdTimeEpoch": 1789650735,
+            "lastRefreshTimeIso": "2026-09-25T18:08:21+03:00"
+          },
+          {
+            "id": "933157711",
+            "page": 1,
+            "position": 30,
+            "promoted": false,
+            "createdTimeIso": "2026-08-28T22:02:13+03:00",
+            "createdTimeEpoch": 1787943733,
+            "lastRefreshTimeIso": "2026-09-26T08:06:55+03:00"
+          },
+          {
+            "id": "935996870",
+            "page": 1,
+            "position": 31,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T07:17:49+03:00",
+            "createdTimeEpoch": 1790396269,
+            "lastRefreshTimeIso": "2026-09-26T07:18:50+03:00"
+          },
+          {
+            "id": "935995583",
+            "page": 1,
+            "position": 32,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T03:06:21+03:00",
+            "createdTimeEpoch": 1790381181,
+            "lastRefreshTimeIso": "2026-09-26T03:07:21+03:00"
+          },
+          {
+            "id": "935995247",
+            "page": 1,
+            "position": 33,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T02:21:01+03:00",
+            "createdTimeEpoch": 1790378461,
+            "lastRefreshTimeIso": "2026-09-26T02:24:17+03:00"
+          },
+          {
+            "id": "935994813",
+            "page": 1,
+            "position": 34,
+            "promoted": false,
+            "createdTimeIso": "2026-09-26T01:37:25+03:00",
+            "createdTimeEpoch": 1790375845,
+            "lastRefreshTimeIso": "2026-09-26T01:39:23+03:00"
+          },
+          {
+            "id": "935993802",
+            "page": 1,
+            "position": 35,
+            "promoted": true,
+            "createdTimeIso": "2026-09-26T00:39:27+03:00",
+            "createdTimeEpoch": 1790372367,
+            "lastRefreshTimeIso": "2026-09-26T00:46:45+03:00"
+          },
+          {
+            "id": "933835828",
+            "page": 1,
+            "position": 36,
+            "promoted": false,
+            "createdTimeIso": "2026-09-05T00:39:25+03:00",
+            "createdTimeEpoch": 1788557965,
+            "lastRefreshTimeIso": "2026-09-26T00:39:28+03:00"
+          },
+          {
+            "id": "913047588",
+            "page": 1,
+            "position": 37,
+            "promoted": true,
+            "createdTimeIso": "2026-01-30T12:27:04+02:00",
+            "createdTimeEpoch": 1769768824,
+            "lastRefreshTimeIso": "2026-09-26T00:24:21+03:00"
+          },
+          {
+            "id": "933128280",
+            "page": 1,
+            "position": 38,
+            "promoted": true,
+            "createdTimeIso": "2026-08-28T16:34:45+03:00",
+            "createdTimeEpoch": 1787924085,
+            "lastRefreshTimeIso": "2026-09-25T23:55:51+03:00"
+          },
+          {
+            "id": "935991561",
+            "page": 1,
+            "position": 39,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T23:35:42+03:00",
+            "createdTimeEpoch": 1790368542,
+            "lastRefreshTimeIso": "2026-09-25T23:39:09+03:00"
+          },
+          {
+            "id": "935481225",
+            "page": 1,
+            "position": 40,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T11:46:07+03:00",
+            "createdTimeEpoch": 1789980367,
+            "lastRefreshTimeIso": "2026-09-24T10:31:57+03:00"
+          },
+          {
+            "id": "840362744",
+            "page": 1,
+            "position": 41,
+            "promoted": true,
+            "createdTimeIso": "2024-03-28T18:39:57+02:00",
+            "createdTimeEpoch": 1711643997,
+            "lastRefreshTimeIso": "2026-09-25T13:27:11+03:00"
+          },
+          {
+            "id": "935052356",
+            "page": 1,
+            "position": 42,
+            "promoted": true,
+            "createdTimeIso": "2026-09-16T19:23:50+03:00",
+            "createdTimeEpoch": 1789575830,
+            "lastRefreshTimeIso": "2026-09-24T12:33:30+03:00"
+          },
+          {
+            "id": "935174397",
+            "page": 1,
+            "position": 43,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T23:40:55+03:00",
+            "createdTimeEpoch": 1789677655,
+            "lastRefreshTimeIso": "2026-09-25T23:08:21+03:00"
+          },
+          {
+            "id": "935672177",
+            "page": 1,
+            "position": 44,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T22:54:35+03:00",
+            "createdTimeEpoch": 1790106875,
+            "lastRefreshTimeIso": "2026-09-25T22:55:09+03:00"
+          },
+          {
+            "id": "935987043",
+            "page": 1,
+            "position": 45,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:22:56+03:00",
+            "createdTimeEpoch": 1790364176,
+            "lastRefreshTimeIso": "2026-09-25T22:23:57+03:00"
+          },
+          {
+            "id": "935987058",
+            "page": 1,
+            "position": 46,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:23:06+03:00",
+            "createdTimeEpoch": 1790364186,
+            "lastRefreshTimeIso": "2026-09-25T22:26:14+03:00"
+          },
+          {
+            "id": "934347832",
+            "page": 1,
+            "position": 47,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T23:02:36+03:00",
+            "createdTimeEpoch": 1788984156,
+            "lastRefreshTimeIso": "2026-09-25T22:12:38+03:00"
+          },
+          {
+            "id": "935985685",
+            "page": 1,
+            "position": 48,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T22:05:08+03:00",
+            "createdTimeEpoch": 1790363108,
+            "lastRefreshTimeIso": "2026-09-25T22:06:09+03:00"
+          },
+          {
+            "id": "934338458",
+            "page": 1,
+            "position": 49,
+            "promoted": true,
+            "createdTimeIso": "2026-09-09T21:01:40+03:00",
+            "createdTimeEpoch": 1788976900,
+            "lastRefreshTimeIso": "2026-09-25T21:34:56+03:00"
+          },
+          {
+            "id": "931599314",
+            "page": 1,
+            "position": 50,
+            "promoted": false,
+            "createdTimeIso": "2026-08-12T18:48:32+03:00",
+            "createdTimeEpoch": 1786549712,
+            "lastRefreshTimeIso": "2026-09-25T21:34:48+03:00"
+          },
+          {
+            "id": "934530740",
+            "page": 1,
+            "position": 51,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T21:32:52+03:00",
+            "createdTimeEpoch": 1789151572,
+            "lastRefreshTimeIso": "2026-09-25T21:32:55+03:00"
+          },
+          {
+            "id": "935981350",
+            "page": 1,
+            "position": 52,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:16:29+03:00",
+            "createdTimeEpoch": 1790360189,
+            "lastRefreshTimeIso": "2026-09-25T21:27:12+03:00"
+          }
+        ]
+      },
+      "page2": {
+        "requestedUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+        "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+        "status": 200,
+        "paramsRetained": {
+          "dist": true,
+          "order": true,
+          "page": true
+        },
+        "hasPrerendered": true,
+        "listingCount": 52,
+        "organicDatedCount": 16,
+        "organicCreatedHead": [
+          1790359820,
+          1790359233,
+          1790358726,
+          1790173980,
+          1790343413,
+          1789147462,
+          1789747972,
+          1790354640,
+          1787651539,
+          1790353708,
+          1779191691,
+          1790351519
+        ],
+        "oldestOrganic": 1771345004,
+        "newestOrganic": 1790359820,
+        "withinPageNonIncreasing": false,
+        "withinPageFailure": {
+          "reason": "organic_created_not_non_increasing",
+          "breakIndex": 4
+        },
+        "listings": [
+          {
+            "id": "935096151",
+            "page": 2,
+            "position": 1,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T11:22:01+03:00",
+            "createdTimeEpoch": 1789633321,
+            "lastRefreshTimeIso": "2026-09-23T11:25:35+03:00"
+          },
+          {
+            "id": "935846243",
+            "page": 2,
+            "position": 2,
+            "promoted": true,
+            "createdTimeIso": "2026-09-24T16:21:20+03:00",
+            "createdTimeEpoch": 1790256080,
+            "lastRefreshTimeIso": "2026-09-24T16:42:29+03:00"
+          },
+          {
+            "id": "930787435",
+            "page": 2,
+            "position": 3,
+            "promoted": true,
+            "createdTimeIso": "2026-08-03T19:47:18+03:00",
+            "createdTimeEpoch": 1785775638,
+            "lastRefreshTimeIso": "2026-09-25T19:00:00+03:00"
+          },
+          {
+            "id": "935662522",
+            "page": 2,
+            "position": 4,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T21:14:44+03:00",
+            "createdTimeEpoch": 1790100884,
+            "lastRefreshTimeIso": "2026-09-25T21:21:08+03:00"
+          },
+          {
+            "id": "935455420",
+            "page": 2,
+            "position": 5,
+            "promoted": true,
+            "createdTimeIso": "2026-09-20T23:34:24+03:00",
+            "createdTimeEpoch": 1789936464,
+            "lastRefreshTimeIso": "2026-09-25T21:17:35+03:00"
+          },
+          {
+            "id": "926281997",
+            "page": 2,
+            "position": 6,
+            "promoted": true,
+            "createdTimeIso": "2026-06-14T18:18:38+03:00",
+            "createdTimeEpoch": 1781450318,
+            "lastRefreshTimeIso": "2026-09-25T21:15:57+03:00"
+          },
+          {
+            "id": "935980814",
+            "page": 2,
+            "position": 7,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:10:20+03:00",
+            "createdTimeEpoch": 1790359820,
+            "lastRefreshTimeIso": "2026-09-25T21:11:21+03:00"
+          },
+          {
+            "id": "935979976",
+            "page": 2,
+            "position": 8,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T21:00:33+03:00",
+            "createdTimeEpoch": 1790359233,
+            "lastRefreshTimeIso": "2026-09-25T21:03:21+03:00"
+          },
+          {
+            "id": "899461559",
+            "page": 2,
+            "position": 9,
+            "promoted": true,
+            "createdTimeIso": "2025-09-09T20:04:59+03:00",
+            "createdTimeEpoch": 1757437499,
+            "lastRefreshTimeIso": "2026-09-25T20:57:14+03:00"
+          },
+          {
+            "id": "935979305",
+            "page": 2,
+            "position": 10,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T20:52:06+03:00",
+            "createdTimeEpoch": 1790358726,
+            "lastRefreshTimeIso": "2026-09-25T20:55:34+03:00"
+          },
+          {
+            "id": "935549790",
+            "page": 2,
+            "position": 11,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T20:39:32+03:00",
+            "createdTimeEpoch": 1790012372,
+            "lastRefreshTimeIso": "2026-09-25T20:41:24+03:00"
+          },
+          {
+            "id": "935526874",
+            "page": 2,
+            "position": 12,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T17:14:00+03:00",
+            "createdTimeEpoch": 1790000040,
+            "lastRefreshTimeIso": "2026-09-25T20:33:50+03:00"
+          },
+          {
+            "id": "935643338",
+            "page": 2,
+            "position": 13,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T18:12:54+03:00",
+            "createdTimeEpoch": 1790089974,
+            "lastRefreshTimeIso": "2026-09-25T20:32:56+03:00"
+          },
+          {
+            "id": "935504085",
+            "page": 2,
+            "position": 14,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T14:35:28+03:00",
+            "createdTimeEpoch": 1789990528,
+            "lastRefreshTimeIso": "2026-09-25T18:00:38+03:00"
+          },
+          {
+            "id": "934398508",
+            "page": 2,
+            "position": 15,
+            "promoted": true,
+            "createdTimeIso": "2026-09-10T15:04:51+03:00",
+            "createdTimeEpoch": 1789041891,
+            "lastRefreshTimeIso": "2026-09-24T15:04:55+03:00"
+          },
+          {
+            "id": "935748089",
+            "page": 2,
+            "position": 16,
+            "promoted": false,
+            "createdTimeIso": "2026-09-23T17:33:00+03:00",
+            "createdTimeEpoch": 1790173980,
+            "lastRefreshTimeIso": "2026-09-23T17:36:08+03:00"
+          },
+          {
+            "id": "935955066",
+            "page": 2,
+            "position": 17,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T16:36:53+03:00",
+            "createdTimeEpoch": 1790343413,
+            "lastRefreshTimeIso": "2026-09-25T20:32:14+03:00"
+          },
+          {
+            "id": "934525333",
+            "page": 2,
+            "position": 18,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T20:24:22+03:00",
+            "createdTimeEpoch": 1789147462,
+            "lastRefreshTimeIso": "2026-09-25T20:24:26+03:00"
+          },
+          {
+            "id": "935250046",
+            "page": 2,
+            "position": 19,
+            "promoted": false,
+            "createdTimeIso": "2026-09-18T19:12:52+03:00",
+            "createdTimeEpoch": 1789747972,
+            "lastRefreshTimeIso": "2026-09-25T20:17:57+03:00"
+          },
+          {
+            "id": "935481672",
+            "page": 2,
+            "position": 20,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T11:49:42+03:00",
+            "createdTimeEpoch": 1789980582,
+            "lastRefreshTimeIso": "2026-09-25T20:01:35+03:00"
+          },
+          {
+            "id": "935545158",
+            "page": 2,
+            "position": 21,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T19:58:56+03:00",
+            "createdTimeEpoch": 1790009936,
+            "lastRefreshTimeIso": "2026-09-25T20:01:12+03:00"
+          },
+          {
+            "id": "934222228",
+            "page": 2,
+            "position": 22,
+            "promoted": true,
+            "createdTimeIso": "2026-09-08T18:34:11+03:00",
+            "createdTimeEpoch": 1788881651,
+            "lastRefreshTimeIso": "2026-09-25T20:00:59+03:00"
+          },
+          {
+            "id": "935973616",
+            "page": 2,
+            "position": 23,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T19:44:00+03:00",
+            "createdTimeEpoch": 1790354640,
+            "lastRefreshTimeIso": "2026-09-25T19:54:18+03:00"
+          },
+          {
+            "id": "935338897",
+            "page": 2,
+            "position": 24,
+            "promoted": true,
+            "createdTimeIso": "2026-09-19T19:02:13+03:00",
+            "createdTimeEpoch": 1789833733,
+            "lastRefreshTimeIso": "2026-09-25T19:47:20+03:00"
+          },
+          {
+            "id": "935972519",
+            "page": 2,
+            "position": 25,
+            "promoted": true,
+            "createdTimeIso": "2026-09-25T19:30:54+03:00",
+            "createdTimeEpoch": 1790353854,
+            "lastRefreshTimeIso": "2026-09-25T19:37:30+03:00"
+          },
+          {
+            "id": "935252365",
+            "page": 2,
+            "position": 26,
+            "promoted": true,
+            "createdTimeIso": "2026-09-18T19:39:41+03:00",
+            "createdTimeEpoch": 1789749581,
+            "lastRefreshTimeIso": "2026-09-25T19:39:48+03:00"
+          },
+          {
+            "id": "934074559",
+            "page": 2,
+            "position": 27,
+            "promoted": true,
+            "createdTimeIso": "2026-09-07T13:48:35+03:00",
+            "createdTimeEpoch": 1788778115,
+            "lastRefreshTimeIso": "2026-09-25T11:49:30+03:00"
+          },
+          {
+            "id": "914404295",
+            "page": 2,
+            "position": 28,
+            "promoted": true,
+            "createdTimeIso": "2026-02-14T14:11:56+02:00",
+            "createdTimeEpoch": 1771071116,
+            "lastRefreshTimeIso": "2026-09-23T13:22:38+03:00"
+          },
+          {
+            "id": "934070116",
+            "page": 2,
+            "position": 29,
+            "promoted": true,
+            "createdTimeIso": "2026-09-07T13:17:46+03:00",
+            "createdTimeEpoch": 1788776266,
+            "lastRefreshTimeIso": "2026-09-24T17:10:05+03:00"
+          },
+          {
+            "id": "932791588",
+            "page": 2,
+            "position": 30,
+            "promoted": false,
+            "createdTimeIso": "2026-08-25T12:52:19+03:00",
+            "createdTimeEpoch": 1787651539,
+            "lastRefreshTimeIso": "2026-09-25T19:38:32+03:00"
+          },
+          {
+            "id": "935651831",
+            "page": 2,
+            "position": 31,
+            "promoted": true,
+            "createdTimeIso": "2026-09-22T19:34:01+03:00",
+            "createdTimeEpoch": 1790094841,
+            "lastRefreshTimeIso": "2026-09-25T19:36:09+03:00"
+          },
+          {
+            "id": "935972317",
+            "page": 2,
+            "position": 32,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T19:28:28+03:00",
+            "createdTimeEpoch": 1790353708,
+            "lastRefreshTimeIso": "2026-09-25T19:31:15+03:00"
+          },
+          {
+            "id": "935156249",
+            "page": 2,
+            "position": 33,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T19:54:49+03:00",
+            "createdTimeEpoch": 1789664089,
+            "lastRefreshTimeIso": "2026-09-25T19:22:32+03:00"
+          },
+          {
+            "id": "932276417",
+            "page": 2,
+            "position": 34,
+            "promoted": true,
+            "createdTimeIso": "2026-08-19T19:48:48+03:00",
+            "createdTimeEpoch": 1787158128,
+            "lastRefreshTimeIso": "2026-09-25T19:20:57+03:00"
+          },
+          {
+            "id": "934185418",
+            "page": 2,
+            "position": 35,
+            "promoted": true,
+            "createdTimeIso": "2026-09-08T13:49:51+03:00",
+            "createdTimeEpoch": 1788864591,
+            "lastRefreshTimeIso": "2026-09-25T19:10:16+03:00"
+          },
+          {
+            "id": "930787435",
+            "page": 2,
+            "position": 36,
+            "promoted": true,
+            "createdTimeIso": "2026-08-03T19:47:18+03:00",
+            "createdTimeEpoch": 1785775638,
+            "lastRefreshTimeIso": "2026-09-25T19:00:00+03:00"
+          },
+          {
+            "id": "923854346",
+            "page": 2,
+            "position": 37,
+            "promoted": false,
+            "createdTimeIso": "2026-05-19T14:54:51+03:00",
+            "createdTimeEpoch": 1779191691,
+            "lastRefreshTimeIso": "2026-09-25T18:59:52+03:00"
+          },
+          {
+            "id": "935123420",
+            "page": 2,
+            "position": 38,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T14:56:58+03:00",
+            "createdTimeEpoch": 1789646218,
+            "lastRefreshTimeIso": "2026-09-25T18:57:09+03:00"
+          },
+          {
+            "id": "935969190",
+            "page": 2,
+            "position": 39,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:51:59+03:00",
+            "createdTimeEpoch": 1790351519,
+            "lastRefreshTimeIso": "2026-09-25T18:56:00+03:00"
+          },
+          {
+            "id": "935057859",
+            "page": 2,
+            "position": 40,
+            "promoted": true,
+            "createdTimeIso": "2026-09-16T20:28:35+03:00",
+            "createdTimeEpoch": 1789579715,
+            "lastRefreshTimeIso": "2026-09-25T12:10:37+03:00"
+          },
+          {
+            "id": "935726063",
+            "page": 2,
+            "position": 41,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T14:46:12+03:00",
+            "createdTimeEpoch": 1790163972,
+            "lastRefreshTimeIso": "2026-09-23T14:47:16+03:00"
+          },
+          {
+            "id": "935729604",
+            "page": 2,
+            "position": 42,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T15:11:56+03:00",
+            "createdTimeEpoch": 1790165516,
+            "lastRefreshTimeIso": "2026-09-23T15:12:58+03:00"
+          },
+          {
+            "id": "935491203",
+            "page": 2,
+            "position": 43,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T13:00:27+03:00",
+            "createdTimeEpoch": 1789984827,
+            "lastRefreshTimeIso": "2026-09-25T18:50:43+03:00"
+          },
+          {
+            "id": "935968557",
+            "page": 2,
+            "position": 44,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:44:44+03:00",
+            "createdTimeEpoch": 1790351084,
+            "lastRefreshTimeIso": "2026-09-25T18:48:32+03:00"
+          },
+          {
+            "id": "935689427",
+            "page": 2,
+            "position": 45,
+            "promoted": true,
+            "createdTimeIso": "2026-09-23T10:12:51+03:00",
+            "createdTimeEpoch": 1790147571,
+            "lastRefreshTimeIso": "2026-09-25T18:47:44+03:00"
+          },
+          {
+            "id": "934516183",
+            "page": 2,
+            "position": 46,
+            "promoted": false,
+            "createdTimeIso": "2026-09-11T18:36:49+03:00",
+            "createdTimeEpoch": 1789141009,
+            "lastRefreshTimeIso": "2026-09-25T18:36:52+03:00"
+          },
+          {
+            "id": "914714519",
+            "page": 2,
+            "position": 47,
+            "promoted": false,
+            "createdTimeIso": "2026-02-17T18:16:44+02:00",
+            "createdTimeEpoch": 1771345004,
+            "lastRefreshTimeIso": "2026-09-25T18:34:23+03:00"
+          },
+          {
+            "id": "933609141",
+            "page": 2,
+            "position": 48,
+            "promoted": true,
+            "createdTimeIso": "2026-09-02T18:35:25+03:00",
+            "createdTimeEpoch": 1788363325,
+            "lastRefreshTimeIso": "2026-09-25T18:27:15+03:00"
+          },
+          {
+            "id": "935133251",
+            "page": 2,
+            "position": 49,
+            "promoted": true,
+            "createdTimeIso": "2026-09-17T16:12:15+03:00",
+            "createdTimeEpoch": 1789650735,
+            "lastRefreshTimeIso": "2026-09-25T18:08:21+03:00"
+          },
+          {
+            "id": "935964301",
+            "page": 2,
+            "position": 50,
+            "promoted": false,
+            "createdTimeIso": "2026-09-25T18:02:20+03:00",
+            "createdTimeEpoch": 1790348540,
+            "lastRefreshTimeIso": "2026-09-25T18:05:35+03:00"
+          },
+          {
+            "id": "935504085",
+            "page": 2,
+            "position": 51,
+            "promoted": true,
+            "createdTimeIso": "2026-09-21T14:35:28+03:00",
+            "createdTimeEpoch": 1789990528,
+            "lastRefreshTimeIso": "2026-09-25T18:00:38+03:00"
+          },
+          {
+            "id": "931190695",
+            "page": 2,
+            "position": 52,
+            "promoted": true,
+            "createdTimeIso": "2026-08-08T13:31:25+03:00",
+            "createdTimeEpoch": 1786185085,
+            "lastRefreshTimeIso": "2026-09-25T17:57:00+03:00"
+          }
+        ]
+      },
+      "verdict": {
+        "urlRetentionOnly": true,
+        "pageContinuity": false,
+        "sortListingEvidence": false,
+        "sortStatus": "BLOCKED",
+        "sortBlockReason": "page1_organic_created_not_non_increasing"
+      }
+    }
+  ]
+}

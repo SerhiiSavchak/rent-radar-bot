@@ -1,0 +1,15 @@
+{
+  "written": "C:\\Users\\intel\\Documents\\GitHub\\rent-radar-bot\\evidence\\source-layer-live\\olx-coverage-scan\\apartments-from26-1790408583920.json",
+  "stopReason": "wall_cap_300s",
+  "confirmedEmptyAt": null,
+  "pagesFetched": 197,
+  "lastPage": 222,
+  "uniqueIdsThisSegment": 51,
+  "totalElementsLastSeen": 1000,
+  "elapsedMs": 300255,
+  "navMs": {
+    "min": 657,
+    "max": 2838,
+    "avg": 985
+  }
+}
