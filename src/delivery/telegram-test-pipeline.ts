@@ -73,6 +73,7 @@ import { type TelegramSendResult, type TelegramTestSink } from "../outputs/teleg
 import { isOlxCollectionEnabled } from "../collection/create-source-adapters.ts";
 import { OLX_BROWSER_TRANSPORT } from "../sources/olx/olx-browser.source.ts";
 import { logger } from "../utils/logger.ts";
+import type { DatabaseSync } from "node:sqlite";
 
 export type TelegramSourceAttempt = {
   source: string;
@@ -312,6 +313,26 @@ function retractAcceptedSeller(
   }
 }
 
+/**
+ * Shared terminal linked-seller finalization: clear any pending hold and persist
+ * seen (unless dry-run). Callers record rejected_seller with their reason code.
+ */
+function persistTerminalLinkedSellerReject(
+  listing: Listing,
+  options: {
+    dryRun: boolean;
+    dedupe: ListingDedupe;
+    holdDb?: DatabaseSync;
+  },
+): void {
+  if (options.holdDb) {
+    deleteSellerHold(options.holdDb, listing.source, listing.sourceId);
+  }
+  if (options.dryRun !== true) {
+    options.dedupe.markSeen(listing);
+  }
+}
+
 function dropListingsWithConfirmedIntermediaryPeer(
   buckets: Array<{ source: string; ok: boolean; listings: Listing[] }>,
   attempts: TelegramSourceAttempt[],
@@ -319,6 +340,12 @@ function dropListingsWithConfirmedIntermediaryPeer(
   fetched: Listing[],
   linked: LinkedSellerVerificationCounts,
   events: LinkedSellerEvent[],
+  finalize: {
+    dryRun: boolean;
+    dedupe: ListingDedupe;
+    holdDb?: DatabaseSync;
+    decisionTrace: ListingDecisionTraceBuffer;
+  },
 ): void {
   for (const bucket of buckets) {
     if (!bucket.ok) {
@@ -342,6 +369,17 @@ function dropListingsWithConfirmedIntermediaryPeer(
           evidence: `same-cycle ${relation.source} listing is a confirmed intermediary`,
         });
       }
+      persistTerminalLinkedSellerReject(listing, {
+        dryRun: finalize.dryRun,
+        dedupe: finalize.dedupe,
+        ...(finalize.holdDb ? { holdDb: finalize.holdDb } : {}),
+      });
+      finalize.decisionTrace.record(
+        listing.source,
+        listing.sourceId,
+        "rejected_seller",
+        "same_cycle_confirmed_agent",
+      );
     }
     bucket.listings = kept;
   }
@@ -1108,6 +1146,12 @@ export async function runTelegramTestCycle(
     fetchedListings,
     linkedSellerVerification,
     linkedSellerEvents,
+    {
+      dryRun: deps.sink.dryRun === true,
+      dedupe: deps.dedupe,
+      ...(holdDb ? { holdDb } : {}),
+      decisionTrace,
+    },
   );
   const verifyLinkedRieltor = createCycleRieltorSellerVerifier({
     db:
@@ -1158,15 +1202,14 @@ export async function runTelegramTestCycle(
     const decision = await verifyLinkedSeller(listing);
     noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);
     if (decision.drop) {
-      if (holdDb) {
-        deleteSellerHold(holdDb, listing.source, listing.sourceId);
-      }
       retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
       // Terminal rejection: persist as processed so the id cannot recycle as newAfterDedupe.
       // Dry-run must not write seen/outbox/identity (telegram-delivery-hardening contract).
-      if (deps.sink.dryRun !== true) {
-        deps.dedupe.markSeen(listing);
-      }
+      persistTerminalLinkedSellerReject(listing, {
+        dryRun: deps.sink.dryRun === true,
+        dedupe: deps.dedupe,
+        ...(holdDb ? { holdDb } : {}),
+      });
       return { status: "reject", reasonCode: decision.outcome };
     }
     const rieltorTarget = canonicalRieltorDetailTarget(
@@ -1282,7 +1325,11 @@ export async function runTelegramTestCycle(
         await releaseHeldListing(item.listing);
       } else if (item.action === "drop") {
         // Hold resolved to a terminal intermediary/owner-policy drop — persist like allowLinkedSeller reject.
-        deps.dedupe.markSeen(item.listing);
+        persistTerminalLinkedSellerReject(item.listing, {
+          dryRun: false,
+          dedupe: deps.dedupe,
+          ...(holdDb ? { holdDb } : {}),
+        });
         decisionTrace.record(
           item.listing.source,
           item.listing.sourceId,

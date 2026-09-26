@@ -7,15 +7,16 @@ import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts"
 import { CONFIRMED_SELLER_CACHE_MS } from "../src/delivery/rieltor-detail-seller.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
+import { upsertSellerHold } from "../src/delivery/seller-verification-hold.ts";
 import { TelegramTestSink } from "../src/outputs/telegram-test.sink.ts";
 import type { TelegramTestSink as TelegramTestSinkType } from "../src/outputs/telegram-test.sink.ts";
 import { closeDb, getDb } from "../src/storage/db.ts";
 import { DurableDeliveryStore } from "../src/storage/durable-delivery-store.ts";
 
 /**
- * Batch 1 regression: terminal linked-seller rejection must markSeen so a
- * cache_confirmed_agent LUN→OLX listing cannot recycle as newAfterDedupe.
- * newAfterDedupe remains a pre-final-gate count (includes the first-cycle reject).
+ * Terminal linked-seller rejection must markSeen and record rejected_seller
+ * for both allowLinkedSeller (cache/detail) and same-cycle peer drops.
+ * Early same-cycle drop runs before newAfterDedupe — do not assert that counter.
  */
 
 const seededAt = new Date("2026-09-22T08:00:00.000Z");
@@ -72,6 +73,19 @@ function lunLinkedRieltor(sourceId: string, rieltorId: string): Listing {
       originalUrl: `https://rieltor.ua/lvov/flats-rent/view/${rieltorId}/`,
       aggregatedSite: "rieltor.ua",
       ownerEvidenceLevel: "private_unknown",
+    },
+  });
+}
+
+function olxAgentPeer(token: string): Listing {
+  return listing({
+    source: "olx",
+    sourceId: token,
+    url: `https://www.olx.ua/d/uk/obyavlenie/orenda-ID${token}.html`,
+    sellerType: "agent",
+    metadata: {
+      ownerEvidenceLevel: "intermediary",
+      company_name: "АН Дуплекс",
     },
   });
 }
@@ -443,5 +457,214 @@ describe("linked-seller terminal rejection (Batch 1)", () => {
     expect(store.hasSeen(stuck)).toBe(false);
     expect(outboxCount(STUCK_LUN_ID)).toBe(0);
     expect(holdCount()).toBe(0);
+  });
+
+  it("same-cycle agent peer marks LUN seen, traces reject, survives reopen without peer", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const lunBatch: Listing[] = [];
+    const olxBatch: Listing[] = [];
+    const adapters = [adapter("lun", () => lunBatch), adapter("olx", () => olxBatch)];
+    await seed(store, adapters);
+
+    const stuck = lunLinkedOlx(STUCK_LUN_ID, STUCK_OLX_URL);
+    const peer = olxAgentPeer(STUCK_OLX_TOKEN);
+    const eligible = lunPlain("eligible-owner-same-cycle");
+    lunBatch.push(stuck, eligible);
+    olxBatch.push(peer);
+
+    let olxDetailCalls = 0;
+    const first = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_OLX: "true" }),
+        sink: persistSink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        olxDetailGapMs: 0,
+        fetchOlxDetail: async () => {
+          olxDetailCalls += 1;
+          throw new Error("same-cycle must not detail-fetch");
+        },
+      },
+      2,
+    );
+
+    expect(first.linkedSellerVerification.sameCycleConfirmedAgent).toBe(1);
+    expect(first.sentOk).toBe(1);
+    expect(olxDetailCalls).toBe(0);
+    expect(outboxCount(STUCK_LUN_ID)).toBe(0);
+    expect(outboxCount("eligible-owner-same-cycle")).toBe(1);
+    expect(holdCount()).toBe(0);
+    expect(store.hasSeen(stuck)).toBe(true);
+    const rejectedIdentity = getDb()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM cross_source_identities
+         WHERE source = 'lun' AND source_id = ?`,
+      )
+      .get(STUCK_LUN_ID) as { n: number };
+    expect(Number(rejectedIdentity.n)).toBe(0);
+    const stages = decisionStages(STUCK_LUN_ID);
+    expect(
+      stages.some(
+        (s) => s.stage === "rejected_seller" && s.reason_code === "same_cycle_confirmed_agent",
+      ),
+    ).toBe(true);
+
+    // Later cycle: LUN still visible, agent peer gone — no resurrection / delivery.
+    olxBatch.length = 0;
+    const second = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_OLX: "true" }),
+        sink: persistSink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(now.getTime() + 10 * 60 * 1000),
+        olxDetailGapMs: 0,
+        fetchOlxDetail: async () => {
+          olxDetailCalls += 1;
+          throw new Error("must not re-verify after same-cycle reject");
+        },
+      },
+      3,
+    );
+    expect(second.sentOk).toBe(0);
+    expect(second.newAfterDedupe).toBe(0);
+    expect(outboxCount(STUCK_LUN_ID)).toBe(0);
+    expect(olxDetailCalls).toBe(0);
+
+    closeDb();
+    const reopened = new DurableDeliveryStore(getDb(path));
+    expect(reopened.hasSeen(stuck)).toBe(true);
+    const third = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_OLX: "true" }),
+        sink: persistSink(),
+        dedupe: reopened,
+        baseline: reopened,
+        outbox: reopened,
+        now: () => new Date(now.getTime() + 20 * 60 * 1000),
+        olxDetailGapMs: 0,
+        fetchOlxDetail: async () => {
+          throw new Error("must not re-verify after reopen");
+        },
+      },
+      4,
+    );
+    expect(third.newAfterDedupe).toBe(0);
+    expect(third.sentOk).toBe(0);
+    expect(outboxCount(STUCK_LUN_ID)).toBe(0);
+  });
+
+  it("same-cycle terminal reject clears an existing hold so it cannot later release", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const lunBatch: Listing[] = [];
+    const olxBatch: Listing[] = [];
+    const adapters = [adapter("lun", () => lunBatch), adapter("olx", () => olxBatch)];
+    await seed(store, adapters);
+
+    const stuck = lunLinkedOlx(STUCK_LUN_ID, STUCK_OLX_URL);
+    upsertSellerHold(getDb(), stuck, STUCK_OLX_TOKEN, now, "olx");
+    expect(holdCount()).toBe(1);
+
+    lunBatch.push(stuck);
+    olxBatch.push(olxAgentPeer(STUCK_OLX_TOKEN));
+
+    const first = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_OLX: "true" }),
+        sink: persistSink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        olxDetailGapMs: 0,
+        fetchOlxDetail: async () => {
+          throw new Error("same-cycle must not detail-fetch");
+        },
+      },
+      2,
+    );
+    expect(first.linkedSellerVerification.sameCycleConfirmedAgent).toBe(1);
+    expect(first.sentOk).toBe(0);
+    expect(holdCount()).toBe(0);
+    expect(store.hasSeen(stuck)).toBe(true);
+    expect(outboxCount(STUCK_LUN_ID)).toBe(0);
+
+    // Peer absent; hold gone; seen persists — must not deliver via hold release or linked path.
+    olxBatch.length = 0;
+    const later = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_OLX: "true" }),
+        sink: persistSink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(now.getTime() + 15 * 60 * 1000),
+        olxDetailGapMs: 0,
+        fetchOlxDetail: async () => ({
+          status: 200,
+          finalUrl: STUCK_OLX_URL,
+          bodyText: "<div>owner</div>",
+        }),
+      },
+      3,
+    );
+    expect(later.sentOk).toBe(0);
+    expect(later.newAfterDedupe).toBe(0);
+    expect(holdCount()).toBe(0);
+    expect(outboxCount(STUCK_LUN_ID)).toBe(0);
+  });
+
+  it("same-cycle dry-run does not persist rejection state", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    const lunBatch: Listing[] = [];
+    const olxBatch: Listing[] = [];
+    const adapters = [adapter("lun", () => lunBatch), adapter("olx", () => olxBatch)];
+    await seed(store, adapters);
+    const stuck = lunLinkedOlx(STUCK_LUN_ID, STUCK_OLX_URL);
+    lunBatch.push(stuck);
+    olxBatch.push(olxAgentPeer(STUCK_OLX_TOKEN));
+
+    const report = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor({ ENABLE_OLX: "true" }),
+        sink: new TelegramTestSink({
+          botToken: "1:token",
+          chatId: "listing",
+          testMode: true,
+          dryRun: true,
+          timeoutMs: 1000,
+          maxRetries: 0,
+          fetchImpl: (async () => {
+            throw new Error("no network");
+          }) as unknown as typeof fetch,
+        }),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        olxDetailGapMs: 0,
+        fetchOlxDetail: async () => {
+          throw new Error("no detail");
+        },
+      },
+      2,
+    );
+    expect(report.dryRun).toBe(true);
+    expect(report.linkedSellerVerification.sameCycleConfirmedAgent).toBe(1);
+    expect(report.sentOk).toBe(0);
+    expect(store.hasSeen(stuck)).toBe(false);
+    expect(outboxCount(STUCK_LUN_ID)).toBe(0);
   });
 });
