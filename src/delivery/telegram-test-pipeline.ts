@@ -315,7 +315,7 @@ function retractAcceptedSeller(
 
 /**
  * Shared terminal linked-seller finalization: clear any pending hold and persist
- * seen (unless dry-run). Callers record rejected_seller with their reason code.
+ * seen unless dry-run. Dry-run must not mutate hold or seen state.
  */
 function persistTerminalLinkedSellerReject(
   listing: Listing,
@@ -325,12 +325,13 @@ function persistTerminalLinkedSellerReject(
     holdDb?: DatabaseSync;
   },
 ): void {
+  if (options.dryRun === true) {
+    return;
+  }
   if (options.holdDb) {
     deleteSellerHold(options.holdDb, listing.source, listing.sourceId);
   }
-  if (options.dryRun !== true) {
-    options.dedupe.markSeen(listing);
-  }
+  options.dedupe.markSeen(listing);
 }
 
 function dropListingsWithConfirmedIntermediaryPeer(
