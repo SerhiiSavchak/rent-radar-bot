@@ -1,0 +1,575 @@
+{
+  "probe": "olx-order-independent-depth-timing",
+  "commit": "unknown",
+  "maxPagesCap": 25,
+  "categories": [
+    {
+      "category": "apartments",
+      "elapsedMs": 74903,
+      "pagesFetched": 25,
+      "uniqueIds": 1004,
+      "novelUntilPage": 25,
+      "confirmedEmptyAt": null,
+      "stoppedReason": "max_pages_cap",
+      "pages": [
+        {
+          "page": 1,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+          "navMs": 5193,
+          "cardCount": 51,
+          "novelIdCount": 51,
+          "cumulativeUniqueIds": 51,
+          "firstIds": [
+            "934369368",
+            "935689427",
+            "935320095"
+          ],
+          "lastIds": [
+            "935672177",
+            "935987043",
+            "935987058"
+          ]
+        },
+        {
+          "page": 2,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+          "navMs": 2266,
+          "cardCount": 52,
+          "novelIdCount": 48,
+          "cumulativeUniqueIds": 99,
+          "firstIds": [
+            "935296522",
+            "935398803",
+            "932765935"
+          ],
+          "lastIds": [
+            "935968557",
+            "935689427",
+            "934516183"
+          ]
+        },
+        {
+          "page": 3,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=3",
+          "navMs": 2656,
+          "cardCount": 51,
+          "novelIdCount": 46,
+          "cumulativeUniqueIds": 145,
+          "firstIds": [
+            "935643338",
+            "933609141",
+            "935481672"
+          ],
+          "lastIds": [
+            "923766170",
+            "933795409",
+            "935948774"
+          ]
+        },
+        {
+          "page": 4,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=4",
+          "navMs": 2964,
+          "cardCount": 51,
+          "novelIdCount": 43,
+          "cumulativeUniqueIds": 188,
+          "firstIds": [
+            "927390401",
+            "935296441",
+            "933398495"
+          ],
+          "lastIds": [
+            "933478302",
+            "840362744",
+            "935494285"
+          ]
+        },
+        {
+          "page": 5,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=5",
+          "navMs": 3480,
+          "cardCount": 51,
+          "novelIdCount": 38,
+          "cumulativeUniqueIds": 226,
+          "firstIds": [
+            "935144448",
+            "935315746",
+            "935846243"
+          ],
+          "lastIds": [
+            "935911659",
+            "935464890",
+            "933775640"
+          ]
+        },
+        {
+          "page": 6,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=6",
+          "navMs": 2412,
+          "cardCount": 51,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 266,
+          "firstIds": [
+            "933609141",
+            "935252831",
+            "933476904"
+          ],
+          "lastIds": [
+            "935884908",
+            "935169556",
+            "935879039"
+          ]
+        },
+        {
+          "page": 7,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=7",
+          "navMs": 2546,
+          "cardCount": 52,
+          "novelIdCount": 37,
+          "cumulativeUniqueIds": 303,
+          "firstIds": [
+            "935060735",
+            "935133251",
+            "906945045"
+          ],
+          "lastIds": [
+            "935850355",
+            "935849135",
+            "935846243"
+          ]
+        },
+        {
+          "page": 8,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=8",
+          "navMs": 2129,
+          "cardCount": 51,
+          "novelIdCount": 38,
+          "cumulativeUniqueIds": 341,
+          "firstIds": [
+            "911270518",
+            "933233811",
+            "933557446"
+          ],
+          "lastIds": [
+            "809999669",
+            "932765935",
+            "935737803"
+          ]
+        },
+        {
+          "page": 9,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=9",
+          "navMs": 2650,
+          "cardCount": 52,
+          "novelIdCount": 33,
+          "cumulativeUniqueIds": 374,
+          "firstIds": [
+            "935296522",
+            "935324545",
+            "930787435"
+          ],
+          "lastIds": [
+            "935092550",
+            "887778799",
+            "915390253"
+          ]
+        },
+        {
+          "page": 10,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=10",
+          "navMs": 2409,
+          "cardCount": 52,
+          "novelIdCount": 37,
+          "cumulativeUniqueIds": 411,
+          "firstIds": [
+            "679521553",
+            "935689427",
+            "934070116"
+          ],
+          "lastIds": [
+            "935746428",
+            "935746273",
+            "935746001"
+          ]
+        },
+        {
+          "page": 11,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=11",
+          "navMs": 2692,
+          "cardCount": 52,
+          "novelIdCount": 41,
+          "cumulativeUniqueIds": 452,
+          "firstIds": [
+            "935726063",
+            "935485727",
+            "935590130"
+          ],
+          "lastIds": [
+            "935720823",
+            "935720740",
+            "935718002"
+          ]
+        },
+        {
+          "page": 12,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=12",
+          "navMs": 2751,
+          "cardCount": 52,
+          "novelIdCount": 38,
+          "cumulativeUniqueIds": 490,
+          "firstIds": [
+            "931553023",
+            "935296780",
+            "935509227"
+          ],
+          "lastIds": [
+            "935697071",
+            "935693971",
+            "935692542"
+          ]
+        },
+        {
+          "page": 13,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=13",
+          "navMs": 2236,
+          "cardCount": 52,
+          "novelIdCount": 41,
+          "cumulativeUniqueIds": 531,
+          "firstIds": [
+            "934930181",
+            "932484815",
+            "934369368"
+          ],
+          "lastIds": [
+            "935633576",
+            "935630677",
+            "934206409"
+          ]
+        },
+        {
+          "page": 14,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=14",
+          "navMs": 2441,
+          "cardCount": 52,
+          "novelIdCount": 38,
+          "cumulativeUniqueIds": 569,
+          "firstIds": [
+            "934623975",
+            "935748089",
+            "809999669"
+          ],
+          "lastIds": [
+            "934888644",
+            "918030589",
+            "934885964"
+          ]
+        },
+        {
+          "page": 15,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=15",
+          "navMs": 2064,
+          "cardCount": 46,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 609,
+          "firstIds": [
+            "914404295",
+            "934931389",
+            "935114907"
+          ],
+          "lastIds": [
+            "935560005",
+            "934961442",
+            "935556037"
+          ]
+        },
+        {
+          "page": 16,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=16",
+          "navMs": 2283,
+          "cardCount": 40,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 649,
+          "firstIds": [
+            "935554806",
+            "934041483",
+            "932512533"
+          ],
+          "lastIds": [
+            "935519143",
+            "907830947",
+            "935518300"
+          ]
+        },
+        {
+          "page": 17,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=17",
+          "navMs": 2042,
+          "cardCount": 40,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 689,
+          "firstIds": [
+            "925180511",
+            "931898923",
+            "935515613"
+          ],
+          "lastIds": [
+            "935495707",
+            "935493806",
+            "935489880"
+          ]
+        },
+        {
+          "page": 18,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=18",
+          "navMs": 2434,
+          "cardCount": 40,
+          "novelIdCount": 38,
+          "cumulativeUniqueIds": 727,
+          "firstIds": [
+            "935489880",
+            "935488006",
+            "933426419"
+          ],
+          "lastIds": [
+            "907977580",
+            "910467807",
+            "934732187"
+          ]
+        },
+        {
+          "page": 19,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=19",
+          "navMs": 2418,
+          "cardCount": 40,
+          "novelIdCount": 39,
+          "cumulativeUniqueIds": 766,
+          "firstIds": [
+            "935443013",
+            "932435502",
+            "934717119"
+          ],
+          "lastIds": [
+            "935302238",
+            "935299438",
+            "922399983"
+          ]
+        },
+        {
+          "page": 20,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=20",
+          "navMs": 3788,
+          "cardCount": 40,
+          "novelIdCount": 39,
+          "cumulativeUniqueIds": 805,
+          "firstIds": [
+            "933862685",
+            "935295764",
+            "935292768"
+          ],
+          "lastIds": [
+            "933798196",
+            "935229932",
+            "934535113"
+          ]
+        },
+        {
+          "page": 21,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=21",
+          "navMs": 1949,
+          "cardCount": 40,
+          "novelIdCount": 39,
+          "cumulativeUniqueIds": 844,
+          "firstIds": [
+            "933121006",
+            "933791784",
+            "907474603"
+          ],
+          "lastIds": [
+            "935155578",
+            "879286112",
+            "933047884"
+          ]
+        },
+        {
+          "page": 22,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=22",
+          "navMs": 1886,
+          "cardCount": 40,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 884,
+          "firstIds": [
+            "915381350",
+            "926461721",
+            "935145906"
+          ],
+          "lastIds": [
+            "935104146",
+            "935102765",
+            "935098111"
+          ]
+        },
+        {
+          "page": 23,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=23",
+          "navMs": 2128,
+          "cardCount": 40,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 924,
+          "firstIds": [
+            "935034378",
+            "935094409",
+            "935097375"
+          ],
+          "lastIds": [
+            "935019317",
+            "935018702",
+            "935018050"
+          ]
+        },
+        {
+          "page": 24,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=24",
+          "navMs": 2250,
+          "cardCount": 40,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 964,
+          "firstIds": [
+            "935017592",
+            "935016280",
+            "935016111"
+          ],
+          "lastIds": [
+            "933519152",
+            "928541500",
+            "934947541"
+          ]
+        },
+        {
+          "page": 25,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=25",
+          "navMs": 1809,
+          "cardCount": 40,
+          "novelIdCount": 40,
+          "cumulativeUniqueIds": 1004,
+          "firstIds": [
+            "934945546",
+            "934920675",
+            "934937262"
+          ],
+          "lastIds": [
+            "934821876",
+            "934816174",
+            "934804670"
+          ]
+        }
+      ]
+    },
+    {
+      "category": "houses",
+      "elapsedMs": 8562,
+      "pagesFetched": 4,
+      "uniqueIds": 89,
+      "novelUntilPage": 3,
+      "confirmedEmptyAt": 4,
+      "stoppedReason": "confirmed_empty",
+      "pages": [
+        {
+          "page": 1,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc",
+          "navMs": 1966,
+          "cardCount": 50,
+          "novelIdCount": 41,
+          "cumulativeUniqueIds": 41,
+          "firstIds": [
+            "923011639",
+            "935946595",
+            "935592811"
+          ],
+          "lastIds": [
+            "934905702",
+            "935688979",
+            "934235738"
+          ]
+        },
+        {
+          "page": 2,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=2",
+          "navMs": 2726,
+          "cardCount": 44,
+          "novelIdCount": 39,
+          "cumulativeUniqueIds": 80,
+          "firstIds": [
+            "934603870",
+            "934896424",
+            "935512605"
+          ],
+          "lastIds": [
+            "928991228",
+            "901619939",
+            "933730014"
+          ]
+        },
+        {
+          "page": 3,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=3",
+          "navMs": 1410,
+          "cardCount": 9,
+          "novelIdCount": 9,
+          "cumulativeUniqueIds": 89,
+          "firstIds": [
+            "924528622",
+            "897971473",
+            "933526211"
+          ],
+          "lastIds": [
+            "933011701",
+            "930245644",
+            "918396309"
+          ]
+        },
+        {
+          "page": 4,
+          "status": 200,
+          "finalUrl": "https://www.olx.ua/uk/nedvizhimost/doma/arenda-domov/lvov/?search%5Bdist%5D=15&search%5Border%5D=created_at%3Adesc&page=4",
+          "navMs": 1116,
+          "cardCount": 0,
+          "novelIdCount": 0,
+          "cumulativeUniqueIds": 89,
+          "firstIds": [],
+          "lastIds": []
+        }
+      ]
+    }
+  ],
+  "totalElapsedMs": 83647,
+  "pollCycleMs": 600000,
+  "fitsInPollCycle": true
+}

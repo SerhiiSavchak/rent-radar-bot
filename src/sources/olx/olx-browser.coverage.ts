@@ -12,9 +12,17 @@ import {
  * Live evidence 2026-09-26 (3/3 workstation cycles, listing-level):
  * - radius (`search[dist]=15`): PASS — suburb cities (e.g. Винники, Сокільники)
  *   appear with dist that are absent from city-only samples.
- * - sort (`search[order]=created_at:desc`): BLOCKED — organic `createdTime` /
- *   `lastRefreshTime` sequences are not non-increasing; URL retention alone is
- *   not proof. Publication-time stop stays off until sort is listing-verified.
+ * - sort (`search[order]=created_at:desc`): BLOCKED — live 2026-09-26 ×3
+ *   (`olx-sort/summary-1790406934261.json` + `SORT_FAILURE_ANALYSIS.md`):
+ *   non-monotone organic `createdTime` is present in OLX prerendered ads order
+ *   (not introduced by extract). URL retention is not newest-by-createdTime proof.
+ *   Publication-time stop stays off.
+ * - full order-independent scan: BLOCKED — apartments catalog end not established
+ *   (still novel at page 25; continue-from-26 hit wall_cap_300s at page 222 with
+ *   zero empty pages / totalElements=1000; see `olx-coverage-scan/COVERAGE_SCAN_LIMIT.md`).
+ *   Do not claim complete-scan time exceeds the ~95s OLX extract budget until end
+ *   is proven. Page cursor resume is unsafe under reshuffle. Page budget 2 remains
+ *   a bounded sample only. Publication-time stop stays off.
  * Do not treat HTTP 200, fixtures, or a single OK request as coverage PASS.
  *
  * Because HTML sort is unverified, publication-time stop must not mark a walk
@@ -37,7 +45,122 @@ export const OLX_BROWSER_HOUSES_PATH = "/uk/nedvizhimost/doma/arenda-domov/lvov/
  */
 export const OLX_BROWSER_PAGE_BUDGET = 2;
 
-/** Overlap so a small reorder / promoted interleave does not truncate the walk. */
+/**
+ * Hard cap used only for offline depth probes / feasibility math.
+ * Hitting this without confirmed_empty means full-scan coverage is unproven.
+ */
+export const OLX_BROWSER_FULL_SCAN_PAGE_CAP = 25;
+
+/** Default poll interval used for coverage feasibility (10 minutes). */
+export const OLX_COVERAGE_POLL_CYCLE_MS = 10 * 60 * 1000;
+
+/**
+ * Feasibility of a complete order-independent page walk inside one poll.
+ * Does not claim sort order. A persistent page cursor is not treated as safe.
+ */
+export function assessOlxOrderIndependentFullScan(input: {
+  apartmentPagesFetched: number;
+  apartmentConfirmedEmpty: boolean;
+  apartmentNovelOnLastPage: number;
+  housePagesFetched: number;
+  houseConfirmedEmpty: boolean;
+  elapsedMs: number;
+  avgNavMs: number;
+  olxTotalBudgetMs: number;
+  pollCycleMs?: number;
+  pageCap?: number;
+}): {
+  fullScanStatus: "PASS" | "BLOCKED";
+  blockReasons: string[];
+  pageCursorSafe: false;
+  projectedApartmentPagesForEmpty: number | null;
+} {
+  const pollCycleMs = input.pollCycleMs ?? OLX_COVERAGE_POLL_CYCLE_MS;
+  const pageCap = input.pageCap ?? OLX_BROWSER_FULL_SCAN_PAGE_CAP;
+  const blockReasons: string[] = [];
+
+  if (!input.apartmentConfirmedEmpty) {
+    blockReasons.push("apartments_end_unknown");
+    if (input.apartmentPagesFetched >= pageCap) {
+      blockReasons.push("apartments_hit_page_cap_still_novel");
+    }
+    if (input.apartmentNovelOnLastPage > 0) {
+      blockReasons.push("apartments_last_page_still_had_novel_ids");
+    }
+  }
+  if (!input.houseConfirmedEmpty) {
+    blockReasons.push("houses_end_unknown");
+  }
+  if (input.elapsedMs > input.olxTotalBudgetMs) {
+    blockReasons.push("elapsed_exceeds_olx_total_budget");
+  }
+  if (input.elapsedMs > pollCycleMs * 0.5) {
+    blockReasons.push("elapsed_exceeds_half_poll_cycle");
+  }
+
+  // If apartments never emptied, refuse to invent a finite page count.
+  const projectedApartmentPagesForEmpty = input.apartmentConfirmedEmpty
+    ? input.apartmentPagesFetched
+    : null;
+
+  if (
+    projectedApartmentPagesForEmpty !== null &&
+    input.avgNavMs > 0 &&
+    projectedApartmentPagesForEmpty * input.avgNavMs + input.housePagesFetched * input.avgNavMs >
+      input.olxTotalBudgetMs
+  ) {
+    blockReasons.push("projected_nav_time_exceeds_olx_total_budget");
+  }
+
+  return {
+    fullScanStatus: blockReasons.length === 0 ? "PASS" : "BLOCKED",
+    blockReasons,
+    // Explicit: offset resume is unsafe under non-monotone / shifting pages.
+    pageCursorSafe: false,
+    projectedApartmentPagesForEmpty,
+  };
+}
+
+/**
+ * Model miss risk when the catalog reshuffles while a forward page walk runs.
+ * A listing inserted on page 1 after the walker left page 1 is missed in-scan.
+ */
+export function olxForwardScanMissesInsertedOnPage1(input: {
+  walkedPagesInOrder: number[];
+  idsByPageAtWalkTime: Record<number, string[]>;
+  /** Ids that appear on page 1 only after page 1 was already fetched. */
+  latePage1InsertIds: string[];
+}): { missedIds: string[]; duplicateIds: string[] } {
+  const seen = new Set<string>();
+  const duplicateIds: string[] = [];
+  for (const page of input.walkedPagesInOrder) {
+    for (const id of input.idsByPageAtWalkTime[page] ?? []) {
+      if (seen.has(id)) {
+        duplicateIds.push(id);
+      }
+      seen.add(id);
+    }
+  }
+  const missedIds = input.latePage1InsertIds.filter((id) => !seen.has(id));
+  return { missedIds, duplicateIds };
+}
+
+/**
+ * Resuming at page K after restart does not re-read 1..K-1; under shift those
+ * pages may now hold ids never observed.
+ */
+export function olxPageCursorResumeMisses(input: {
+  resumePage: number;
+  /** Ids present on pages < resumePage after restart (reshuffled). */
+  idsNowOnSkippedPages: string[];
+  idsAlreadyStored: ReadonlySet<string>;
+}): string[] {
+  if (input.resumePage <= 1) {
+    return [];
+  }
+  return input.idsNowOnSkippedPages.filter((id) => !input.idsAlreadyStored.has(id));
+}
+
 export const OLX_BROWSER_PUBLICATION_OVERLAP_MS = 30 * 60 * 1000;
 
 /**
@@ -229,6 +352,22 @@ export function countUndatedOrganic(
  * When `sortVerified=true` (future): every dated organic sample must be at or
  * older than watermark−overlap, and no undated organic cards may be present.
  */
+/**
+ * Listing-level newest-first check for organic publication times (epoch seconds).
+ * Used by live sort probes; HTTP 200 / URL retention must not bypass this.
+ */
+export function isNonIncreasingCreatedTimes(times: readonly number[]): boolean {
+  if (times.length < 3) {
+    return false;
+  }
+  for (let i = 1; i < times.length; i += 1) {
+    if (times[i]! > times[i - 1]!) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function crossedOlxPublicationBoundary(
   organicTimes: readonly Date[],
   watermark: Date | undefined,
@@ -411,7 +550,9 @@ export function olxBrowserCoverageNotes(input: {
     "olx_browser_sort_requested=search[order]=created_at:desc",
     "olx_browser_radius_status=live_verified_2026-09-26",
     "olx_browser_sort_status=blocked",
-    "olx_browser_radius_sort_note=radius_suburb_listing_evidence_pass_sort_organic_order_not_monotone",
+    "olx_browser_full_scan_status=blocked",
+    "olx_browser_full_scan_note=apartments_catalog_end_unproven_page_cursor_unsafe",
+    "olx_browser_radius_sort_note=radius_suburb_listing_evidence_pass_sort_organic_created_not_monotone_2026-09-26",
     "olx_browser_time_stop=disabled_until_html_sort_verified",
     "olx_browser_stop=seed_commit_or_confirmed_empty_or_catchup_budget",
   ];

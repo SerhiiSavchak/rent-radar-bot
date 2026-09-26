@@ -1140,9 +1140,20 @@ export async function runTelegramTestCycle(
     }
     return verifyLinkedOlx(listing);
   };
-  const allowLinkedSeller = async (listing: Listing): Promise<boolean> => {
+  /**
+   * Linked-seller gate.
+   * - allow: proceed to freshness/delivery
+   * - reject: terminal policy drop (confirmed intermediary / profile_likely when policy rejects).
+   *   Persists via markSeen except under sink.dryRun (same non-persistence contract as delivery).
+   * - defer: temporary hold / existing hold / transport-rate-limit style outcomes — leave unseen
+   */
+  type LinkedSellerGate =
+    | { status: "allow" }
+    | { status: "reject"; reasonCode: string }
+    | { status: "defer"; reasonCode: string };
+  const allowLinkedSeller = async (listing: Listing): Promise<LinkedSellerGate> => {
     if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
-      return false;
+      return { status: "defer", reasonCode: "linked_seller_hold" };
     }
     const decision = await verifyLinkedSeller(listing);
     noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);
@@ -1151,7 +1162,12 @@ export async function runTelegramTestCycle(
         deleteSellerHold(holdDb, listing.source, listing.sourceId);
       }
       retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
-      return false;
+      // Terminal rejection: persist as processed so the id cannot recycle as newAfterDedupe.
+      // Dry-run must not write seen/outbox/identity (telegram-delivery-hardening contract).
+      if (deps.sink.dryRun !== true) {
+        deps.dedupe.markSeen(listing);
+      }
+      return { status: "reject", reasonCode: decision.outcome };
     }
     const rieltorTarget = canonicalRieltorDetailTarget(
       typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
@@ -1171,9 +1187,9 @@ export async function runTelegramTestCycle(
       shouldHoldSellerVerification(decision)
     ) {
       upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
-      return false;
+      return { status: "defer", reasonCode: decision.outcome };
     }
-    return true;
+    return { status: "allow" };
   };
 
   let sentOk = 0;
@@ -1264,6 +1280,15 @@ export async function runTelegramTestCycle(
     for (const item of released) {
       if (item.action === "send") {
         await releaseHeldListing(item.listing);
+      } else if (item.action === "drop") {
+        // Hold resolved to a terminal intermediary/owner-policy drop — persist like allowLinkedSeller reject.
+        deps.dedupe.markSeen(item.listing);
+        decisionTrace.record(
+          item.listing.source,
+          item.listing.sourceId,
+          "rejected_seller",
+          "linked_seller_hold_drop",
+        );
       }
     }
   }
@@ -1306,7 +1331,8 @@ export async function runTelegramTestCycle(
               continue;
             }
           }
-          if (!(await allowLinkedSeller(listing))) {
+          const previewGate = await allowLinkedSeller(listing);
+          if (previewGate.status !== "allow") {
             continue;
           }
           const delivered = await handoff(listing, "initial_preview");
@@ -1401,8 +1427,18 @@ export async function runTelegramTestCycle(
         continue;
       }
 
-      if (!(await allowLinkedSeller(listing))) {
-        decisionTrace.record(listing.source, listing.sourceId, "held", "linked_seller");
+      const linkedGate = await allowLinkedSeller(listing);
+      if (linkedGate.status === "reject") {
+        decisionTrace.record(
+          listing.source,
+          listing.sourceId,
+          "rejected_seller",
+          linkedGate.reasonCode,
+        );
+        continue;
+      }
+      if (linkedGate.status === "defer") {
+        decisionTrace.record(listing.source, listing.sourceId, "held", linkedGate.reasonCode);
         continue;
       }
 

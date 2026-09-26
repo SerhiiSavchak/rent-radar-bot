@@ -11,6 +11,10 @@ import {
   buildOlxBrowserCategoryUrl,
   classifyOlxPageCatalogEvidence,
   crossedOlxPublicationBoundary,
+  isNonIncreasingCreatedTimes,
+  assessOlxOrderIndependentFullScan,
+  olxForwardScanMissesInsertedOnPage1,
+  olxPageCursorResumeMisses,
   OLX_BROWSER_PAGE_BUDGET,
   olxBrowserCoverageNotes,
   olxCatchupKey,
@@ -18,6 +22,8 @@ import {
   organicPublicationTimes,
   planOlxBrowserPages,
 } from "../src/sources/olx/olx-browser.coverage.ts";
+import { extractListingAdsFromPrerenderedState } from "../src/sources/olx/olx-browser.html-extract.ts";
+import { olxPrerenderedAdsNonMonotoneCreatedFixture } from "./fixtures/olx-prerendered-ads-non-monotone-created.ts";
 import { OLX_DISTANCE_KM } from "../src/sources/olx/olx.source.ts";
 import {
   ListingDecisionTraceBuffer,
@@ -135,7 +141,89 @@ describe("OLX browser coverage contract", () => {
     });
     expect(notes).toContain("olx_browser_radius_status=live_verified_2026-09-26");
     expect(notes).toContain("olx_browser_sort_status=blocked");
-    expect(notes.some((n) => n.includes("sort_organic_order_not_monotone"))).toBe(true);
+    expect(notes).toContain("olx_browser_full_scan_status=blocked");
+    expect(notes).toContain("olx_browser_time_stop=disabled_until_html_sort_verified");
+    expect(notes.some((n) => n.includes("sort_organic_created_not_monotone"))).toBe(true);
+  });
+
+  it("sort gate rejects the live-captured page1 organic createdTime break (sort stays BLOCKED)", () => {
+    // From evidence/source-layer-live/olx-sort/summary-1790406934261.json cycle 1
+    // organicCreatedHead + break at index 14: May epoch then Sep epochs.
+    const organicCreatedHead = [
+      1790405906, 1790405818, 1790404453, 1790404305, 1780217411, 1780137675,
+      1780137263, 1780134633, 1780134060, 1779983013, 1779982758, 1779981010,
+    ];
+    const aroundBreak = [1779980403, 1790401260, 1790401258];
+    expect(isNonIncreasingCreatedTimes(organicCreatedHead)).toBe(true);
+    expect(isNonIncreasingCreatedTimes([...organicCreatedHead, ...aroundBreak])).toBe(false);
+    expect(isNonIncreasingCreatedTimes([1790401260, 1790401258, 1790401000])).toBe(true);
+  });
+
+  it("preserves OLX ads-array order (non-monotone createdTime is origin order, not parser reorder)", () => {
+    const ads = extractListingAdsFromPrerenderedState(
+      olxPrerenderedAdsNonMonotoneCreatedFixture,
+    ) as Array<Record<string, unknown>>;
+    expect(ads.map((ad) => String(ad.id))).toEqual(["924728316", "936000137", "935998907"]);
+    const organicCreated = ads
+      .filter((ad) => ad.isPromoted !== true)
+      .map((ad) => Date.parse(String(ad.createdTime)));
+    expect(organicCreated[0]!).toBeLessThan(organicCreated[1]!);
+    expect(isNonIncreasingCreatedTimes(organicCreated.map((ms) => Math.floor(ms / 1000)))).toBe(
+      false,
+    );
+  });
+
+  it("blocks full order-independent scan when apartments never empty within page/time budget", () => {
+    // Measured 2026-09-26 depth-timing-1790407832189.json
+    const assessed = assessOlxOrderIndependentFullScan({
+      apartmentPagesFetched: 25,
+      apartmentConfirmedEmpty: false,
+      apartmentNovelOnLastPage: 40,
+      housePagesFetched: 4,
+      houseConfirmedEmpty: true,
+      elapsedMs: 83_647,
+      avgNavMs: 2555,
+      olxTotalBudgetMs: 95_000,
+    });
+    expect(assessed.fullScanStatus).toBe("BLOCKED");
+    expect(assessed.pageCursorSafe).toBe(false);
+    expect(assessed.projectedApartmentPagesForEmpty).toBeNull();
+    expect(assessed.blockReasons).toEqual(
+      expect.arrayContaining([
+        "apartments_end_unknown",
+        "apartments_hit_page_cap_still_novel",
+        "apartments_last_page_still_had_novel_ids",
+      ]),
+    );
+    // Non-monotone timestamps do not change the budget conclusion.
+    expect(isNonIncreasingCreatedTimes([100, 90, 200])).toBe(false);
+  });
+
+  it("models forward-scan misses from page1 inserts and unsafe page-cursor resume", () => {
+    const { missedIds, duplicateIds } = olxForwardScanMissesInsertedOnPage1({
+      walkedPagesInOrder: [1, 2],
+      idsByPageAtWalkTime: {
+        1: ["a", "b"],
+        2: ["b", "c"],
+      },
+      latePage1InsertIds: ["new-on-page1"],
+    });
+    expect(duplicateIds).toEqual(["b"]);
+    expect(missedIds).toEqual(["new-on-page1"]);
+    expect(
+      olxPageCursorResumeMisses({
+        resumePage: 3,
+        idsNowOnSkippedPages: ["shifted-onto-page2"],
+        idsAlreadyStored: new Set(["a", "b", "c"]),
+      }),
+    ).toEqual(["shifted-onto-page2"]);
+    expect(
+      olxPageCursorResumeMisses({
+        resumePage: 1,
+        idsNowOnSkippedPages: ["x"],
+        idsAlreadyStored: new Set(),
+      }),
+    ).toEqual([]);
   });
 
   it("keeps time-stop off while HTML sort is unverified; verified mode requires all dated + no undated", () => {
