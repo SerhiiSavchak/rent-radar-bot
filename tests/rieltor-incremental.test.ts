@@ -584,6 +584,112 @@ describe("RIELTOR coverage health and upgrade bootstrap", () => {
     expect(again.adminAlertsSent).toBe(0);
   });
 
+  it("alerts once after three transport_blocked polls and recovers once on success", async () => {
+    const path = dbPath();
+    const alerts: string[] = [];
+    const store = new DurableDeliveryStore(getDb(path));
+    const seedAt = new Date("2026-09-26T08:50:00.000Z");
+    await runTelegramTestCycle(
+      {
+        adapters: [adapter(() => emptyComplete(seedAt))],
+        config: configFor(),
+        sink: sink(alerts),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => seedAt,
+      },
+      1,
+    );
+    const blocked = (at: Date): SourceFetchResult => ({
+      listings: [],
+      transport: "http",
+      dataKind: "MOCK DATA",
+      resultKind: "http_error",
+      httpStatus: 403,
+      health: {
+        source: "rieltor",
+        healthy: false,
+        checkedAt: at,
+        resultKind: "http_error",
+        httpStatus: 403,
+        message: "RIELTOR transport_blocked HTTP 403",
+      },
+    });
+    const runBlocked = async (at: Date, cycle: number) =>
+      runTelegramTestCycle(
+        {
+          adapters: [adapter(() => blocked(at))],
+          config: configFor(),
+          sink: sink(alerts),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => at,
+        },
+        cycle,
+      );
+
+    const first = await runBlocked(new Date("2026-09-26T09:00:00.000Z"), 2);
+    expect(first.adminAlertsSent).toBe(0);
+    expect(readSourceHealth(getDb(), "rieltor")?.consecutiveFailures).toBe(1);
+    expect(readSourceHealth(getDb(), "rieltor")?.status).toBe("transport_failure");
+
+    const second = await runBlocked(new Date("2026-09-26T09:10:00.000Z"), 3);
+    expect(second.adminAlertsSent).toBe(0);
+    expect(readSourceHealth(getDb(), "rieltor")?.consecutiveFailures).toBe(2);
+
+    const third = await runBlocked(new Date("2026-09-26T09:20:00.000Z"), 4);
+    expect(third.adminAlertsSent).toBe(1);
+    expect(readSourceHealth(getDb(), "rieltor")?.consecutiveFailures).toBe(3);
+    expect(alerts[0]).toContain("source: rieltor");
+    expect(alerts[0]).toContain("transport_failure");
+    expect(alerts[0]).toContain("consecutive_failures: 3");
+    expect(
+      getDb()
+        .prepare("SELECT incident_open AS open FROM source_admin_alerts WHERE source = 'rieltor'")
+        .get() as { open: number },
+    ).toEqual({ open: 1 });
+
+    const recovered = await runTelegramTestCycle(
+      {
+        adapters: [adapter(() => emptyComplete(new Date("2026-09-26T09:30:00.000Z")))],
+        config: configFor(),
+        sink: sink(alerts),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date("2026-09-26T09:30:00.000Z"),
+      },
+      5,
+    );
+    expect(recovered.adminAlertsSent).toBe(1);
+    expect(alerts.at(-1)).toContain("recovered");
+    expect(readSourceHealth(getDb(), "rieltor")?.status).toBe("valid_empty");
+    expect(readSourceHealth(getDb(), "rieltor")?.consecutiveFailures).toBe(0);
+    expect(
+      getDb()
+        .prepare(
+          "SELECT incident_open AS open, last_alert_kind AS kind FROM source_admin_alerts WHERE source = 'rieltor'",
+        )
+        .get() as { open: number; kind: string },
+    ).toEqual({ open: 0, kind: "recovery" });
+
+    const again = await runTelegramTestCycle(
+      {
+        adapters: [adapter(() => emptyComplete(new Date("2026-09-26T09:40:00.000Z")))],
+        config: configFor(),
+        sink: sink(alerts),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date("2026-09-26T09:40:00.000Z"),
+      },
+      6,
+    );
+    expect(again.adminAlertsSent).toBe(0);
+  });
+
   it("migrates a populated schema 7 database without dropping operational rows", () => {
     const path = dbPath();
     const db = new DatabaseSync(path);

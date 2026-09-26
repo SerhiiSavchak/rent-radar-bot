@@ -91,5 +91,5 @@ npm run live:olx:browser-extract
 - Live poll/oneshot persist baseline, seen IDs, freshness, and the Telegram outbox in local SQLite. Restart does not silent-rebaseline.
 - Failed Telegram sends stay retryable; `sent` is recorded only after Telegram confirms success.
 - Concurrent pollers are rejected (script flock + SQLite lock).
-- RIELTOR intermittent HTTP 403 is classified as `transport_blocked` when request path/headers match soak (owners filter) — not a silent empty market.
+- RIELTOR HTTP 403 / challenge HTML is classified as `transport_blocked` (not a silent empty market). A simulated 403 does not explain why the origin returned 403.
 - Source failures (`disabled` / `transport_blocked` / `parser_failure` / `transport_failure` / `browser_failure` / `valid_empty`) are reported distinctly; final summary includes partial coverage.

@@ -397,7 +397,7 @@ function messageFor(
     return `RIELTOR RATE_LIMITED HTTP ${status ?? 429}; not a valid empty catalog${truncation}`;
   }
   if (status === 403) {
-    return `RIELTOR transport_blocked HTTP ${status} (same path/headers as soak; intermittent edge block — no code discrepancy found)${truncation}`;
+    return `RIELTOR transport_blocked HTTP ${status}${truncation}`;
   }
   return `RIELTOR HTTP error (${status ?? "n/a"})${truncation}`;
 }
