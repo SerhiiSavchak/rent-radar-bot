@@ -2,6 +2,8 @@
 
 Isolated sink for developer-owned bot/chat only. Does **not** change Oracle soak, production adapters, or production defaults.
 
+Listing delivery uses a **single** `TELEGRAM_CHAT_ID`. There is no `/start` subscriber list. For customer/group destination constraints see `docs/CUSTOMER_DELIVERY.md`.
+
 ## Required env
 
 ```bash
