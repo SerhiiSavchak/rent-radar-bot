@@ -18,8 +18,48 @@ describe("DIM.RIA resultKind (Oracle soak regression)", () => {
 
   it("treats a present empty catalog array as valid_empty", () => {
     expect(
-      deriveDomriaInspectResultKind({ listingCount: 0, httpStatus: 200, structurePresent: true }),
+      deriveDomriaInspectResultKind({
+        listingCount: 0,
+        httpStatus: 200,
+        structurePresent: true,
+        catalogEmpty: true,
+      }),
     ).toBe("valid_empty");
+  });
+
+  it("treats non-empty catalog ids with zero assembled cards and no detail failure as idle ok", () => {
+    expect(
+      deriveDomriaInspectResultKind({
+        listingCount: 0,
+        httpStatus: 200,
+        structurePresent: true,
+        catalogEmpty: false,
+        hadCatalogIds: true,
+      }),
+    ).toBe("ok");
+  });
+
+  it("keeps detail/schema failures as parser_failure even when items were non-empty", () => {
+    expect(
+      deriveDomriaInspectResultKind({
+        listingCount: 0,
+        httpStatus: 200,
+        structurePresent: true,
+        catalogEmpty: false,
+        hadCatalogIds: true,
+        parserFailure: true,
+      }),
+    ).toBe("parser_failure");
+  });
+
+  it("does not treat bare structurePresent without empty/id evidence as valid_empty", () => {
+    expect(
+      deriveDomriaInspectResultKind({
+        listingCount: 0,
+        httpStatus: 200,
+        structurePresent: true,
+      }),
+    ).toBe("parser_failure");
   });
 
   it("treats a schema/structure miss as parser_failure even on HTTP 200", () => {

@@ -130,6 +130,8 @@ export class DomriaSource implements ListingSourceAdapter {
       notes,
       {
         structurePresent: acquired.structurePresent && !acquired.parserFailure,
+        catalogEmpty: acquired.catalogEmpty,
+        hadCatalogIds: acquired.hadCatalogIds,
         parserFailure: acquired.parserFailure,
         httpError: acquired.httpError,
       },
@@ -217,13 +219,30 @@ export class DomriaSource implements ListingSourceAdapter {
   }
 }
 
-/** Pure resultKind for soak/Telegram — must never be left unset when listings exist. */
+/**
+ * Pure resultKind for soak/Telegram — must never be left unset when listings exist.
+ *
+ * Count layers (do not conflate):
+ * - catalogEmpty: searchEngine `items` was present and length 0 → valid_empty
+ * - hadCatalogIds: items contained ids this poll (page sample; not site-wide total)
+ * - listingCount: successfully assembled Listing objects after detail fetch/parse
+ * - parserFailure / httpError: detail or schema failures — never reported as ok/empty
+ *
+ * Zero assembled listings with hadCatalogIds and no transport/parse failure means
+ * every id was intentionally skipped as already known (idle). That is `ok`, not
+ * valid_empty. Zero assembled listings after attempted details that all failed must
+ * set parserFailure/httpError upstream — those flags win here.
+ */
 export function deriveDomriaInspectResultKind(input: {
   listingCount: number;
   httpStatus?: number;
   forceUnhealthy?: boolean;
-  /** Catalog array was present. Empty array is valid_empty, missing array is parser_failure. */
+  /** Catalog array was present (including empty). Missing array → not structurePresent. */
   structurePresent?: boolean;
+  /** True only for a present empty `items` array. */
+  catalogEmpty?: boolean;
+  /** True when at least one searchEngine id was returned this poll. */
+  hadCatalogIds?: boolean;
   parserFailure?: boolean;
   httpError?: boolean;
 }): FetchResultKind {
@@ -239,8 +258,17 @@ export function deriveDomriaInspectResultKind(input: {
   if (input.httpError || (input.httpStatus !== undefined && input.httpStatus !== 200)) {
     return "http_error";
   }
-  if (input.structurePresent) {
+  if (input.structurePresent && input.catalogEmpty === true) {
     return "valid_empty";
+  }
+  if (input.structurePresent && (input.hadCatalogIds === true || input.catalogEmpty === false)) {
+    // Non-empty id sample, zero assembled cards, no detail/schema failure flags:
+    // idle (all known) — keep extraction notes upstream; not a genuine empty catalog.
+    return "ok";
+  }
+  if (input.structurePresent) {
+    // Structure claimed without emptiness/id evidence — treat as incomplete parse signal.
+    return "parser_failure";
   }
   return "parser_failure";
 }
@@ -271,6 +299,8 @@ function finish(
   flags: {
     forceUnhealthy?: boolean;
     structurePresent?: boolean;
+    catalogEmpty?: boolean;
+    hadCatalogIds?: boolean;
     parserFailure?: boolean;
     httpError?: boolean;
   } = {},
@@ -287,6 +317,8 @@ function finish(
     ...(status !== undefined ? { httpStatus: status } : {}),
     ...(flags.forceUnhealthy ? { forceUnhealthy: true } : {}),
     ...(flags.structurePresent ? { structurePresent: true } : {}),
+    ...(flags.catalogEmpty !== undefined ? { catalogEmpty: flags.catalogEmpty } : {}),
+    ...(flags.hadCatalogIds !== undefined ? { hadCatalogIds: flags.hadCatalogIds } : {}),
     ...(flags.parserFailure ? { parserFailure: true } : {}),
     ...(flags.httpError ? { httpError: true } : {}),
   });
@@ -314,7 +346,9 @@ function finish(
         resultKind === "valid_empty"
           ? "DIM.RIA VALID_EMPTY_RESULT: catalog structure present, zero listings"
           : healthyFinal
-            ? `DIM.RIA returned ${unique.length} listings via ${transport}`
+            ? unique.length > 0
+              ? `DIM.RIA returned ${unique.length} listings via ${transport}`
+              : `DIM.RIA idle via ${transport}: catalog ids present, zero newly assembled listings`
             : selectDomriaHealthMessage(notes),
     },
   };

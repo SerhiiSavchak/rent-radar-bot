@@ -20,6 +20,7 @@ export type StoredSellerVerdict =
   | "confirmed_owner"
   | "confirmed_intermediary"
   | "profile_likely_intermediary"
+  | "seller_registration_year_2026"
   | "unknown"
   | "rate_limited"
   | "transport_failure"
@@ -30,10 +31,12 @@ export type LinkedSellerOutcome =
   | "same_cycle_resolved"
   | "cache_confirmed_agent"
   | "cache_confirmed_owner"
+  | "cache_registration_year_excluded"
   | "cache_unknown"
   | "detail_confirmed_agent"
   | "detail_confirmed_owner"
   | "detail_profile_likely"
+  | "detail_registration_year_excluded"
   | "detail_unknown"
   | "detail_rate_limited"
   | "detail_transport_failure"
@@ -62,10 +65,12 @@ export type LinkedSellerVerificationCounts = {
   sameCycleResolved: number;
   cacheConfirmedAgent: number;
   cacheConfirmedOwner: number;
+  cacheRegistrationYearExcluded: number;
   cacheUnknown: number;
   detailConfirmedAgent: number;
   detailConfirmedOwner: number;
   detailProfileLikely: number;
+  detailRegistrationYearExcluded: number;
   detailUnknown: number;
   detailRateLimited: number;
   detailTransportFailure: number;
@@ -81,10 +86,12 @@ export function emptyLinkedSellerVerification(): LinkedSellerVerificationCounts 
     sameCycleResolved: 0,
     cacheConfirmedAgent: 0,
     cacheConfirmedOwner: 0,
+    cacheRegistrationYearExcluded: 0,
     cacheUnknown: 0,
     detailConfirmedAgent: 0,
     detailConfirmedOwner: 0,
     detailProfileLikely: 0,
+    detailRegistrationYearExcluded: 0,
     detailUnknown: 0,
     detailRateLimited: 0,
     detailTransportFailure: 0,

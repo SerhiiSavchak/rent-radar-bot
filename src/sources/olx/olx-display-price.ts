@@ -1,6 +1,7 @@
 import type { Listing, ListingPrice } from "../../domain/listing.ts";
 import { awaitWithTimeout } from "../../utils/deadline.ts";
 import { inspectPrerenderedState } from "./olx-browser.html-extract.ts";
+import { extractOlxAccountRegistrationYear } from "./olx-account-registration.ts";
 
 export const OLX_DISPLAY_PRICE_TIMEOUT_MS = 20_000;
 
@@ -44,6 +45,18 @@ export function applyOlxDisplayPrice(listing: Listing, displayValue: string): vo
   };
 }
 
+/** Attach platform member-since year when present. Does not invent missing years. */
+export function applyOlxAccountRegistrationYear(listing: Listing, html: string): void {
+  const year = extractOlxAccountRegistrationYear(html);
+  if (year === undefined) {
+    return;
+  }
+  listing.metadata = {
+    ...(listing.metadata ?? {}),
+    accountRegistrationYear: year,
+  };
+}
+
 function detailDisplayValue(state: unknown): string | undefined {
   if (!state || typeof state !== "object") {
     return undefined;
@@ -55,6 +68,7 @@ function detailDisplayValue(state: unknown): string | undefined {
 /**
  * Read the public listing page for a handful of OLX cards about to be sent.
  * Leaves `listing.price` unchanged so dedupe still compares the catalog amount.
+ * Also captures platform account registration year when member-since is present.
  */
 export async function readOlxDisplayedPrices(listings: Listing[]): Promise<void> {
   const targets = listings
@@ -86,7 +100,11 @@ export async function readOlxDisplayedPrices(listings: Listing[]): Promise<void>
               "olx.display_price.body",
             )
           : undefined;
-        const display = html ? detailDisplayValue(inspectPrerenderedState(html).decoded) : undefined;
+        if (!html) {
+          continue;
+        }
+        applyOlxAccountRegistrationYear(listing, html);
+        const display = detailDisplayValue(inspectPrerenderedState(html).decoded);
         if (display) {
           applyOlxDisplayPrice(listing, display);
         }

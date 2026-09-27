@@ -18,6 +18,10 @@ import {
 import { applySellerProfileGate } from "./seller-profile.ts";
 import type { SellerProfilePolicies } from "./seller-profile.ts";
 import {
+  OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+  sellerRegistrationYearRejectionReason,
+} from "../sources/olx/olx-account-registration.ts";
+import {
   formatRieltorCoverage,
   parseRieltorCatchup,
   rieltorCatchupKey,
@@ -408,6 +412,9 @@ function noteLinkedSeller(
     case "cache_confirmed_owner":
       linked.cacheConfirmedOwner += 1;
       break;
+    case "cache_registration_year_excluded":
+      linked.cacheRegistrationYearExcluded += 1;
+      break;
     case "cache_unknown":
       linked.cacheUnknown += 1;
       break;
@@ -419,6 +426,9 @@ function noteLinkedSeller(
       break;
     case "detail_profile_likely":
       linked.detailProfileLikely += 1;
+      break;
+    case "detail_registration_year_excluded":
+      linked.detailRegistrationYearExcluded += 1;
       break;
     case "detail_unknown":
       linked.detailUnknown += 1;
@@ -592,10 +602,7 @@ function classifySourceAttempt(
       errorSafe: result.health.message ?? "parser_failure",
     };
   }
-  if (
-    result.coverage?.coverageTruncated &&
-    ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty" || kind === "ok")
-  ) {
+  if (result.coverage?.coverageTruncated && (kind === "ok" || kind === "valid_empty")) {
     return {
       ok: false,
       processable: true,
@@ -603,7 +610,8 @@ function classifySourceAttempt(
       errorSafe: coverageDiagnostic(source, result.coverage),
     };
   }
-  if ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty") {
+  // `ok` includes idle polls with zero newly assembled listings (all known / filtered later).
+  if (kind === "ok" || kind === "valid_empty") {
     return { ok: true, processable: true, resultKind: kind };
   }
   if (kind === "disabled") {
@@ -1199,6 +1207,22 @@ export async function runTelegramTestCycle(
   const allowLinkedSeller = async (listing: Listing): Promise<LinkedSellerGate> => {
     if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
       return { status: "defer", reasonCode: "linked_seller_hold" };
+    }
+    const registrationYear = listing.metadata?.accountRegistrationYear;
+    const year =
+      typeof registrationYear === "number"
+        ? registrationYear
+        : typeof registrationYear === "string"
+          ? Number(registrationYear)
+          : undefined;
+    if (sellerRegistrationYearRejectionReason(year)) {
+      retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
+      persistTerminalLinkedSellerReject(listing, {
+        dryRun: deps.sink.dryRun === true,
+        dedupe: deps.dedupe,
+        ...(holdDb ? { holdDb } : {}),
+      });
+      return { status: "reject", reasonCode: OLX_SELLER_REGISTRATION_YEAR_2026_REASON };
     }
     const decision = await verifyLinkedSeller(listing);
     noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);

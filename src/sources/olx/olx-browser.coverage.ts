@@ -262,8 +262,11 @@ export function planOlxCategoryFetch(input: {
   const catchupTarget = input.catchup?.target ?? input.bootstrapTarget ?? input.committedBoundary;
   const resumePage = input.catchup?.resumePage ?? 1;
   if (resumePage > 1) {
+    // Always recheck page 1 for insertions/promotions, then continue at the owed
+    // resume page. Using (resumePage - 1) with budget 2 permanently stalls:
+    // resumePage=3 → [1,2] → next resume 3 (prod apartments stuck here).
     const pages = [1];
-    for (let page = Math.max(2, resumePage - 1); pages.length < budget; page += 1) {
+    for (let page = resumePage; pages.length < budget; page += 1) {
       if (!pages.includes(page)) {
         pages.push(page);
       }
@@ -522,7 +525,8 @@ export function assessOlxBrowserWalk(input: {
   }
 
   // Page budget exhausted while cards remain — persist catch-up; do not rescan only page 1.
-  const last = input.fetchedPages[input.fetchedPages.length - 1] ?? 1;
+  // Use the highest fetched page so non-contiguous plans like [1, resumePage] advance.
+  const last = input.fetchedPages.length > 0 ? Math.max(...input.fetchedPages) : 1;
   return {
     boundaryReached: false,
     coverageTruncated: true,

@@ -1,5 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Listing, SellerType } from "../domain/listing.ts";
+import {
+  OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+  sellerRegistrationYearRejectionReason,
+} from "../sources/olx/olx-account-registration.ts";
 
 /**
  * How many distinct public addresses under one seller id count as repeated
@@ -24,6 +28,7 @@ export type SellerProfileVerdict =
   | "confirmed_intermediary"
   | "profile_likely_intermediary"
   | "profile_high_risk"
+  | "seller_registration_year_2026"
   | "unknown"
   | "confirmed_owner";
 
@@ -169,6 +174,9 @@ export function shouldRejectSellerProfile(
   if (verdict === "confirmed_intermediary") {
     return true;
   }
+  if (verdict === "seller_registration_year_2026") {
+    return true;
+  }
   if (verdict === "profile_likely_intermediary") {
     return policies.likelyPolicy === "reject";
   }
@@ -176,6 +184,24 @@ export function shouldRejectSellerProfile(
     return policies.newAccountPolicy === "reject";
   }
   return false;
+}
+
+/**
+ * Exact-year customer exclusion. Reads metadata.accountRegistrationYear only —
+ * never listing publishedAt / createdTime.
+ */
+export function registrationYearDecisionFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): SellerProfileDecision | undefined {
+  const raw = metadata?.accountRegistrationYear;
+  const year = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : undefined;
+  if (sellerRegistrationYearRejectionReason(year)) {
+    return {
+      verdict: "seller_registration_year_2026",
+      evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+    };
+  }
+  return undefined;
 }
 
 function readAddresses(db: DatabaseSync, source: string, sellerId: string): string[] {
@@ -305,13 +331,18 @@ export function applySellerProfileGate(
       .find((value) => typeof value === "string");
     const accountCreatedAt = typeof createdRaw === "string" ? new Date(createdRaw) : undefined;
     const confirmedOwner = group.every((listing) => isPlatformConfirmedOwner(listing));
+    const registrationExcluded = group
+      .map((listing) => registrationYearDecisionFromMetadata(listing.metadata))
+      .find((item) => item !== undefined);
     let decision = assessSellerProfile({
       confirmedOwner,
       addresses,
       ...(accountCreatedAt ? { accountCreatedAt } : {}),
       now,
     });
-    if (
+    if (!confirmedOwner && registrationExcluded) {
+      decision = registrationExcluded;
+    } else if (
       !confirmedOwner &&
       decision.verdict === "unknown" &&
       group.some((listing) => listing.metadata?.sellerTextLevel === "likely")

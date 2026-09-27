@@ -34,6 +34,11 @@ import {
   type OlxProfileSnapshot,
 } from "../sources/olx/olx-seller-profile.ts";
 import { probeOlxSellerProfile } from "../sources/olx/olx-seller-profile.browser.ts";
+import {
+  OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+  extractOlxAccountRegistrationYear,
+  sellerRegistrationYearRejectionReason,
+} from "../sources/olx/olx-account-registration.ts";
 
 export const OLX_DETAIL_GAP_MS = 800;
 export const OLX_LINKED_DETAIL_CAP = 5;
@@ -173,6 +178,14 @@ export function classifyOlxLinkedSellerHtml(
       evidence: owner.sellerEvidence.join("; ") || "linked OLX seller is intermediary",
     };
   }
+  // Customer exclusion: exact platform registration year 2026 (not listing dates).
+  const registrationYear = extractOlxAccountRegistrationYear(html);
+  if (sellerRegistrationYearRejectionReason(registrationYear)) {
+    return {
+      verdict: "seller_registration_year_2026",
+      evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+    };
+  }
   if (owner.sellerType === "owner" || owner.ownerEvidenceLevel === "platform_confirmed") {
     return {
       verdict: "confirmed_owner",
@@ -246,6 +259,7 @@ function writeOlxSellerVerification(
     input.verdict === "confirmed_owner" ||
       input.verdict === "confirmed_intermediary" ||
       input.verdict === "profile_likely_intermediary" ||
+      input.verdict === "seller_registration_year_2026" ||
       input.verdict === "unknown"
       ? null
       : safeStoredError(input.evidence, input.verdict),
@@ -264,6 +278,15 @@ function decisionFromStored(
       requested: false,
       externalId: token,
       evidence: row.sellerEvidence ?? "cached OLX intermediary",
+    };
+  }
+  if (row.sellerVerdict === "seller_registration_year_2026") {
+    return {
+      outcome: "cache_registration_year_excluded",
+      drop: true,
+      requested: false,
+      externalId: token,
+      evidence: row.sellerEvidence ?? OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
     };
   }
   if (row.sellerVerdict === "profile_likely_intermediary") {
@@ -549,6 +572,16 @@ function decisionFromClassified(
       evidence,
     };
   }
+  if (classified.verdict === "seller_registration_year_2026") {
+    return {
+      outcome: "detail_registration_year_excluded",
+      drop: true,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
   if (classified.verdict === "profile_likely_intermediary") {
     return {
       outcome: "detail_profile_likely",
@@ -602,7 +635,8 @@ function rememberVerdict(
   const ttl =
     classified.verdict === "confirmed_intermediary" ||
     classified.verdict === "confirmed_owner" ||
-    classified.verdict === "profile_likely_intermediary"
+    classified.verdict === "profile_likely_intermediary" ||
+    classified.verdict === "seller_registration_year_2026"
       ? CONFIRMED_SELLER_CACHE_MS
       : classified.verdict === "unknown"
         ? UNKNOWN_SELLER_CACHE_MS

@@ -268,6 +268,17 @@ export type DomriaNewestAcquisition = {
   parserFailure: boolean;
   httpError: boolean;
   structurePresent: boolean;
+  /**
+   * True only when every successful searchEngine response had an empty `items`
+   * array. Non-empty id lists with zero assembled listings are not catalog-empty.
+   */
+  catalogEmpty: boolean;
+  /** At least one searchEngine id was returned (this page sample, not site total). */
+  hadCatalogIds: boolean;
+  idsReceived: number;
+  detailsAttempted: number;
+  detailsSucceeded: number;
+  knownSkipped: number;
   notes: string[];
   /** Ids whose seller page was read. Absent when the id list itself failed. */
   persistIds?: string[];
@@ -292,6 +303,12 @@ export async function acquireDomriaNewest(input: {
   let structurePresent = false;
   let coverageTruncated = false;
   let sawSearch = false;
+  let sawNonEmptyCatalog = false;
+  let sawEmptyCatalog = false;
+  let idsReceived = 0;
+  let detailsAttempted = 0;
+  let detailsSucceeded = 0;
+  let knownSkipped = 0;
   const cap = input.detailCap ?? DOMRIA_NEWEST_DETAIL_CAP;
   const discoveredAt = input.discoveredAt ?? new Date();
 
@@ -333,10 +350,14 @@ export async function acquireDomriaNewest(input: {
     sawSearch = true;
     structurePresent = true;
     if (parsedIds.empty) {
+      sawEmptyCatalog = true;
       notes.push(`${category} searchEngine items empty`);
       continue;
     }
+    sawNonEmptyCatalog = true;
+    idsReceived += parsedIds.ids.length;
     const plan = planDomriaDetailFetches(parsedIds.ids, input.knownIds, cap);
+    knownSkipped += plan.skippedKnown.length;
     notes.push(
       `${category} ids=${parsedIds.ids.length} fetch=${plan.toFetch.length} known=${plan.skippedKnown.length} deferred=${plan.deferred.length}`,
     );
@@ -344,6 +365,7 @@ export async function acquireDomriaNewest(input: {
       coverageTruncated = true;
     }
     for (const id of plan.toFetch) {
+      detailsAttempted += 1;
       const loaded = await loadDomriaCandidate(
         id,
         category,
@@ -363,10 +385,15 @@ export async function acquireDomriaNewest(input: {
         notes.push(`${category} detail ${id} failed; continuing later ids`);
         continue;
       }
+      detailsSucceeded += 1;
       listings.push(loaded.listing);
       persistIds.push(id);
     }
   }
+
+  notes.push(
+    `domria_counts idsReceived=${idsReceived} detailsAttempted=${detailsAttempted} detailsSucceeded=${detailsSucceeded} knownSkipped=${knownSkipped}`,
+  );
 
   return {
     listings,
@@ -374,6 +401,13 @@ export async function acquireDomriaNewest(input: {
     parserFailure,
     httpError,
     structurePresent: structurePresent && sawSearch,
+    // Empty only when we saw empty items and never a non-empty id list.
+    catalogEmpty: sawSearch && sawEmptyCatalog && !sawNonEmptyCatalog,
+    hadCatalogIds: sawNonEmptyCatalog,
+    idsReceived,
+    detailsAttempted,
+    detailsSucceeded,
+    knownSkipped,
     notes,
     ...(sawSearch ? { persistIds } : {}),
     coverageTruncated,

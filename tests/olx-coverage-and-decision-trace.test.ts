@@ -21,6 +21,7 @@ import {
   olxPublicationBoundaryKey,
   organicPublicationTimes,
   planOlxBrowserPages,
+  planOlxCategoryFetch,
 } from "../src/sources/olx/olx-browser.coverage.ts";
 import { extractListingAdsFromPrerenderedState } from "../src/sources/olx/olx-browser.html-extract.ts";
 import { olxPrerenderedAdsNonMonotoneCreatedFixture } from "./fixtures/olx-prerendered-ads-non-monotone-created.ts";
@@ -144,6 +145,31 @@ describe("OLX browser coverage contract", () => {
     expect(notes).toContain("olx_browser_full_scan_status=blocked");
     expect(notes).toContain("olx_browser_time_stop=disabled_until_html_sort_verified");
     expect(notes.some((n) => n.includes("sort_organic_created_not_monotone"))).toBe(true);
+  });
+
+  it("advances catch-up past resumePage under page budget 2 (prod stall regression)", () => {
+    // Production apartments were stuck at resumePage=3 because budget-2 planned [1,2]
+    // and then wrote resumePage=3 again. Resume must include the owed page.
+    const planned = planOlxCategoryFetch({
+      catchup: { target: "2026-09-19T21:15:02.350Z", resumePage: 3 },
+      pageBudget: 2,
+    });
+    expect(planned.mode).toBe("catchup");
+    expect(planned.pages).toEqual([1, 3]);
+    const assessed = assessOlxBrowserWalk({
+      mode: "catchup",
+      plannedPages: planned.pages,
+      fetchedPages: planned.pages,
+      lastPageCardCount: 40,
+      lastPageCatalogEvidence: "has_listings",
+      crossedBoundary: false,
+      failed: false,
+      newestOrganic: "2026-09-27T10:00:00.000Z",
+      catchupTarget: "2026-09-19T21:15:02.350Z",
+    });
+    expect(assessed.coverageTruncated).toBe(true);
+    expect(assessed.boundaryReached).toBe(false);
+    expect(assessed.catchup?.resumePage).toBe(4);
   });
 
   it("sort gate rejects the live-captured page1 organic createdTime break (sort stays BLOCKED)", () => {
