@@ -1316,16 +1316,16 @@ async function extractCategoryPages(
       );
       break;
     }
-    // Navigation/timeout failures must not enter fetchedPages — otherwise assess
-    // treats the owed page as done and silently advances the catch-up cursor.
-    if (
-      !extracted.accessibilityOk &&
-      extracted.listings.length === 0 &&
-      extracted.rejections.some((r) => r.reason === "category_page_navigation_failed")
-    ) {
+    // Any navigation/timeout failure — including partial listings — must not enter
+    // fetchedPages, or assess silently advances past the owed catch-up page.
+    if (extracted.rejections.some((r) => r.reason === "category_page_navigation_failed")) {
       failed = true;
       lastPageCatalogEvidence = "parse_failed";
       notes.push(`${category}_page_${page}_navigation_failed`);
+      if (extracted.listings.length > 0) {
+        pageExtracts.push(extracted);
+        lastPageCardCount = extracted.listings.length;
+      }
       break;
     }
     pageExtracts.push(extracted);
