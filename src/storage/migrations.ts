@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 /** 4 = cross-source identities. 5 = source health and retention indexes. 6 = linked seller cache. */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 const MIGRATION_1 = `
 CREATE TABLE IF NOT EXISTS listings (
@@ -312,6 +312,47 @@ CREATE INDEX IF NOT EXISTS external_seller_verifications_expires_idx
   ON external_seller_verifications (expires_at);
 `;
 
+/**
+ * Allow seller_inventory_limit on linked seller cache rows (exclusion policy, not fraud proof).
+ * Rebuilds the table so existing rows/indexes survive; do not edit MIGRATION_12.
+ */
+const MIGRATION_13 = `
+CREATE TABLE external_seller_verifications_v13 (
+  source TEXT NOT NULL,
+  external_listing_id TEXT NOT NULL,
+  canonical_url TEXT NOT NULL,
+  seller_verdict TEXT NOT NULL CHECK (seller_verdict IN (
+    'confirmed_owner',
+    'confirmed_intermediary',
+    'profile_likely_intermediary',
+    'seller_registration_year_2026',
+    'seller_inventory_limit',
+    'unknown',
+    'rate_limited',
+    'transport_failure',
+    'parser_failure'
+  )),
+  seller_evidence TEXT,
+  checked_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_http_status INTEGER,
+  last_error_safe TEXT,
+  PRIMARY KEY (source, external_listing_id)
+);
+INSERT INTO external_seller_verifications_v13 (
+  source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+  checked_at, expires_at, last_http_status, last_error_safe
+)
+SELECT
+  source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+  checked_at, expires_at, last_http_status, last_error_safe
+FROM external_seller_verifications;
+DROP TABLE external_seller_verifications;
+ALTER TABLE external_seller_verifications_v13 RENAME TO external_seller_verifications;
+CREATE INDEX IF NOT EXISTS external_seller_verifications_expires_idx
+  ON external_seller_verifications (expires_at);
+`;
+
 const MIGRATIONS: Record<number, string> = {
   1: MIGRATION_1,
   2: MIGRATION_2,
@@ -325,6 +366,7 @@ const MIGRATIONS: Record<number, string> = {
   10: MIGRATION_10,
   11: MIGRATION_11,
   12: MIGRATION_12,
+  13: MIGRATION_13,
 };
 
 export function sqliteMigrationSql(version: number): string {

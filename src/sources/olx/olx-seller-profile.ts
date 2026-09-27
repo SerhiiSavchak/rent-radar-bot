@@ -1,6 +1,8 @@
 import {
   assessSellerProfile,
   normalizeSellerAddress,
+  SELLER_INVENTORY_LIMIT_MIN,
+  SELLER_INVENTORY_LIMIT_REASON,
   SELLER_PROFILE_DISTINCT_ADDRESS_MIN,
   type SellerProfileDecision,
 } from "../../delivery/seller-profile.ts";
@@ -17,14 +19,17 @@ import {
  * - Coarse keys are city+district or city+street without a building — useful as
  *   distinct *location samples*, not verified property addresses.
  * - Listing ids never count as properties. Repeated ads for one address collapse.
+ * - Rent and sale real-estate ads across all cities count; non-RE ads do not.
  * - When neither precise nor coarse distinctness can be established → unknown.
  *
- * `profile_likely_intermediary` from ≥3 precise addresses, or from ≥3 coarse
- * location samples labeled as coarse (not “verified addresses”). Delivery still
- * follows `SELLER_PROFILE_LIKELY_POLICY` (default reject).
+ * Exclusion policies (not fraud proof):
+ * - `seller_inventory_limit` from ≥5 precise distinct real-estate properties.
+ * - `profile_likely_intermediary` from ≥3 precise addresses, or from ≥3 coarse
+ *   location samples labeled as coarse (not “verified addresses”). Delivery for
+ *   likely still follows `SELLER_PROFILE_LIKELY_POLICY` (default reject).
  *
- * Threshold matches `SELLER_PROFILE_DISTINCT_ADDRESS_MIN` (3). The undeployed
- * phase-6-product-correctness ≥10 RE-ad count for native OLX is not adopted here.
+ * Incomplete / unread inventory must stay unknown — never a verified
+ * “below inventory limit” clearance.
  */
 export const OLX_PROFILE_PROBE_BUDGET = 2;
 
@@ -70,6 +75,8 @@ export type OlxProfileSnapshot = {
    * Kept as the keys fed into assessSellerProfile for the likely threshold.
    */
   propertyKeys?: string[];
+  /** How many profile listing pages were successfully parsed into this snapshot. */
+  pagesFetched?: number;
 };
 
 export function findOlxPublicProfilePath(html: string): string | undefined {
@@ -255,6 +262,7 @@ export function parseOlxProfileInventory(state: unknown): OlxProfileSnapshot {
     precisePropertyKeys,
     coarseLocationKeys,
     propertyKeys,
+    pagesFetched: 1,
   };
 }
 
@@ -277,6 +285,7 @@ export function mergeOlxProfilePages(
   ];
   const propertyKeys =
     precisePropertyKeys.length > 0 ? precisePropertyKeys : coarseLocationKeys;
+  const pagesFetched = (first.pagesFetched ?? 1) + (second.pagesFetched ?? 1);
   return {
     acquired: true,
     ...(first.totalPages !== undefined ? { totalPages: first.totalPages } : {}),
@@ -286,7 +295,22 @@ export function mergeOlxProfilePages(
     precisePropertyKeys,
     coarseLocationKeys,
     propertyKeys,
+    pagesFetched,
   };
+}
+
+/** True when more profile pages exist than the bounded probe has read. */
+export function olxProfileInventoryIncomplete(snapshot: OlxProfileSnapshot): boolean {
+  if (!snapshot.acquired) {
+    return true;
+  }
+  // Legacy/manual snapshots without pagesFetched are treated as complete for the
+  // keys they already carry — incompleteness is only claimed after a real probe.
+  if (snapshot.pagesFetched === undefined) {
+    return false;
+  }
+  const totalPages = snapshot.totalPages ?? 0;
+  return totalPages > snapshot.pagesFetched;
 }
 
 export function classifyOlxProfileInventory(
@@ -303,6 +327,43 @@ export function classifyOlxProfileInventory(
   const usingPrecise = precise.length > 0;
   const keys = usingPrecise ? precise : coarse.length > 0 ? coarse : legacy;
   const coarseInference = !usingPrecise && keys.length > 0;
+  const inventoryBits = [
+    `olx_pages=${snapshot.totalPages ?? 0}`,
+    `olx_pages_fetched=${snapshot.pagesFetched ?? 1}`,
+    `olx_total=${snapshot.totalElements ?? 0}`,
+    `olx_visible=${snapshot.visibleAds ?? 0}`,
+    `olx_real_estate_count=${snapshot.realEstateAds ?? 0}`,
+  ];
+
+  // Exclusion policy: only reliably identified (precise) properties count.
+  if (precise.length >= SELLER_INVENTORY_LIMIT_MIN) {
+    return {
+      verdict: "seller_inventory_limit",
+      evidence: [
+        SELLER_INVENTORY_LIMIT_REASON,
+        `distinct_precise_properties=${precise.length}`,
+        `olx_precise_addresses=${precise.length}`,
+        "olx_inventory_limit=1",
+        "olx_likely=0",
+        ...inventoryBits,
+      ].join(";"),
+    };
+  }
+
+  // Unread profile pages: do not treat a partial count as verified below-limit.
+  if (olxProfileInventoryIncomplete(snapshot) && precise.length < SELLER_INVENTORY_LIMIT_MIN) {
+    return {
+      verdict: "unknown",
+      evidence: [
+        "olx_inventory_incomplete=1",
+        `distinct_precise_properties=${precise.length}`,
+        `olx_precise_addresses=${precise.length}`,
+        "olx_likely=0",
+        ...inventoryBits,
+      ].join(";"),
+    };
+  }
+
   const decision = assessSellerProfile({
     confirmedOwner: false,
     addresses: keys,
@@ -324,10 +385,7 @@ export function classifyOlxProfileInventory(
           : `coarse_locations=${keys.length}`,
     decision.verdict === "profile_likely_intermediary" ? "olx_likely=1" : "olx_likely=0",
     locationEvidence,
-    `olx_pages=${snapshot.totalPages ?? 0}`,
-    `olx_total=${snapshot.totalElements ?? 0}`,
-    `olx_visible=${snapshot.visibleAds ?? 0}`,
-    `olx_real_estate_count=${snapshot.realEstateAds ?? 0}`,
+    ...inventoryBits,
   ].join(";");
   return { verdict: decision.verdict, evidence };
 }

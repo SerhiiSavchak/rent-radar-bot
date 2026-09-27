@@ -1,4 +1,5 @@
 import { inspectPrerenderedState } from "./olx-browser.html-extract.ts";
+import { SELLER_INVENTORY_LIMIT_MIN } from "../../delivery/seller-profile.ts";
 import {
   mergeOlxProfilePages,
   parseOlxProfileInventory,
@@ -76,7 +77,12 @@ export async function probeOlxSellerProfile(input: {
     const first = parseOlxProfileInventory(
       inspectPrerenderedState((await profileResponse.text()) ?? "").decoded,
     );
-    if (!first.acquired || (first.totalPages ?? 0) < 2) {
+    // Inventory exclusion is decided once ≥5 precise properties are known.
+    if (
+      !first.acquired ||
+      (first.totalPages ?? 0) < 2 ||
+      (first.precisePropertyKeys?.length ?? 0) >= SELLER_INVENTORY_LIMIT_MIN
+    ) {
       return first;
     }
     const hrefs = await page.$$eval("a[href]", (nodes) =>

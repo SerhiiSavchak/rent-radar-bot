@@ -23,6 +23,8 @@ import {
 } from "./rieltor-detail-seller.ts";
 import {
   shouldRejectSellerProfile,
+  SELLER_INVENTORY_LIMIT_MIN,
+  SELLER_INVENTORY_LIMIT_REASON,
   type SellerProfileDeliveryPolicy,
   type SellerProfilePolicies,
   DEFAULT_SELLER_PROFILE_POLICIES,
@@ -260,6 +262,7 @@ function writeOlxSellerVerification(
       input.verdict === "confirmed_intermediary" ||
       input.verdict === "profile_likely_intermediary" ||
       input.verdict === "seller_registration_year_2026" ||
+      input.verdict === "seller_inventory_limit" ||
       input.verdict === "unknown"
       ? null
       : safeStoredError(input.evidence, input.verdict),
@@ -287,6 +290,15 @@ function decisionFromStored(
       requested: false,
       externalId: token,
       evidence: row.sellerEvidence ?? OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+    };
+  }
+  if (row.sellerVerdict === "seller_inventory_limit") {
+    return {
+      outcome: "cache_inventory_limit",
+      drop: true,
+      requested: false,
+      externalId: token,
+      evidence: row.sellerEvidence ?? SELLER_INVENTORY_LIMIT_REASON,
     };
   }
   if (row.sellerVerdict === "profile_likely_intermediary") {
@@ -582,6 +594,16 @@ function decisionFromClassified(
       evidence,
     };
   }
+  if (classified.verdict === "seller_inventory_limit") {
+    return {
+      outcome: "detail_inventory_limit",
+      drop: true,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
   if (classified.verdict === "profile_likely_intermediary") {
     return {
       outcome: "detail_profile_likely",
@@ -636,7 +658,8 @@ function rememberVerdict(
     classified.verdict === "confirmed_intermediary" ||
     classified.verdict === "confirmed_owner" ||
     classified.verdict === "profile_likely_intermediary" ||
-    classified.verdict === "seller_registration_year_2026"
+    classified.verdict === "seller_registration_year_2026" ||
+    classified.verdict === "seller_inventory_limit"
       ? CONFIRMED_SELLER_CACHE_MS
       : classified.verdict === "unknown"
         ? UNKNOWN_SELLER_CACHE_MS
@@ -753,9 +776,12 @@ export function createCycleOlxSellerVerifier(options: {
       snapshot = { acquired: false };
     }
     const profileDecision = classifyOlxProfileInventory(snapshot, now);
-    if (profileDecision.verdict === "profile_likely_intermediary") {
+    if (
+      profileDecision.verdict === "seller_inventory_limit" ||
+      profileDecision.verdict === "profile_likely_intermediary"
+    ) {
       const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
-        verdict: "profile_likely_intermediary",
+        verdict: profileDecision.verdict,
         evidence: `${classified.evidence}; ${profileDecision.evidence}`,
       };
       rememberVerdict(options.db, target, enriched, httpStatus, now);
@@ -870,6 +896,88 @@ export function createCycleOlxSellerVerifier(options: {
   };
 
   return async (listing) => {
+    // Direct OLX: cache + bounded profile probe for inventory / cached exclusions.
+    if (listing.source === "olx") {
+      const target = canonicalOlxDetailTarget(listing.url);
+      if (!target) {
+        return { outcome: "not_required", drop: false, requested: false };
+      }
+      const nowDirect = options.now();
+      if (options.db) {
+        const cached = readOlxSellerVerification(options.db, target.token, nowDirect);
+        if (cached) {
+          const fromCache = decisionFromStored(cached, target.token, profilePolicies);
+          if (fromCache.outcome !== "cache_unknown") {
+            return fromCache;
+          }
+        }
+      }
+      const inventoryRaw = listing.metadata?.distinctPreciseRealEstateProperties;
+      const inventoryCount =
+        typeof inventoryRaw === "number"
+          ? inventoryRaw
+          : typeof inventoryRaw === "string"
+            ? Number(inventoryRaw)
+            : undefined;
+      if (
+        typeof inventoryCount === "number" &&
+        Number.isInteger(inventoryCount) &&
+        inventoryCount >= SELLER_INVENTORY_LIMIT_MIN
+      ) {
+        rememberVerdict(
+          options.db,
+          target,
+          {
+            verdict: "seller_inventory_limit",
+            evidence: `${SELLER_INVENTORY_LIMIT_REASON};distinct_precise_properties=${inventoryCount}`,
+          },
+          undefined,
+          nowDirect,
+        );
+        return {
+          outcome: "detail_inventory_limit",
+          drop: true,
+          requested: false,
+          externalId: target.token,
+          evidence: SELLER_INVENTORY_LIMIT_REASON,
+        };
+      }
+      if (profileProbes >= maxProfileProbes) {
+        return { outcome: "not_required", drop: false, requested: false };
+      }
+      profileProbes += 1;
+      let snapshot: OlxProfileSnapshot;
+      try {
+        snapshot = await probeProfile({
+          listingUrl: target.url,
+          timeoutMs: options.timeoutMs,
+        });
+      } catch {
+        snapshot = { acquired: false };
+      }
+      const profileDecision = classifyOlxProfileInventory(snapshot, nowDirect);
+      if (
+        profileDecision.verdict === "seller_inventory_limit" ||
+        profileDecision.verdict === "profile_likely_intermediary"
+      ) {
+        const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
+          verdict: profileDecision.verdict,
+          evidence: profileDecision.evidence,
+        };
+        rememberVerdict(options.db, target, enriched, undefined, nowDirect);
+        return decisionFromClassified(
+          enriched,
+          target.token,
+          200,
+          false,
+          undefined,
+          profilePolicies,
+        );
+      }
+      // Incomplete / below-threshold stays unknown — not a verified clearance.
+      return { outcome: "not_required", drop: false, requested: false };
+    }
+
     if (listing.source !== "lun") {
       return { outcome: "not_required", drop: false, requested: false };
     }
@@ -922,17 +1030,38 @@ export function createCycleOlxSellerVerifier(options: {
           evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
         };
       }
-      // Known non-2026 year: safe same-cycle allow (year rule already evaluated).
-      if (peerYearKnown) {
+      const peerInventoryRaw = peer.metadata?.distinctPreciseRealEstateProperties;
+      const peerInventory =
+        typeof peerInventoryRaw === "number"
+          ? peerInventoryRaw
+          : typeof peerInventoryRaw === "string"
+            ? Number(peerInventoryRaw)
+            : undefined;
+      if (
+        typeof peerInventory === "number" &&
+        Number.isInteger(peerInventory) &&
+        peerInventory >= SELLER_INVENTORY_LIMIT_MIN
+      ) {
+        const nowPeer = options.now();
+        rememberVerdict(
+          options.db,
+          target,
+          {
+            verdict: "seller_inventory_limit",
+            evidence: `${SELLER_INVENTORY_LIMIT_REASON};distinct_precise_properties=${peerInventory}`,
+          },
+          undefined,
+          nowPeer,
+        );
         return {
-          outcome: "same_cycle_resolved",
-          drop: false,
+          outcome: "same_cycle_inventory_limit",
+          drop: true,
           requested: false,
           externalId: target.token,
-          evidence: "same-cycle OLX listing already available; registration year not excluded",
+          evidence: SELLER_INVENTORY_LIMIT_REASON,
         };
       }
-      // Incomplete peer (no year): do not allow yet — cached 2026 must still win below.
+      // Known non-2026 year is not an inventory clearance — still consult cache below.
     }
     const now = options.now();
     if (options.db) {
@@ -955,9 +1084,12 @@ export function createCycleOlxSellerVerifier(options: {
             snapshot = { acquired: false };
           }
           const profileDecision = classifyOlxProfileInventory(snapshot, now);
-          if (profileDecision.verdict === "profile_likely_intermediary") {
+          if (
+            profileDecision.verdict === "seller_inventory_limit" ||
+            profileDecision.verdict === "profile_likely_intermediary"
+          ) {
             const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
-              verdict: "profile_likely_intermediary",
+              verdict: profileDecision.verdict,
               evidence: `${fromCache.evidence ?? "cached OLX unknown"}; ${profileDecision.evidence}`,
             };
             rememberVerdict(options.db, target, enriched, cached.lastHttpStatus ?? 200, now);
@@ -986,15 +1118,17 @@ export function createCycleOlxSellerVerifier(options: {
         return fromCache;
       }
     }
-    // Incomplete same-cycle peer with no rejecting cache: preserve prior allow shortcut
-    // (no detail fetch). Bounded enrichment runs only when there is no peer.
-    if (peer && !peerYearKnown) {
+    // Peer present, no rejecting cache: preserve prior allow shortcut (no detail fetch).
+    // Bounded enrichment runs only when there is no peer.
+    if (peer) {
       return {
         outcome: "same_cycle_resolved",
         drop: false,
         requested: false,
         externalId: target.token,
-        evidence: "same-cycle OLX listing already available; registration year unknown on peer",
+        evidence: peerYearKnown
+          ? "same-cycle OLX listing already available; registration year not excluded"
+          : "same-cycle OLX listing already available; registration year unknown on peer",
       };
     }
     if (haltedAfterRateLimit) {

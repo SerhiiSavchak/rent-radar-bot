@@ -869,8 +869,8 @@ describe("MIGRATION_12 seller_registration_year_2026", () => {
       ).run(nowIso, expires),
     ).toThrow(/CHECK constraint failed|constraint/i);
 
-    expect(applyMigrations(db)).toBe(12);
-    expect(appliedSchemaVersion(db)).toBe(12);
+    expect(applyMigrations(db)).toBe(13);
+    expect(appliedSchemaVersion(db)).toBe(13);
 
     const preserved = db
       .prepare(
@@ -894,6 +894,59 @@ describe("MIGRATION_12 seller_registration_year_2026", () => {
       )
       .get() as { verdict: string };
     expect(row.verdict).toBe("seller_registration_year_2026");
+  });
+});
+
+describe("MIGRATION_13 seller_inventory_limit", () => {
+  it("upgrades schema-12 and persists inventory-limit verdict", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    for (let version = 1; version <= 12; version += 1) {
+      db.exec("BEGIN IMMEDIATE;");
+      db.exec(sqliteMigrationSql(version));
+      db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
+        version,
+        "2026-09-01T00:00:00.000Z",
+      );
+      db.exec("COMMIT;");
+    }
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '12')").run();
+    const nowIso = "2026-09-25T10:00:00.000Z";
+    const expires = "2026-10-25T10:00:00.000Z";
+    expect(appliedSchemaVersion(db)).toBe(12);
+    expect(() =>
+      db.prepare(
+        `INSERT INTO external_seller_verifications (
+           source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+           checked_at, expires_at
+         ) VALUES ('olx', 'inv', 'https://www.olx.ua/d/uk/obyavlenie/IDinv.html',
+           'seller_inventory_limit', 'seller_inventory_limit', ?, ?)`,
+      ).run(nowIso, expires),
+    ).toThrow(/CHECK constraint failed|constraint/i);
+
+    expect(applyMigrations(db)).toBe(13);
+    db.prepare(
+      `INSERT INTO external_seller_verifications (
+         source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+         checked_at, expires_at
+       ) VALUES ('olx', 'inv', 'https://www.olx.ua/d/uk/obyavlenie/IDinv.html',
+         'seller_inventory_limit', 'seller_inventory_limit', ?, ?)`,
+    ).run(nowIso, expires);
+    expect(
+      (
+        db
+          .prepare(
+            `SELECT seller_verdict AS v FROM external_seller_verifications
+             WHERE external_listing_id = 'inv'`,
+          )
+          .get() as { v: string }
+      ).v,
+    ).toBe("seller_inventory_limit");
   });
 });
 
@@ -945,8 +998,8 @@ describe("MIGRATION_11 profile_likely_intermediary", () => {
     ).toThrow(/CHECK constraint failed|constraint/i);
 
     expect(applyMigrations(db)).toBe(SCHEMA_VERSION);
-    expect(appliedSchemaVersion(db)).toBe(12);
-    expect(SCHEMA_VERSION).toBe(12);
+    expect(appliedSchemaVersion(db)).toBe(13);
+    expect(SCHEMA_VERSION).toBe(13);
 
     const preserved = db
       .prepare(

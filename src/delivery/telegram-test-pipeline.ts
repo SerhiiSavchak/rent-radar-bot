@@ -406,6 +406,9 @@ function noteLinkedSeller(
     case "same_cycle_registration_year_excluded":
       linked.sameCycleRegistrationYearExcluded += 1;
       break;
+    case "same_cycle_inventory_limit":
+      linked.sameCycleInventoryLimit += 1;
+      break;
     case "same_cycle_resolved":
       linked.sameCycleResolved += 1;
       break;
@@ -417,6 +420,9 @@ function noteLinkedSeller(
       break;
     case "cache_registration_year_excluded":
       linked.cacheRegistrationYearExcluded += 1;
+      break;
+    case "cache_inventory_limit":
+      linked.cacheInventoryLimit += 1;
       break;
     case "cache_unknown":
       linked.cacheUnknown += 1;
@@ -432,6 +438,9 @@ function noteLinkedSeller(
       break;
     case "detail_registration_year_excluded":
       linked.detailRegistrationYearExcluded += 1;
+      break;
+    case "detail_inventory_limit":
+      linked.detailInventoryLimit += 1;
       break;
     case "detail_unknown":
       linked.detailUnknown += 1;

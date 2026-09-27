@@ -29,8 +29,16 @@ export type SellerProfileVerdict =
   | "profile_likely_intermediary"
   | "profile_high_risk"
   | "seller_registration_year_2026"
+  | "seller_inventory_limit"
   | "unknown"
   | "confirmed_owner";
+
+/**
+ * Customer exclusion: ≥5 distinct active real-estate properties on the public
+ * seller profile (rent + sale, all cities). Not fraud / intermediary proof.
+ */
+export const SELLER_INVENTORY_LIMIT_MIN = 5;
+export const SELLER_INVENTORY_LIMIT_REASON = "seller_inventory_limit";
 
 /** Delivery policy for heuristic profile evidence. Classification stays independent. */
 export type SellerProfileDeliveryPolicy = "send" | "reject";
@@ -175,6 +183,9 @@ export function shouldRejectSellerProfile(
     return true;
   }
   if (verdict === "seller_registration_year_2026") {
+    return true;
+  }
+  if (verdict === "seller_inventory_limit") {
     return true;
   }
   if (verdict === "profile_likely_intermediary") {
