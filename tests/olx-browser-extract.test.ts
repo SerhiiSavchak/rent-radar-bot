@@ -753,4 +753,107 @@ describe("OLX browser extract deadlines", () => {
     expect(result.budgetExceeded).toBe(false);
     expect(result.browserClosed).toBe(true);
   });
+
+  it("preserves apartment listings/catch-up when houses page.goto times out", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    const target = "2026-09-19T21:15:02.350Z";
+    const gotoUrls: string[] = [];
+    const pageClose = vi.fn(async () => undefined);
+    const contextClose = vi.fn(async () => undefined);
+    const browserClose = vi.fn(async () => undefined);
+
+    const page = {
+      on: vi.fn(),
+      goto: vi.fn(async (navUrl: string) => {
+        gotoUrls.push(navUrl);
+        if (navUrl.includes("/doma/")) {
+          const err = new Error(
+            'page.goto: Timeout 45000ms exceeded.\nCall log:\n  - navigating to "' +
+              navUrl +
+              '", waiting until "domcontentloaded"',
+          );
+          err.name = "TimeoutError";
+          throw err;
+        }
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => Buffer.from(main, "utf8"),
+          text: async () => main,
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content: vi.fn(async () => main),
+      url: () => gotoUrls[gotoUrls.length - 1] ?? "https://www.olx.ua/",
+      title: async () => "OLX",
+      close: pageClose,
+    } as unknown as Page;
+
+    const browser = {
+      newContext: async () =>
+        ({
+          newPage: async () => page,
+          close: contextClose,
+        }) as unknown as BrowserContext,
+      close: browserClose,
+    } as unknown as Browser;
+
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 5_000,
+      maxPagesPerCategory: 2,
+      launch: async () => browser,
+      catchup: {
+        apartments: { target, resumePage: 3 },
+        houses: { target, resumePage: 1 },
+      },
+    });
+
+    expect(result.browserClosed).toBe(true);
+    expect(browserClose).toHaveBeenCalled();
+    expect(gotoUrls.some((u) => u.includes("/kvartiry/"))).toBe(true);
+    expect(gotoUrls.some((u) => u.includes("/doma/"))).toBe(true);
+
+    // Apartments survived the houses timeout.
+    expect(result.apartments.listings.length).toBeGreaterThan(0);
+    expect(result.listings.some((l) => l.sourceId === "935081899")).toBe(true);
+    expect(result.coverage?.catchup?.apartment).toEqual({ target, resumePage: 4 });
+    expect(result.coverage?.committedBoundary?.apartment).toBeUndefined();
+
+    // Houses failed/truncated with retryable cursor — not a coverage PASS.
+    expect(result.houses.listings).toHaveLength(0);
+    expect(
+      result.houses.rejections.some(
+        (r) =>
+          r.reason === "category_page_navigation_failed" ||
+          r.reason === "category_page_extraction_failed",
+      ),
+    ).toBe(true);
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.coverage?.boundaryReached).toBe(false);
+    expect(result.coverage?.committedBoundary?.house).toBeUndefined();
+    expect(result.coverage?.catchup?.house).toEqual({ target, resumePage: 1 });
+    expect(
+      result.notes.some(
+        (n) =>
+          n.includes("houses_page_1_navigation_failed") ||
+          n.includes("houses_page_1_failed") ||
+          n.includes("houses_page_1_extraction_error") ||
+          n.includes("houses_category_extraction_error"),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("isRecoverableOlxCategoryExtractionError", () => {
+  it("recognizes Playwright TimeoutError from page.goto", async () => {
+    const { isRecoverableOlxCategoryExtractionError } = await import(
+      "../src/sources/olx/olx-browser.extract.ts"
+    );
+    const err = new Error('page.goto: Timeout 45000ms exceeded.');
+    err.name = "TimeoutError";
+    expect(isRecoverableOlxCategoryExtractionError(err)).toBe(true);
+    expect(isRecoverableOlxCategoryExtractionError(new TypeError("bug"))).toBe(false);
+  });
 });

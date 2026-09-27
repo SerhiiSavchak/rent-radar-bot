@@ -348,6 +348,35 @@ function emptyCategory(
   };
 }
 
+/**
+ * Playwright/navigation failures that must stay isolated to one category/page.
+ * Unexpected programmer errors still propagate.
+ */
+export function isRecoverableOlxCategoryExtractionError(error: unknown): boolean {
+  if (error instanceof OlxDeadlineExceededError) {
+    return true;
+  }
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error);
+  if (name === "TimeoutError") {
+    return true;
+  }
+  return (
+    /Timeout \d+ms exceeded/i.test(message) ||
+    /page\.goto/i.test(message) ||
+    /Navigation failed/i.test(message) ||
+    /net::ERR_/i.test(message) ||
+    /Target (page|closed|crashed)/i.test(message) ||
+    /Browser (has been )?closed/i.test(message) ||
+    /Execution context was destroyed/i.test(message)
+  );
+}
+
+function safeErrorDetail(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, " ").slice(0, 180);
+}
+
 function expectedCategoryId(category: "apartments" | "houses"): number {
   return category === "apartments" ? 1760 : 330;
 }
@@ -825,6 +854,46 @@ async function extractCategory(
       };
       return result;
     }
+    if (isRecoverableOlxCategoryExtractionError(error)) {
+      markTimeout();
+      const unique = dedupeListings(listings);
+      const extractedOk = unique.length > 0;
+      if (!timing.extractMs && extractedOk) {
+        timing.extractMs = deps.clock() - started;
+      }
+      try {
+        await closePageBounded();
+      } catch {
+        // page/context cleanup continues in finally
+      }
+      result = {
+        category,
+        requestedUrl: url,
+        finalUrl: url,
+        accessibility: extractedOk ? "browser_accessible" : "parser_failure",
+        accessibilityOk: extractedOk,
+        apiResponsesCaptured: capturedPayloads.length,
+        rawOfferCount,
+        validatedListingCount: unique.length,
+        listings: unique,
+        rejections: [
+          ...rejections,
+          {
+            reason: "category_page_navigation_failed",
+            detail: safeErrorDetail(error),
+          },
+        ],
+        elapsedMs: deps.clock() - started,
+        extractSource,
+        htmlDiagnostics: htmlExtract.diagnostics,
+        networkJsonProbes,
+        htmlInputKind: mainDocumentHtml ? "main_document" : htmlInputKind,
+        timedOut: true,
+        budgetExceeded: true,
+        timing,
+      };
+      return result;
+    }
     throw error;
   } finally {
     const closed = await closeWithBudget(() => context.close(), deps.cleanupBudgetMs);
@@ -974,32 +1043,57 @@ export async function extractOlxListingsViaBrowser(
         };
       }
     } else {
-      const hou = await extractCategoryPages(browser, "houses", {
-        pageBudget: maxPages,
-        navigationTimeoutMs: Math.min(navigationTimeoutMs, remainingForHouses),
-        categoryBudgetMs: Math.min(categoryBudgetMs, remainingForHouses),
-        now,
-        clock,
-        commit,
-        runDeadlineAt,
-        cleanupBudgetMs,
-        ...(watermarks.houses ? { publicationWatermark: watermarks.houses } : {}),
-        ...(catchups.houses ? { catchup: catchups.houses } : {}),
-        ...(bootstrap && !watermarks.houses && !catchups.houses
-          ? { bootstrapTarget: bootstrap }
-          : {}),
-        ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
-      });
-      houses = hou.merged;
-      pagesFetchedTotal += hou.fetchedPages.length;
-      coverageTruncated = coverageTruncated || hou.coverageTruncated;
-      boundaryReached = boundaryReached && hou.boundaryReached;
-      modesSummary.push(`houses:${hou.mode}`);
-      if (hou.committed) {
-        committedBoundary[olxCategoryToCoverageKey("houses")] = hou.committed;
+      try {
+        const hou = await extractCategoryPages(browser, "houses", {
+          pageBudget: maxPages,
+          navigationTimeoutMs: Math.min(navigationTimeoutMs, remainingForHouses),
+          categoryBudgetMs: Math.min(categoryBudgetMs, remainingForHouses),
+          now,
+          clock,
+          commit,
+          runDeadlineAt,
+          cleanupBudgetMs,
+          ...(watermarks.houses ? { publicationWatermark: watermarks.houses } : {}),
+          ...(catchups.houses ? { catchup: catchups.houses } : {}),
+          ...(bootstrap && !watermarks.houses && !catchups.houses
+            ? { bootstrapTarget: bootstrap }
+            : {}),
+          ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
+        });
+        houses = hou.merged;
+        pagesFetchedTotal += hou.fetchedPages.length;
+        coverageTruncated = coverageTruncated || hou.coverageTruncated;
+        boundaryReached = boundaryReached && hou.boundaryReached;
+        modesSummary.push(`houses:${hou.mode}`);
+        if (hou.committed) {
+          committedBoundary[olxCategoryToCoverageKey("houses")] = hou.committed;
+        }
+        catchupOut[olxCategoryToCoverageKey("houses")] = hou.catchup;
+        notes.push(...hou.notes);
+      } catch (error) {
+        // Category isolation: apartments already succeeded — never reject the whole extract.
+        if (!isRecoverableOlxCategoryExtractionError(error)) {
+          throw error;
+        }
+        const houseKey = olxCategoryToCoverageKey("houses");
+        const houseUrl = buildOlxBrowserCategoryUrl("houses");
+        const detail = safeErrorDetail(error);
+        houses = emptyCategory("houses", houseUrl, "category_page_navigation_failed", detail);
+        coverageTruncated = true;
+        boundaryReached = false;
+        modesSummary.push("houses:failed");
+        notes.push(`houses_category_extraction_error=${detail}`);
+        const houseTarget =
+          catchups.houses?.target ??
+          watermarks.houses?.toISOString() ??
+          bootstrap?.toISOString();
+        const resumePage = catchups.houses?.resumePage ?? 1;
+        if (houseTarget) {
+          catchupOut[houseKey] = { target: houseTarget, resumePage };
+        } else {
+          catchupOut[houseKey] = null;
+        }
       }
-      catchupOut[olxCategoryToCoverageKey("houses")] = hou.catchup;
-      notes.push(...hou.notes);
     }
   } finally {
     const closed = await closeWithBudget(() => browser.close(), cleanupBudgetMs);
@@ -1198,16 +1292,42 @@ async function extractCategoryPages(
       deps.categoryBudgetMs,
       Math.max(MIN_GOTO_BUDGET_MS, Math.floor(remainingMs(deps.runDeadlineAt, deps.clock()) / pagesLeft)),
     );
-    const extracted = await extractCategory(browser, category, url, {
-      navigationTimeoutMs: Math.min(deps.navigationTimeoutMs, pageBudget),
-      categoryBudgetMs: pageBudget,
-      now: deps.now,
-      clock: deps.clock,
-      commit: deps.commit,
-      runDeadlineAt: deps.runDeadlineAt,
-      cleanupBudgetMs: deps.cleanupBudgetMs,
-      ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
-    });
+    let extracted: OlxBrowserCategoryExtract;
+    try {
+      extracted = await extractCategory(browser, category, url, {
+        navigationTimeoutMs: Math.min(deps.navigationTimeoutMs, pageBudget),
+        categoryBudgetMs: pageBudget,
+        now: deps.now,
+        clock: deps.clock,
+        commit: deps.commit,
+        runDeadlineAt: deps.runDeadlineAt,
+        cleanupBudgetMs: deps.cleanupBudgetMs,
+        ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
+      });
+    } catch (error) {
+      // Narrow page boundary: do not let houses (or a single page) abort the run.
+      if (!isRecoverableOlxCategoryExtractionError(error)) {
+        throw error;
+      }
+      failed = true;
+      lastPageCatalogEvidence = "parse_failed";
+      notes.push(
+        `${category}_page_${page}_extraction_error=${safeErrorDetail(error)}`,
+      );
+      break;
+    }
+    // Navigation/timeout failures must not enter fetchedPages — otherwise assess
+    // treats the owed page as done and silently advances the catch-up cursor.
+    if (
+      !extracted.accessibilityOk &&
+      extracted.listings.length === 0 &&
+      extracted.rejections.some((r) => r.reason === "category_page_navigation_failed")
+    ) {
+      failed = true;
+      lastPageCatalogEvidence = "parse_failed";
+      notes.push(`${category}_page_${page}_navigation_failed`);
+      break;
+    }
     pageExtracts.push(extracted);
     fetchedPages.push(page);
     lastPageCardCount = extracted.listings.length;
@@ -1286,8 +1406,8 @@ async function extractCategoryPages(
     : emptyCategory(
         category,
         buildOlxBrowserCategoryUrl(category),
-        "category_budget_exhausted",
-        "no pages fetched",
+        failed ? "category_page_extraction_failed" : "category_budget_exhausted",
+        failed ? "no pages completed" : "no pages fetched",
       );
 
   return {
