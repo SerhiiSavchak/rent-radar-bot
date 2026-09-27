@@ -172,6 +172,79 @@ describe("OLX browser coverage contract", () => {
     expect(assessed.catchup?.resumePage).toBe(4);
   });
 
+  it("advances persisted catch-up across consecutive budget-2 cycles without claiming coverage PASS", () => {
+    const target = "2026-09-19T21:15:02.350Z";
+    let resume = 3;
+    for (const expectedNext of [4, 5, 6]) {
+      const planned = planOlxCategoryFetch({
+        catchup: { target, resumePage: resume },
+        pageBudget: 2,
+      });
+      expect(planned.pages[0]).toBe(1);
+      expect(planned.pages).toContain(resume);
+      const assessed = assessOlxBrowserWalk({
+        mode: "catchup",
+        plannedPages: planned.pages,
+        fetchedPages: planned.pages,
+        lastPageCardCount: 40,
+        lastPageCatalogEvidence: "has_listings",
+        crossedBoundary: false,
+        failed: false,
+        newestOrganic: "2026-09-27T10:00:00.000Z",
+        catchupTarget: target,
+      });
+      expect(assessed.boundaryReached).toBe(false);
+      expect(assessed.coverageTruncated).toBe(true);
+      expect(assessed.catchup?.resumePage).toBe(expectedNext);
+      resume = expectedNext;
+    }
+    // Cursor progress ≠ catalog completeness while sort/end remain unverified.
+    expect(
+      assessOlxOrderIndependentFullScan({
+        apartmentPagesFetched: resume,
+        apartmentConfirmedEmpty: false,
+        apartmentNovelOnLastPage: 1,
+        housePagesFetched: 1,
+        houseConfirmedEmpty: false,
+        elapsedMs: 40_000,
+        avgNavMs: 900,
+        olxTotalBudgetMs: 95_000,
+      }).fullScanStatus,
+    ).toBe("BLOCKED");
+  });
+
+  it("retries the owed catch-up page after a failure on that page", () => {
+    const planned = planOlxCategoryFetch({
+      catchup: { target: "2026-09-19T21:15:02.350Z", resumePage: 5 },
+      pageBudget: 2,
+    });
+    expect(planned.pages).toEqual([1, 5]);
+    const assessed = assessOlxBrowserWalk({
+      mode: "catchup",
+      plannedPages: planned.pages,
+      fetchedPages: [1],
+      lastPageCardCount: 0,
+      lastPageCatalogEvidence: "parse_failed",
+      crossedBoundary: false,
+      failed: true,
+      newestOrganic: "2026-09-27T10:00:00.000Z",
+      catchupTarget: "2026-09-19T21:15:02.350Z",
+    });
+    expect(assessed.catchup?.resumePage).toBe(5);
+    expect(assessed.coverageTruncated).toBe(true);
+    expect(assessed.boundaryReached).toBe(false);
+  });
+
+  it("records page-cursor reshuffle risk separately from resume advancement", () => {
+    expect(
+      olxPageCursorResumeMisses({
+        resumePage: 4,
+        idsNowOnSkippedPages: ["shifted-onto-page2", "shifted-onto-page3"],
+        idsAlreadyStored: new Set(["kept"]),
+      }),
+    ).toEqual(["shifted-onto-page2", "shifted-onto-page3"]);
+  });
+
   it("sort gate rejects the live-captured page1 organic createdTime break (sort stays BLOCKED)", () => {
     // From evidence/source-layer-live/olx-sort/summary-1790406934261.json cycle 1
     // organicCreatedHead + break at index 14: May epoch then Sep epochs.
@@ -756,6 +829,74 @@ describe("OLX publication watermark wiring", () => {
   });
 });
 
+describe("MIGRATION_12 seller_registration_year_2026", () => {
+  it("upgrades schema-11 and persists registration-year verdict", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    for (let version = 1; version <= 11; version += 1) {
+      db.exec("BEGIN IMMEDIATE;");
+      db.exec(sqliteMigrationSql(version));
+      db.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
+        version,
+        "2026-09-01T00:00:00.000Z",
+      );
+      db.exec("COMMIT;");
+    }
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '11')").run();
+    const nowIso = "2026-09-25T10:00:00.000Z";
+    const expires = "2026-10-25T10:00:00.000Z";
+    db.prepare(
+      `INSERT INTO external_seller_verifications (
+         source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+         checked_at, expires_at, last_http_status, last_error_safe
+       ) VALUES ('olx', 'keep-owner', 'https://www.olx.ua/d/uk/obyavlenie/ID1.html',
+         'confirmed_owner', 'owner', ?, ?, NULL, NULL)`,
+    ).run(nowIso, expires);
+
+    expect(appliedSchemaVersion(db)).toBe(11);
+    expect(() =>
+      db.prepare(
+        `INSERT INTO external_seller_verifications (
+           source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+           checked_at, expires_at
+         ) VALUES ('olx', 'y2026', 'https://www.olx.ua/d/uk/obyavlenie/IDy.html',
+           'seller_registration_year_2026', 'seller_registration_year_2026', ?, ?)`,
+      ).run(nowIso, expires),
+    ).toThrow(/CHECK constraint failed|constraint/i);
+
+    expect(applyMigrations(db)).toBe(12);
+    expect(appliedSchemaVersion(db)).toBe(12);
+
+    const preserved = db
+      .prepare(
+        `SELECT external_listing_id AS id, seller_verdict AS verdict
+         FROM external_seller_verifications ORDER BY external_listing_id`,
+      )
+      .all() as Array<{ id: string; verdict: string }>;
+    expect(preserved).toEqual([{ id: "keep-owner", verdict: "confirmed_owner" }]);
+
+    db.prepare(
+      `INSERT INTO external_seller_verifications (
+         source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+         checked_at, expires_at
+       ) VALUES ('olx', 'y2026', 'https://www.olx.ua/d/uk/obyavlenie/IDy.html',
+         'seller_registration_year_2026', 'seller_registration_year_2026', ?, ?)`,
+    ).run(nowIso, expires);
+    const row = db
+      .prepare(
+        `SELECT seller_verdict AS verdict FROM external_seller_verifications
+         WHERE external_listing_id = 'y2026'`,
+      )
+      .get() as { verdict: string };
+    expect(row.verdict).toBe("seller_registration_year_2026");
+  });
+});
+
 describe("MIGRATION_11 profile_likely_intermediary", () => {
   it("upgrades schema-9 with verification rows and persists the new verdict", async () => {
     const db = new DatabaseSync(":memory:");
@@ -804,8 +945,8 @@ describe("MIGRATION_11 profile_likely_intermediary", () => {
     ).toThrow(/CHECK constraint failed|constraint/i);
 
     expect(applyMigrations(db)).toBe(SCHEMA_VERSION);
-    expect(appliedSchemaVersion(db)).toBe(11);
-    expect(SCHEMA_VERSION).toBe(11);
+    expect(appliedSchemaVersion(db)).toBe(12);
+    expect(SCHEMA_VERSION).toBe(12);
 
     const preserved = db
       .prepare(

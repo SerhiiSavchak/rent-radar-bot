@@ -484,9 +484,11 @@ export function assessOlxBrowserWalk(input: {
   }
 
   if (input.failed) {
+    // Prefer the next planned page not yet fetched (failure on the owed page),
+    // otherwise retry the last successfully fetched page.
     const failedPage =
-      input.fetchedPages[input.fetchedPages.length - 1] ??
       input.plannedPages[input.fetchedPages.length] ??
+      input.fetchedPages[input.fetchedPages.length - 1] ??
       input.plannedPages[0] ??
       1;
     return {

@@ -59,14 +59,33 @@ describe("OLX account registration year exclusion", () => {
     ).toBe(2024);
   });
 
-  it("parses Russian на OLX с phrasing without inventing from listing dates", () => {
+  it("parses Russian на OLX с inside member-since without inventing from listing dates", () => {
     const html = `<p data-testid="member-since">на OLX с <span>январь 2026 г.</span></p>`;
-    // Ukrainian testid path still wins; year digit is what matters.
     expect(extractOlxAccountRegistrationYear(html)).toBe(2026);
     expect(
       extractOlxAccountRegistrationYear(
         `<html><body><p>Опубликовано 23 сентября 2026 г.</p></body></html>`,
       ),
     ).toBeUndefined();
+  });
+
+  it("does not treat ad-description copy as platform registration year", () => {
+    const html =
+      `<html><body><div data-testid="ad-description">Текст оголошення: на OLX з 2026 р.</div></body></html>`;
+    expect(extractOlxAccountRegistrationYear(html)).toBeUndefined();
+  });
+
+  it("does not treat script text as platform registration year", () => {
+    const html = `<html><script>var description="на OLX з 2026 р.";</script></html>`;
+    expect(extractOlxAccountRegistrationYear(html)).toBeUndefined();
+  });
+
+  it("empty member-since with unrelated 2026 text stays unknown", () => {
+    const html = `<html><body>
+<p data-testid="member-since"></p>
+<div data-testid="ad-description">на OLX з 2026 р.</div>
+<script>var x="на OLX з 2026 р.";</script>
+</body></html>`;
+    expect(extractOlxAccountRegistrationYear(html)).toBeUndefined();
   });
 });

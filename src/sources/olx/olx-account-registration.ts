@@ -17,27 +17,28 @@ const MEMBER_SINCE_BLOCK =
   /data-testid=["']member-since["'][^>]*>([\s\S]*?)<\/p>/i;
 
 /**
- * Returns the platform registration year when member-since text yields a single
- * unambiguous 20xx year. Missing, malformed, or multi-year text → undefined.
+ * Returns the platform registration year when `data-testid="member-since"` yields
+ * a single unambiguous 20xx year. Missing, empty, malformed, or multi-year text
+ * → undefined.
+ *
+ * No whole-document fallback: listing description / script text can contain
+ * "на OLX з 2026" without establishing account registration.
  */
 export function extractOlxAccountRegistrationYear(html: string): number | undefined {
   if (!html) {
     return undefined;
   }
   const block = html.match(MEMBER_SINCE_BLOCK);
-  const raw = block?.[1] ?? "";
-  const text = raw
+  if (!block) {
+    return undefined;
+  }
+  const text = (block[1] ?? "")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!text) {
-    // Fallback: visible Ukrainian/Russian phrasing without the testid (SSR quirks).
-    const loose = html.match(
-      /на\s+OLX\s+[зс]\s+(?:[а-яіїєґa-z]+\s+)?(20\d{2})\s*р\.?/i,
-    );
-    const year = loose?.[1] ? Number(loose[1]) : NaN;
-    return Number.isInteger(year) && year >= 2000 && year <= 2100 ? year : undefined;
+    return undefined;
   }
   const years = [...text.matchAll(/\b(20\d{2})\b/g)].map((m) => Number(m[1]));
   const unique = [...new Set(years.filter((y) => Number.isInteger(y) && y >= 2000 && y <= 2100))];

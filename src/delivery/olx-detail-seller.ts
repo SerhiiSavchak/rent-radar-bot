@@ -882,6 +882,7 @@ export function createCycleOlxSellerVerifier(options: {
     const peer = options.peers.find(
       (item) => item.source === "olx" && peerToken(item)?.toLowerCase() === target.token.toLowerCase(),
     );
+    let peerYearKnown = false;
     if (peer) {
       if (sellerRejectionReason(peer)) {
         return {
@@ -892,13 +893,46 @@ export function createCycleOlxSellerVerifier(options: {
           evidence: "same-cycle OLX listing is a confirmed intermediary",
         };
       }
-      return {
-        outcome: "same_cycle_resolved",
-        drop: false,
-        requested: false,
-        externalId: target.token,
-        evidence: "same-cycle OLX listing already available; no strong intermediary",
-      };
+      const peerYearRaw = peer.metadata?.accountRegistrationYear;
+      const peerYear =
+        typeof peerYearRaw === "number"
+          ? peerYearRaw
+          : typeof peerYearRaw === "string"
+            ? Number(peerYearRaw)
+            : undefined;
+      peerYearKnown =
+        typeof peerYear === "number" && Number.isInteger(peerYear) && !Number.isNaN(peerYear);
+      if (peerYearKnown && sellerRegistrationYearRejectionReason(peerYear)) {
+        const nowPeer = options.now();
+        rememberVerdict(
+          options.db,
+          target,
+          {
+            verdict: "seller_registration_year_2026",
+            evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+          },
+          undefined,
+          nowPeer,
+        );
+        return {
+          outcome: "same_cycle_registration_year_excluded",
+          drop: true,
+          requested: false,
+          externalId: target.token,
+          evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+        };
+      }
+      // Known non-2026 year: safe same-cycle allow (year rule already evaluated).
+      if (peerYearKnown) {
+        return {
+          outcome: "same_cycle_resolved",
+          drop: false,
+          requested: false,
+          externalId: target.token,
+          evidence: "same-cycle OLX listing already available; registration year not excluded",
+        };
+      }
+      // Incomplete peer (no year): do not allow yet — cached 2026 must still win below.
     }
     const now = options.now();
     if (options.db) {
@@ -951,6 +985,17 @@ export function createCycleOlxSellerVerifier(options: {
         }
         return fromCache;
       }
+    }
+    // Incomplete same-cycle peer with no rejecting cache: preserve prior allow shortcut
+    // (no detail fetch). Bounded enrichment runs only when there is no peer.
+    if (peer && !peerYearKnown) {
+      return {
+        outcome: "same_cycle_resolved",
+        drop: false,
+        requested: false,
+        externalId: target.token,
+        evidence: "same-cycle OLX listing already available; registration year unknown on peer",
+      };
     }
     if (haltedAfterRateLimit) {
       return {

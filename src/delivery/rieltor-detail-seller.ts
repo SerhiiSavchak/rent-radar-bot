@@ -28,6 +28,7 @@ export type StoredSellerVerdict =
 
 export type LinkedSellerOutcome =
   | "same_cycle_confirmed_agent"
+  | "same_cycle_registration_year_excluded"
   | "same_cycle_resolved"
   | "cache_confirmed_agent"
   | "cache_confirmed_owner"
@@ -62,6 +63,7 @@ export type RieltorDetailPage = {
 
 export type LinkedSellerVerificationCounts = {
   sameCycleConfirmedAgent: number;
+  sameCycleRegistrationYearExcluded: number;
   sameCycleResolved: number;
   cacheConfirmedAgent: number;
   cacheConfirmedOwner: number;
@@ -83,6 +85,7 @@ export type LinkedSellerVerificationCounts = {
 export function emptyLinkedSellerVerification(): LinkedSellerVerificationCounts {
   return {
     sameCycleConfirmedAgent: 0,
+    sameCycleRegistrationYearExcluded: 0,
     sameCycleResolved: 0,
     cacheConfirmedAgent: 0,
     cacheConfirmedOwner: 0,

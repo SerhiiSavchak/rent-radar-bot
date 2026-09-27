@@ -403,6 +403,9 @@ function noteLinkedSeller(
     case "same_cycle_confirmed_agent":
       linked.sameCycleConfirmedAgent += 1;
       break;
+    case "same_cycle_registration_year_excluded":
+      linked.sameCycleRegistrationYearExcluded += 1;
+      break;
     case "same_cycle_resolved":
       linked.sameCycleResolved += 1;
       break;
