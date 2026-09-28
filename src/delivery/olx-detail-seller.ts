@@ -168,7 +168,8 @@ export function classifyOlxLinkedSellerHtml(
     platformOwner: lowerType === "owner",
     platformAgent:
       lowerType === "agent" || lowerType === "agency" || lowerType === "intermediary",
-    platformBusiness: lowerType === "business",
+    // sellerType=business OR trusted isBusiness/business boolean — both strong commercial.
+    platformBusiness: lowerType === "business" || business === true,
     platformPrivate: business === false,
     isBusiness: business === true,
     agencyName: company,
@@ -189,7 +190,14 @@ export function classifyOlxLinkedSellerHtml(
       evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
     };
   }
-  if (owner.sellerType === "owner" || owner.ownerEvidenceLevel === "platform_confirmed") {
+  // Contract: confirmed_owner requires both sellerType=owner AND platform_confirmed.
+  // classifyOwner pairs them; AND documents that free text alone cannot clear.
+  if (
+    isPlatformConfirmedOwner({
+      sellerType: owner.sellerType,
+      metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel },
+    })
+  ) {
     return {
       verdict: "confirmed_owner",
       evidence: owner.sellerEvidence.join("; ") || "linked OLX seller is owner",

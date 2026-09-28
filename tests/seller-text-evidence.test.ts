@@ -110,8 +110,8 @@ describe("seller text evidence", () => {
     },
   );
 
-  it("does not treat OLX isBusiness alone as intermediary", () => {
-    expect(eligible("Оренда", { isBusiness: true }).send).toBe(true);
+  it("rejects trusted OLX isBusiness as intermediary", () => {
+    expect(eligible("Оренда", { isBusiness: true }).send).toBe(false);
   });
 
   it.each([

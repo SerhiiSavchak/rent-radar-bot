@@ -90,15 +90,16 @@ describe("seller identity name context", () => {
     expect(owner.sellerType).toBe("owner");
   });
 
-  it("isBusiness alone stays unknown/sendable", () => {
+  it("rejects trusted OLX isBusiness as commercial intermediary", () => {
     const owner = classifyOwner({ isBusiness: true, text: "Здам квартиру" });
-    expect(owner.ownerEvidenceLevel).toBe("private_unknown");
+    expect(owner.sellerType).toBe("business");
+    expect(owner.ownerEvidenceLevel).toBe("intermediary");
     expect(
       isSellerEligible({
         sellerType: owner.sellerType,
         metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

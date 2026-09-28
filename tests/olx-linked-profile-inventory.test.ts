@@ -329,7 +329,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
         title: "Оренда кімнати",
         description: "кімната",
         user: { name: "Валерія", company_name: "XHOUSE", sellerType: null },
-        isBusiness: true,
+        isBusiness: false,
       }),
       "https://xhouse.olx.ua/uk/home/",
     );
@@ -375,7 +375,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
         title: "Оренда кімнати",
         description: "кімната",
         user: { name: "Евгений", company_name: "XHOUSE", sellerType: null },
-        isBusiness: true,
+        isBusiness: false,
       }),
     );
     const verify = createCycleOlxSellerVerifier({
@@ -454,7 +454,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
         title: "Квартира",
         description: "текст",
         user: { name: "Ігор", company_name: "XHOUSE", sellerType: null },
-        isBusiness: true,
+        isBusiness: false,
       }),
       "blk",
     );

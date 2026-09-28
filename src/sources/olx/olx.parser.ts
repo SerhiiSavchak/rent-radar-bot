@@ -25,6 +25,7 @@ function sellerSignals(offer: OlxOffer) {
     typeof offer.user?.sellerType === "string" && offer.user.sellerType.trim()
       ? offer.user.sellerType.trim()
       : undefined;
+  const lowerSellerType = userSellerType?.toLowerCase();
   const sellerName = offer.user?.name?.trim() || undefined;
   const publicText = [offer.title, offer.description, sellerName].filter(Boolean).join("\n");
   const extra = collectTextEvidence(publicText);
@@ -35,7 +36,7 @@ function sellerSignals(offer: OlxOffer) {
   }
   if (offer.business === true) {
     extra.unshift(
-      "OLX isBusiness/business = true (account type, not proof of agency/realtor status)",
+      "OLX isBusiness/business = true (trusted commercial/intermediary account type)",
     );
   }
   if (userSellerType) {
@@ -47,6 +48,13 @@ function sellerSignals(offer: OlxOffer) {
     extra.push("OLX user.sellerType is null (does not establish ownership)");
   }
   return classifyOwner({
+    // Structured user.sellerType only — never title/description language tokens.
+    platformOwner: lowerSellerType === "owner",
+    platformAgent:
+      lowerSellerType === "agent" ||
+      lowerSellerType === "agency" ||
+      lowerSellerType === "intermediary",
+    platformBusiness: lowerSellerType === "business" || offer.business === true,
     platformPrivate: offer.business === false,
     isBusiness: offer.business === true,
     agencyName: company,

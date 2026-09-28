@@ -25,8 +25,9 @@ export type RieltorPageInspection = {
 
 const LVIV_NAME = /львов/i;
 const EMPTY_MARKET = /пропозицій не знайдено/i;
-const OWNER_LABEL = /^власник$/i;
-const REALTOR_LABEL = /^рієлтор$/i;
+/** Exact platform badge text only — never free-form title/description phrases. */
+const OWNER_LABEL = /^(?:власник|собственник|owner)$/i;
+const REALTOR_LABEL = /^(?:рієлтор|риелтор|realtor)$/i;
 
 export function buildRieltorSearchUrl(
   category: RieltorCategory,

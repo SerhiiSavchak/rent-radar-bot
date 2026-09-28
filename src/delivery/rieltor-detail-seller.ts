@@ -12,8 +12,9 @@ export const UNKNOWN_SELLER_CACHE_MS = DAY_MS;
 /** Aligns with the seller hold: the next poll must be able to retry. Confirmed verdicts stay long-lived. */
 export const TRANSIENT_SELLER_CACHE_MS = 60 * 1000;
 
-const OWNER_LABEL = /^власник$/i;
-const REALTOR_LABEL = /^рієлтор$/i;
+/** Exact platform badge text only — never free-form title/description phrases. */
+const OWNER_LABEL = /^(?:власник|собственник|owner)$/i;
+const REALTOR_LABEL = /^(?:рієлтор|риелтор|realtor)$/i;
 const DETAIL_PATH = /^\/([a-z0-9-]+)\/(flats-rent|houses-rent)\/view\/(\d+)\/?$/i;
 
 export type StoredSellerVerdict =

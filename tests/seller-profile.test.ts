@@ -230,7 +230,8 @@ describe("seller profile classifier", () => {
     db.close();
   });
 
-  it("keeps OLX isBusiness alone and does not treat it as confirmed intermediary", () => {
+  it("does not treat stale olxIsBusiness metadata alone as seller rejection without classification", () => {
+    // Raw metadata flag is not the delivery gate; classifyOwner must have run.
     const businessOnly = card({
       source: "olx",
       sourceId: "1",

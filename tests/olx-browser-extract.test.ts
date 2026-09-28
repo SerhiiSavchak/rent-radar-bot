@@ -103,7 +103,7 @@ describe("OLX HTML structured extract", () => {
     const next = extractListingsFromOlxCatalogHtml(olxCatalogHtmlWithNextDataOffers());
     expect(next.source).toBe("next_data");
     expect(next.listings[0]?.sourceId).toBe("222");
-    expect(next.listings[0]?.sellerType).toBe("unknown");
+    expect(next.listings[0]?.sellerType).toBe("business");
     expect(next.listings[0]?.metadata?.olxIsBusiness).toBe(true);
   });
 
@@ -419,7 +419,8 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(live?.metadata?.pushupTime).toBe("2026-09-17T10:27:55+03:00");
     expect(live?.metadata?.olxIsBusiness).toBe(true);
     expect(live?.metadata?.coordinatesApproximate).toBe(true);
-    expect(live?.sellerType).toBe("unknown");
+    expect(live?.sellerType).toBe("business");
+    expect(live?.metadata?.ownerEvidenceLevel).toBe("intermediary");
   });
 
   it("maps camelCase catalog fields without inventing ownership", () => {
@@ -454,15 +455,18 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(result.diagnostics.rejectedMalformed).toBe(0);
 
     const biz = result.listings.find((item) => item.sourceId === "931996810");
-    expect(biz?.sellerType).toBe("unknown");
+    expect(biz?.sellerType).toBe("business");
     expect(biz?.metadata?.olxIsBusiness).toBe(true);
+    expect(biz?.metadata?.ownerEvidenceLevel).toBe("intermediary");
     expect(biz?.metadata?.pushupTime).toBe("2026-09-17T10:27:55+03:00");
     expect(result.diagnostics.ownerEligibleCount).toBe(0);
     expect(result.diagnostics.privateAccountCount).toBe(1);
     expect(result.diagnostics.businessAccountCount).toBe(1);
     expect(result.diagnostics.selfDeclaredOwnerCount).toBe(0);
-    expect(result.diagnostics.ownerEvidenceLevelCounts?.private_unknown).toBe(2);
-    expect(result.diagnostics.ownerRejectionReasonCounts?.unknown_seller_allowed).toBe(2);
+    expect(result.diagnostics.ownerEvidenceLevelCounts?.private_unknown).toBe(1);
+    expect(result.diagnostics.ownerEvidenceLevelCounts?.intermediary).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.unknown_seller_allowed).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.explicit_intermediary).toBe(1);
     expect(result.diagnostics.ownerRejectionReasonCounts?.business_account).toBeUndefined();
     expect(result.diagnostics.publishedAtPresentCount).toBe(2);
     expect(result.diagnostics.withinAgeWindowCount).toBe(1);
