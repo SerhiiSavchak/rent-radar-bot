@@ -324,8 +324,10 @@ describe("end-to-end delivery gate", () => {
     expect(dedupe.hasSeen(rieltorOwner)).toBe(true);
     expect(dedupe.hasSeen(olxBusiness)).toBe(false);
     expect(dedupe.hasSeen(olxSelfDeclared)).toBe(true);
-    expect(formatSellerLabel(olxSelfDeclared)).toBe("Власник не підтверджений");
-    expect(formatSellerLabel(rieltorOwner)).toBe("Власник підтверджений");
+    expect(formatSellerLabel(olxSelfDeclared)).toContain("Власник не підтверджений");
+    expect(formatSellerLabel(olxSelfDeclared)).toContain("#OWNER_UNVERIFIED");
+    expect(formatSellerLabel(rieltorOwner)).toContain("Власник підтверджений");
+    expect(formatSellerLabel(rieltorOwner)).toContain("#OWNER_CONFIRMED");
 
     const replay = await runTelegramTestCycle(
       { adapters, config, sink, dedupe, baseline, now, firstRunMode: "seed" },

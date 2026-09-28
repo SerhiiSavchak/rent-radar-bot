@@ -38,6 +38,7 @@ function sampleListing(overrides: Partial<Listing> = {}): Listing {
     sellerType: "owner",
     publishedAt: new Date("2026-09-16T12:00:00.000Z"),
     discoveredAt: new Date("2026-09-16T12:05:00.000Z"),
+    metadata: { ownerEvidenceLevel: "platform_confirmed" },
     ...overrides,
   };
 }

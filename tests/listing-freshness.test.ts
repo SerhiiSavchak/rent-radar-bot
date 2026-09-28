@@ -30,6 +30,7 @@ function sampleListing(overrides: Partial<Listing> = {}): Listing {
     sellerType: "owner",
     discoveredAt: new Date("2026-09-17T10:00:00Z"),
     publishedAt: new Date("2026-09-16T12:00:00Z"),
+    metadata: { ownerEvidenceLevel: "platform_confirmed" },
     ...overrides,
   };
 }
@@ -506,7 +507,8 @@ describe("Telegram copy", () => {
     expect(text).not.toContain("Вперше помічено");
     expect(text).not.toMatch(/2025-12-31T15:03:31/);
     expect(text).toContain("Опубліковано:");
-    expect(formatSellerLabel(listing)).toBe("Власник підтверджений");
+    expect(formatSellerLabel(listing)).toContain("Власник підтверджений");
+    expect(formatSellerLabel(listing)).toContain("#OWNER_CONFIRMED");
     expect(formatSellerLabel(listing)).not.toContain("platform-verified");
     expect(
       formatSellerLabel({
@@ -514,7 +516,14 @@ describe("Telegram copy", () => {
         sellerType: "unknown",
         metadata: { ownerEvidenceLevel: "self_declared" },
       }),
-    ).toBe("Власник не підтверджений");
+    ).toContain("Власник не підтверджений");
+    expect(
+      formatSellerLabel({
+        ...listing,
+        sellerType: "unknown",
+        metadata: { ownerEvidenceLevel: "self_declared" },
+      }),
+    ).toContain("#OWNER_UNVERIFIED");
     expect(formatListingTelegramHtml(listing, { deliveryKind: "initial_preview" })).toContain(
       "Відкрити оголошення",
     );

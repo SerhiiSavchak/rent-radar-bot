@@ -2,7 +2,6 @@ import type { SellerConfidence, SellerType } from "../domain/listing.ts";
 import {
   classifySellerIdentityName,
   classifySellerText,
-  hasExplicitIntermediaryText,
   hasExplicitSelfDeclaredOwnerText,
   hasMisleadingOwnerSeekingText,
   hasOwnerText,
@@ -292,21 +291,16 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
       strength: "weak",
     });
   }
-  if (text && hasExplicitIntermediaryText(text)) {
-    evidence.push(
-      "listing text contains explicit agency/realtor self-description or commission offer",
-    );
-    pushItem(items, {
-      source: "listing_text",
-      type: "intermediary_self_description",
-      value: "explicit_intermediary",
-      strength: "strong",
-    });
-  }
 
   const judged = classifySellerText(text);
   if (judged.level === "confirmed") {
     evidence.push(`seller text confirmed: ${judged.strongSignals.join(", ")}`);
+    pushItem(items, {
+      source: "listing_text",
+      type: "seller_text_strong_intermediary",
+      value: judged.strongSignals[0] ?? "strong_intermediary",
+      strength: "strong",
+    });
   } else if (judged.level === "likely") {
     evidence.push(`seller text likely: ${judged.supportingFamilies.join("+")}`);
   }
@@ -324,22 +318,19 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     judged.level === "likely" && !explicitIntermediaryRole ? "likely" : judged.level;
   const aggregatorOwner = signals.aggregatorOwner === true;
 
-  if (signals.platformOwner === true && explicitIntermediaryRole && !aggregatorOwner) {
-    uniqueEvidence.push("platform-confirmed owner overrides intermediary evidence");
-  }
-  if (signals.platformOwner === true && aggregatorOwner && explicitIntermediaryRole) {
-    uniqueEvidence.push("aggregator owner claim yields to exact intermediary evidence");
-  }
-
   if (signals.platformOwner === true) {
-    if (aggregatorOwner && explicitIntermediaryRole) {
-      return emptyClassification(
-        "unknown",
-        ownerClaim || aggregatorOwner ? "conflict" : "intermediary",
-        uniqueEvidence,
-        items,
-        { confidence: "high", sellerTextLevel: agentCopy ? "confirmed" : "unknown" },
+    if (explicitIntermediaryRole) {
+      // Trusted platform owner + strong intermediary (text/agency/business/agent)
+      // contradict. Prefer conflict reject over silently confirming or clearing ownership.
+      uniqueEvidence.push(
+        aggregatorOwner
+          ? "aggregator owner claim yields to exact intermediary evidence"
+          : "platform owner conflicts with strong intermediary evidence",
       );
+      return emptyClassification("unknown", "conflict", uniqueEvidence, items, {
+        confidence: "high",
+        sellerTextLevel: agentCopy ? "confirmed" : "unknown",
+      });
     }
     return emptyClassification("owner", "platform_confirmed", uniqueEvidence, items, {
       confidence: "high",

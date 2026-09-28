@@ -141,14 +141,20 @@ describe("soak classification with Domria-shaped results", () => {
 });
 
 describe("seller label honesty", () => {
-  it("does not present unknown as verified ownership", () => {
+  it("does not present unknown or bare sellerType=owner as verified ownership", () => {
     const listing = {
       sellerType: "unknown",
     } as Listing;
-    expect(formatSellerLabel(listing)).toBe("Власник не підтверджений");
-    expect(formatSellerLabel({ sellerType: "owner" } as Listing)).toBe("Власник підтверджений");
-    expect(formatSellerLabel({ sellerType: "owner" } as Listing)).not.toContain(
-      "platform-verified",
+    expect(formatSellerLabel(listing)).toContain("Власник не підтверджений");
+    expect(formatSellerLabel(listing)).toContain("#OWNER_UNVERIFIED");
+    expect(formatSellerLabel({ sellerType: "owner" } as Listing)).toContain(
+      "#OWNER_UNVERIFIED",
     );
+    expect(
+      formatSellerLabel({
+        sellerType: "owner",
+        metadata: { ownerEvidenceLevel: "platform_confirmed" },
+      } as unknown as Listing),
+    ).toContain("#OWNER_CONFIRMED");
   });
 });

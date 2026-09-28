@@ -176,13 +176,19 @@ describe("owner classifier", () => {
     expect(result.filterConsidersSelfDeclaredOwner).toBe(false);
   });
 
-  it("keeps platform owner when an agency id is also present", () => {
+  it("platform owner + structured agency evidence → conflict (not silent confirm)", () => {
     const result = classifyOwner({
       platformOwner: true,
       agencyId: 52150,
     });
-    expect(result.sellerType).toBe("owner");
-    expect(result.ownerEvidenceLevel).toBe("platform_confirmed");
+    expect(result.sellerType).toBe("unknown");
+    expect(result.ownerEvidenceLevel).toBe("conflict");
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
   });
 
   it("classifies explicit platform agent labels as agent", () => {

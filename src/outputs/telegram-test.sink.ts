@@ -5,10 +5,15 @@ import {
   readTelegramRetryAfterMs,
   type TelegramErrorClass,
 } from "../delivery/telegram-delivery.ts";
+import { isPlatformConfirmedOwner } from "../delivery/seller-profile.ts";
 import type { Listing } from "../domain/listing.ts";
 
 /** Telegram Bot API hard limit for sendMessage text. */
 export const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+
+/** Unique Telegram chat-search tags — neither is a substring of the other. */
+export const OWNER_SEARCH_TAG_CONFIRMED = "#OWNER_CONFIRMED";
+export const OWNER_SEARCH_TAG_UNVERIFIED = "#OWNER_UNVERIFIED";
 
 export type TelegramTestEnv = {
   TELEGRAM_BOT_TOKEN?: string;
@@ -170,10 +175,17 @@ export function formatPrice(listing: Listing): string {
 }
 
 export function formatSellerLabel(listing: Listing): string {
-  if (listing.sellerType === "owner") {
-    return "Власник підтверджений";
+  if (isPlatformConfirmedOwner(listing)) {
+    return `✅ Власник підтверджений · ${OWNER_SEARCH_TAG_CONFIRMED}`;
   }
-  return "Власник не підтверджений";
+  return `⚠️ Власник не підтверджений · ${OWNER_SEARCH_TAG_UNVERIFIED}`;
+}
+
+export function formatSellerVerificationLine(listing: Listing): string {
+  if (isPlatformConfirmedOwner(listing)) {
+    return "Перевірка: підтверджено платформою";
+  }
+  return "Перевірка: недостатньо даних";
 }
 
 function kyivParts(date: Date): { year: number; month: number; day: number; hour: string; minute: string } {
@@ -299,6 +311,7 @@ export function formatListingTelegramHtml(
     `📍 ${escapeHtml(locationLine(listing))}`,
     ...(facts ? [`📐 ${escapeHtml(facts)}`] : []),
     `👤 ${escapeHtml(formatSellerLabel(listing))}`,
+    `🛡 ${escapeHtml(formatSellerVerificationLine(listing))}`,
     "",
     `🕒 ${escapeHtml(published)}`,
     `🌐 ${escapeHtml(SOURCE_LABEL[listing.source])}`,
