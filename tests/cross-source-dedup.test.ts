@@ -328,6 +328,15 @@ describe("cross-source delivery", () => {
   it("sends one of a linked pair in the same cycle and keeps the identity after reopen", async () => {
     const path = dbPath();
     const { lun, olx } = linkedPair();
+    // Same-cycle clearance requires platform-confirmed OLX owner — not peer presence alone.
+    const olxOwner: Listing = {
+      ...olx,
+      sellerType: "owner",
+      metadata: {
+        ...(olx.metadata ?? {}),
+        ownerEvidenceLevel: "platform_confirmed",
+      },
+    };
     const sendListing = vi.fn(async () => ({
       ok: true,
       dryRun: true,
@@ -354,7 +363,7 @@ describe("cross-source delivery", () => {
       1,
     );
     lunBatch.push(lun);
-    olxBatch.push(olx);
+    olxBatch.push(olxOwner);
     const report = await runTelegramTestCycle(
       {
         adapters,
@@ -379,7 +388,7 @@ describe("cross-source delivery", () => {
     const reopened = new DurableDeliveryStore(getDb(path));
     const again = await runTelegramTestCycle(
       {
-        adapters: [adapter("olx", () => [olx]), adapter("lun", () => [lun])],
+        adapters: [adapter("olx", () => [olxOwner]), adapter("lun", () => [lun])],
         config,
         sink: sink(sendListing),
         dedupe: reopened,
@@ -390,13 +399,21 @@ describe("cross-source delivery", () => {
       2,
     );
     expect(again.sentOk).toBe(0);
-    expect(reopened.assessCrossSource(olx).suppress).toBe(true);
+    expect(reopened.assessCrossSource(olxOwner).suppress).toBe(true);
     expect(sendListing).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the discovered listing retryable when Telegram fails and does not also send the twin", async () => {
     const path = dbPath();
     const { lun, olx } = linkedPair();
+    const olxOwner: Listing = {
+      ...olx,
+      sellerType: "owner",
+      metadata: {
+        ...(olx.metadata ?? {}),
+        ownerEvidenceLevel: "platform_confirmed",
+      },
+    };
     let calls = 0;
     const sendListing = vi.fn(async () => {
       calls += 1;
@@ -437,7 +454,7 @@ describe("cross-source delivery", () => {
       1,
     );
     lunBatch.push(lun);
-    olxBatch.push(olx);
+    olxBatch.push(olxOwner);
     const deps = {
       adapters,
       config,

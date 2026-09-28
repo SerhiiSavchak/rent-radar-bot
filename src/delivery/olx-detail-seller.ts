@@ -25,6 +25,7 @@ import {
   shouldRejectSellerProfile,
   SELLER_INVENTORY_LIMIT_MIN,
   SELLER_INVENTORY_LIMIT_REASON,
+  isPlatformConfirmedOwner,
   type SellerProfileDeliveryPolicy,
   type SellerProfilePolicies,
   DEFAULT_SELLER_PROFILE_POLICIES,
@@ -1080,7 +1081,6 @@ export function createCycleOlxSellerVerifier(options: {
     const peer = options.peers.find(
       (item) => item.source === "olx" && peerToken(item)?.toLowerCase() === target.token.toLowerCase(),
     );
-    let peerYearKnown = false;
     if (peer) {
       if (sellerRejectionReason(peer)) {
         return {
@@ -1098,9 +1098,12 @@ export function createCycleOlxSellerVerifier(options: {
           : typeof peerYearRaw === "string"
             ? Number(peerYearRaw)
             : undefined;
-      peerYearKnown =
-        typeof peerYear === "number" && Number.isInteger(peerYear) && !Number.isNaN(peerYear);
-      if (peerYearKnown && sellerRegistrationYearRejectionReason(peerYear)) {
+      if (
+        typeof peerYear === "number" &&
+        Number.isInteger(peerYear) &&
+        !Number.isNaN(peerYear) &&
+        sellerRegistrationYearRejectionReason(peerYear)
+      ) {
         const nowPeer = options.now();
         rememberVerdict(
           options.db,
@@ -1151,7 +1154,8 @@ export function createCycleOlxSellerVerifier(options: {
           evidence: SELLER_INVENTORY_LIMIT_REASON,
         };
       }
-      // Known non-2026 year is not an inventory clearance — still consult cache below.
+      // Known non-2026 year / incomplete peer metadata is not owner clearance.
+      // Confirmed-owner peers are handled after the cache consult below.
     }
     const now = options.now();
     if (options.db) {
@@ -1173,6 +1177,31 @@ export function createCycleOlxSellerVerifier(options: {
           } catch {
             snapshot = { acquired: false };
           }
+          let listingClassified: { verdict: StoredSellerVerdict; evidence: string } | undefined;
+          if (snapshot.listingHtml) {
+            listingClassified = classifyOlxLinkedSellerHtml(snapshot.listingHtml, target.token);
+            if (
+              listingClassified.verdict === "confirmed_intermediary" ||
+              listingClassified.verdict === "seller_registration_year_2026" ||
+              listingClassified.verdict === "parser_failure"
+            ) {
+              rememberVerdict(
+                options.db,
+                target,
+                listingClassified,
+                cached.lastHttpStatus ?? 200,
+                now,
+              );
+              return decisionFromClassified(
+                listingClassified,
+                target.token,
+                cached.lastHttpStatus ?? 200,
+                false,
+                undefined,
+                profilePolicies,
+              );
+            }
+          }
           const profileDecision = classifyOlxProfileInventory(snapshot, now);
           if (
             profileDecision.verdict === "seller_inventory_limit" ||
@@ -1192,7 +1221,26 @@ export function createCycleOlxSellerVerifier(options: {
               profilePolicies,
             );
           }
-          const mergedEvidence = `${fromCache.evidence ?? "cached OLX unknown"}; ${profileDecision.evidence}`;
+          if (listingClassified?.verdict === "confirmed_owner") {
+            rememberVerdict(
+              options.db,
+              target,
+              listingClassified,
+              cached.lastHttpStatus ?? 200,
+              now,
+            );
+            return decisionFromClassified(
+              listingClassified,
+              target.token,
+              cached.lastHttpStatus ?? 200,
+              false,
+              undefined,
+              profilePolicies,
+            );
+          }
+          const mergedEvidence = `${fromCache.evidence ?? "cached OLX unknown"}; ${
+            listingClassified ? `${listingClassified.evidence}; ` : ""
+          }${profileDecision.evidence}`;
           rememberVerdict(
             options.db,
             target,
@@ -1201,24 +1249,26 @@ export function createCycleOlxSellerVerifier(options: {
             now,
           );
           return {
-            ...fromCache,
+            outcome: "detail_unknown",
+            drop: false,
+            requested: false,
+            externalId: target.token,
             evidence: mergedEvidence,
+            ...(cached.lastHttpStatus !== null ? { httpStatus: cached.lastHttpStatus } : {}),
           };
         }
         return fromCache;
       }
     }
-    // Peer present, no rejecting cache: preserve prior allow shortcut (no detail fetch).
-    // Bounded enrichment runs only when there is no peer.
-    if (peer) {
+    // Same-cycle positive clearance only for genuine platform-confirmed OLX owners.
+    // Peer presence, non-2026 year, or LUN-side owner claims are not enough.
+    if (peer && isPlatformConfirmedOwner(peer)) {
       return {
         outcome: "same_cycle_resolved",
         drop: false,
         requested: false,
         externalId: target.token,
-        evidence: peerYearKnown
-          ? "same-cycle OLX listing already available; registration year not excluded"
-          : "same-cycle OLX listing already available; registration year unknown on peer",
+        evidence: "same-cycle OLX peer is platform-confirmed owner",
       };
     }
     if (haltedAfterRateLimit) {

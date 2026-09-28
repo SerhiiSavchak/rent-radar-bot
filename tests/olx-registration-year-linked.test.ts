@@ -78,18 +78,43 @@ describe("LUN→OLX registration year via createCycleOlxSellerVerifier", () => {
     expect(fetches).toBe(0);
   });
 
-  it("does not reject same-cycle peer with registration year 2025", async () => {
+  it("does not treat same-cycle registration year 2025 as owner clearance", async () => {
+    let fetches = 0;
     const verify = createCycleOlxSellerVerifier({
       peers: [lunLinked(), olxPeer(2025)],
       now: () => now,
       timeoutMs: 1000,
       fetchPage: async () => {
-        throw new Error("must not fetch when peer year is known non-2026");
+        fetches += 1;
+        return {
+          status: 200,
+          finalUrl: OLX_URL,
+          bodyText: derivedOracleOfferDetailHtml(
+            {
+              ...derivedOracleHousePrivateAd(),
+              url: OLX_URL,
+              urlPath: `/d/uk/obyavlenie/orenda-ID${TOKEN}.html`,
+              user: { name: "Продавець", company_name: null, sellerType: null },
+              isBusiness: false,
+            },
+            { memberSince: "червень 2025 р." },
+          ),
+        };
       },
+      probeProfile: async () => ({
+        acquired: true,
+        totalPages: 2,
+        pagesFetched: 1,
+        precisePropertyKeys: ["львів вул а 1"],
+        totalElements: 10,
+        visibleAds: 5,
+        realEstateAds: 5,
+      }),
     });
     const decision = await verify(lunLinked());
     expect(decision.drop).toBe(false);
-    expect(decision.outcome).toBe("same_cycle_resolved");
+    expect(decision.outcome).not.toBe("same_cycle_resolved");
+    expect(fetches).toBeGreaterThan(0);
   });
 
   it("incomplete peer does not override cached registration-year 2026 rejection", async () => {
@@ -122,7 +147,7 @@ describe("LUN→OLX registration year via createCycleOlxSellerVerifier", () => {
     expect(fetches).toBe(0);
   });
 
-  it("incomplete peer without rejecting cache keeps same_cycle_resolved (no detail)", async () => {
+  it("incomplete peer without rejecting cache is not same_cycle_resolved and continues verification", async () => {
     let fetches = 0;
     const verify = createCycleOlxSellerVerifier({
       peers: [lunLinked(), olxPeer(undefined)],
@@ -130,13 +155,92 @@ describe("LUN→OLX registration year via createCycleOlxSellerVerifier", () => {
       timeoutMs: 1000,
       fetchPage: async () => {
         fetches += 1;
-        throw new Error("incomplete peer must not force detail when cache is empty");
+        return {
+          status: 200,
+          finalUrl: OLX_URL,
+          bodyText: derivedOracleOfferDetailHtml({
+            ...derivedOracleHousePrivateAd(),
+            url: OLX_URL,
+            urlPath: `/d/uk/obyavlenie/orenda-ID${TOKEN}.html`,
+            user: { name: "Продавець", company_name: null, sellerType: null },
+            isBusiness: false,
+          }),
+        };
+      },
+      probeProfile: async () => ({
+        acquired: true,
+        totalPages: 3,
+        pagesFetched: 1,
+        precisePropertyKeys: ["львів вул а 1"],
+        totalElements: 20,
+        visibleAds: 8,
+        realEstateAds: 8,
+      }),
+    });
+    const decision = await verify(lunLinked());
+    expect(decision.outcome).not.toBe("same_cycle_resolved");
+    expect(decision.drop).toBe(false);
+    expect(fetches).toBeGreaterThan(0);
+    expect(decision.outcome).toBe("detail_unknown");
+  });
+
+  it("same-cycle peer with platform-confirmed owner is eligible without detail fetch", async () => {
+    let fetches = 0;
+    const ownerPeer: Listing = {
+      ...olxPeer(2019),
+      sellerType: "owner",
+      metadata: {
+        urlToken: TOKEN,
+        accountRegistrationYear: 2019,
+        ownerEvidenceLevel: "platform_confirmed",
+      },
+    };
+    const verify = createCycleOlxSellerVerifier({
+      peers: [lunLinked(), ownerPeer],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => {
+        fetches += 1;
+        throw new Error("confirmed owner peer must not detail-fetch");
+      },
+      probeProfile: async () => {
+        throw new Error("confirmed owner peer must not profile-probe");
       },
     });
     const decision = await verify(lunLinked());
     expect(fetches).toBe(0);
     expect(decision.drop).toBe(false);
     expect(decision.outcome).toBe("same_cycle_resolved");
+    expect(decision.evidence).toMatch(/platform-confirmed owner/i);
+  });
+
+  it("LUN platform-confirmed owner does not override incomplete OLX peer", async () => {
+    // lunLinked() already claims platform_confirmed owner on LUN; incomplete OLX peer
+    // must still continue verification (LUN claim is not OLX seller clearance).
+    let fetches = 0;
+    const verify = createCycleOlxSellerVerifier({
+      peers: [lunLinked(), olxPeer(undefined)],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => {
+        fetches += 1;
+        return {
+          status: 200,
+          finalUrl: OLX_URL,
+          bodyText: derivedOracleOfferDetailHtml({
+            ...derivedOracleHousePrivateAd(),
+            url: OLX_URL,
+            urlPath: `/d/uk/obyavlenie/orenda-ID${TOKEN}.html`,
+            user: { name: "Агент", company_name: "Agency", sellerType: "agency" },
+            isBusiness: true,
+          }),
+        };
+      },
+    });
+    const decision = await verify(lunLinked());
+    expect(fetches).toBeGreaterThan(0);
+    expect(decision.outcome).not.toBe("same_cycle_resolved");
+    expect(decision.drop).toBe(true);
   });
 
   it("no peer still detail-fetches and rejects member-since 2026", async () => {
