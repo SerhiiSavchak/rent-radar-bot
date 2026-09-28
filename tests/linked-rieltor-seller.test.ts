@@ -301,9 +301,10 @@ describe("linked RIELTOR seller verification", () => {
       },
       2,
     );
-    expect(unknownReport.sentOk).toBe(1);
+    expect(unknownReport.sentOk).toBe(0);
     expect(unknownReport.linkedSellerVerification.detailUnknown).toBe(1);
-    expect(outboxCount("881")).toBe(1);
+    expect(outboxCount("881")).toBe(0);
+    expect(holdCount()).toBe(1);
   });
 
   it("does not invent an agent on 429, and does not request the remaining detail URLs", async () => {
@@ -500,8 +501,9 @@ describe("linked RIELTOR seller verification", () => {
       {
         name: "ambiguous",
         html: ambiguousHtml,
-        sentOk: 1,
-        outbox: 1,
+        sentOk: 0,
+        outbox: 0,
+        hold: 1,
         counter: "detailUnknown" as const,
       },
     ];
@@ -548,6 +550,9 @@ describe("linked RIELTOR seller verification", () => {
       expect(report.linkedSellerVerification[item.counter], item.name).toBe(1);
       expect(report.sentOk, item.name).toBe(item.sentOk);
       expect(outboxCount(sourceId), item.name).toBe(item.outbox);
+      if ("hold" in item) {
+        expect(holdCount(), item.name).toBe(item.hold);
+      }
       closeDb();
     }
   });
@@ -933,9 +938,12 @@ describe("linked RIELTOR seller verification", () => {
     );
     expect(rieltorCalls).toBe(0);
     expect(olxCalls).toBe(1);
-    expect(report.sentOk).toBe(2);
+    // Ambiguous OLX business flag without intermediary proof stays unresolved (held), not sent.
+    expect(report.sentOk).toBe(1);
     expect(report.linkedSellerVerification.detailRequests).toBe(1);
     expect(report.linkedSellerVerification.detailConfirmedAgent).toBe(0);
+    expect(report.linkedSellerVerification.detailUnknown).toBe(1);
+    expect(holdCount()).toBe(1);
   });
 
   it("holds an exact LUN copy on the first RIELTOR detail 403 and does not send", async () => {
@@ -1088,7 +1096,7 @@ describe("linked RIELTOR seller verification", () => {
     expect(holdCount()).toBe(0);
   });
 
-  it("sends unknown exactly once after the hold expires on persistent transport failure", async () => {
+  it("keeps unresolved after the hold window on persistent transport failure (no auto-send)", async () => {
     const path = dbPath();
     const store = new DurableDeliveryStore(getDb(path));
     const batch: Listing[] = [];
@@ -1116,10 +1124,10 @@ describe("linked RIELTOR seller verification", () => {
     const fourth = await cycle(new Date(now.getTime() + 30 * 60 * 1000), 5);
     expect(first.sentOk).toBe(0);
     expect(second.sentOk).toBe(0);
-    expect(third.sentOk).toBe(1);
+    expect(third.sentOk).toBe(0);
     expect(fourth.sentOk).toBe(0);
-    expect(outboxCount("hold-expire")).toBe(1);
-    expect(holdCount()).toBe(0);
+    expect(outboxCount("hold-expire")).toBe(0);
+    expect(holdCount()).toBe(1);
   });
 
   it("keeps a hold across a process restart and then resolves it", async () => {

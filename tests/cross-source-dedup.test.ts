@@ -626,6 +626,32 @@ describe("cross-source delivery", () => {
         baseline: store,
         outbox: store,
         now: () => now,
+        probeOlxProfile: async () => ({
+          acquired: true,
+          listingHtml: `<!DOCTYPE html><html><body>
+<p data-testid="member-since">на OLX з <span>січень 2019 р.</span></p>
+<script>window.__PRERENDERED_STATE__=${JSON.stringify(
+            JSON.stringify({
+              ad: {
+                ad: {
+                  id: 1,
+                  url: olx.url,
+                  title: "Квартира",
+                  description: "оренда",
+                  business: false,
+                  user: { name: "Власник", sellerType: "owner", company_name: null },
+                },
+              },
+            }),
+          )}</script>
+</body></html>`,
+          totalPages: 1,
+          pagesFetched: 1,
+          precisePropertyKeys: ["львів вул тест 1"],
+          totalElements: 1,
+          visibleAds: 1,
+          realEstateAds: 1,
+        }),
       },
       2,
     );
@@ -837,7 +863,7 @@ describe("cross-source delivery", () => {
     expect(reverse.lunRejected).toBe(1);
   });
 
-  it("keeps a LUN copy linked to a RIELTOR owner or an unknown RIELTOR listing", async () => {
+  it("keeps a LUN copy linked to a RIELTOR owner; unknown RIELTOR detail stays held", async () => {
     const ownerLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/555/", "880");
     const unknownLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/556/", "881");
     expect(confirmedIntermediaryRelation(ownerLun, [rieltorCopy("555", "owner")])).toBeUndefined();
@@ -846,7 +872,8 @@ describe("cross-source delivery", () => {
     const unknownDelivery = await deliverPair(unknownLun, rieltorCopy("556", "unknown"), ["lun", "rieltor"]);
     expect(ownerDelivery.sentSources).toContain("lun");
     expect(ownerDelivery.lunRejected).toBe(0);
-    expect(unknownDelivery.sentSources).toContain("lun");
+    // Unresolved linked detail must not SEND the LUN copy.
+    expect(unknownDelivery.sentSources).not.toContain("lun");
     expect(unknownDelivery.lunRejected).toBe(0);
   });
 

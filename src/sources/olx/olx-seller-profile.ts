@@ -39,8 +39,11 @@ export const OLX_PROFILE_LIKELY_TTL_MS = 12 * 60 * 60 * 1000;
 /** Small profiles are rechecked within about one hour. */
 export const OLX_PROFILE_UNKNOWN_TTL_MS = 45 * 60 * 1000;
 
-/** Failed reads stay sendable and are not retried every cycle. */
+/** Failed reads stay unresolved/retryable — never a send clearance. */
 export const OLX_PROFILE_FAILURE_TTL_MS = 60 * 60 * 1000;
+
+/** Hard page cap for one profile probe (stop early at inventory threshold). */
+export const OLX_PROFILE_PAGE_HARD_CAP = 5;
 
 /** Platform/system OLX hosts — not a seller shop storefront. */
 const OLX_RESERVED_SUBDOMAINS = new Set([
@@ -62,6 +65,8 @@ const OLX_RESERVED_SUBDOMAINS = new Set([
 
 export type OlxProfileSnapshot = {
   acquired: boolean;
+  /** Listing HTML captured while resolving the profile probe target (optional). */
+  listingHtml?: string;
   totalPages?: number;
   totalElements?: number;
   visibleAds?: number;
@@ -350,6 +355,34 @@ export function classifyOlxProfileInventory(
     };
   }
 
+  // Evaluate likely/inventory signals on pages already read BEFORE treating
+  // unread pages as an incomplete clearance. Partial evidence that already
+  // crosses the likely threshold must reject.
+  const decision = assessSellerProfile({
+    confirmedOwner: false,
+    addresses: keys,
+    now,
+    distinctAddressMin: distinctMin,
+  });
+  if (decision.verdict === "profile_likely_intermediary") {
+    const locationEvidence = usingPrecise
+      ? `olx_precise_addresses=${precise.length}`
+      : coarseInference
+        ? `olx_coarse_locations=${keys.length};not_verified_property_addresses=1`
+        : `olx_precise_addresses=0;olx_coarse_locations=0`;
+    return {
+      verdict: "profile_likely_intermediary",
+      evidence: [
+        usingPrecise
+          ? decision.evidence
+          : `distinct_coarse_locations=${keys.length}`,
+        "olx_likely=1",
+        locationEvidence,
+        ...inventoryBits,
+      ].join(";"),
+    };
+  }
+
   // Unread profile pages: do not treat a partial count as verified below-limit.
   if (olxProfileInventoryIncomplete(snapshot) && precise.length < SELLER_INVENTORY_LIMIT_MIN) {
     return {
@@ -364,12 +397,6 @@ export function classifyOlxProfileInventory(
     };
   }
 
-  const decision = assessSellerProfile({
-    confirmedOwner: false,
-    addresses: keys,
-    now,
-    distinctAddressMin: distinctMin,
-  });
   const locationEvidence = usingPrecise
     ? `olx_precise_addresses=${precise.length}`
     : coarseInference
@@ -378,12 +405,10 @@ export function classifyOlxProfileInventory(
   const evidence = [
     usingPrecise
       ? decision.evidence
-      : decision.verdict === "profile_likely_intermediary"
-        ? `distinct_coarse_locations=${keys.length}`
-        : decision.evidence === "no_profile_signal"
-          ? "no_profile_signal"
-          : `coarse_locations=${keys.length}`,
-    decision.verdict === "profile_likely_intermediary" ? "olx_likely=1" : "olx_likely=0",
+      : decision.evidence === "no_profile_signal"
+        ? "no_profile_signal"
+        : `coarse_locations=${keys.length}`,
+    "olx_likely=0",
     locationEvidence,
     ...inventoryBits,
   ].join(";");

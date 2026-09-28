@@ -1252,21 +1252,21 @@ export async function runTelegramTestCycle(
     const rieltorTarget = canonicalRieltorDetailTarget(
       typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
     );
-    const olxTarget = canonicalOlxDetailTarget(
-      typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
-    );
+    const olxTarget =
+      canonicalOlxDetailTarget(
+        typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
+      ) ??
+      (listing.source === "olx" ? canonicalOlxDetailTarget(listing.url) : undefined);
     const holdTarget = rieltorTarget
       ? { id: rieltorTarget.id, source: "rieltor" as const }
       : olxTarget
         ? { id: olxTarget.token, source: "olx" as const }
         : undefined;
-    if (
-      holdDb &&
-      deps.sink.dryRun !== true &&
-      holdTarget &&
-      shouldHoldSellerVerification(decision)
-    ) {
-      upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
+    if (shouldHoldSellerVerification(decision)) {
+      // Dry-run must defer without writing hold/seen/outbox.
+      if (holdDb && deps.sink.dryRun !== true && holdTarget) {
+        upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
+      }
       return { status: "defer", reasonCode: decision.outcome };
     }
     return { status: "allow" };

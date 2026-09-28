@@ -145,6 +145,48 @@ describe("seller_inventory_limit classification", () => {
   });
 
   it("keeps incomplete multi-page inventory unknown (not verified below-threshold)", () => {
+    // 2 precise is below likely (3) and inventory (5); unread pages must stay unknown.
+    const page1 = parseOlxProfileInventory({
+      userListing: {
+        userListing: {
+          totalPages: 3,
+          totalElements: 20,
+          ads: [
+            preciseAd(1, "Львів", "вул. А 1"),
+            preciseAd(2, "Львів", "вул. Б 2"),
+          ],
+        },
+      },
+    });
+    expect(page1.pagesFetched).toBe(1);
+    expect(page1.precisePropertyKeys).toHaveLength(2);
+    const decision = classifyOlxProfileInventory(page1);
+    expect(decision.verdict).toBe("unknown");
+    expect(decision.evidence).toContain("olx_inventory_incomplete=1");
+    expect(decision.verdict).not.toBe("seller_inventory_limit");
+    expect(decision.verdict).not.toBe("profile_likely_intermediary");
+
+    const page2 = parseOlxProfileInventory({
+      userListing: {
+        userListing: {
+          totalPages: 3,
+          totalElements: 20,
+          ads: [
+            preciseAd(3, "Київ", "вул. В 3"),
+            preciseAd(4, "Одеса", "вул. Г 4"),
+            preciseAd(5, "Харків", "вул. Д 5"),
+          ],
+        },
+      },
+    });
+    const merged = mergeOlxProfilePages(page1, page2);
+    expect(merged.pagesFetched).toBe(2);
+    expect(merged.precisePropertyKeys).toHaveLength(5);
+    // Once 5 precise properties are established, exclude — unread pages are unnecessary.
+    expect(classifyOlxProfileInventory(merged).verdict).toBe("seller_inventory_limit");
+  });
+
+  it("rejects incomplete inventory when already-visible addresses cross the likely threshold", () => {
     const page1 = parseOlxProfileInventory({
       userListing: {
         userListing: {
@@ -159,27 +201,8 @@ describe("seller_inventory_limit classification", () => {
         },
       },
     });
-    expect(page1.pagesFetched).toBe(1);
     expect(page1.precisePropertyKeys).toHaveLength(4);
-    const decision = classifyOlxProfileInventory(page1);
-    expect(decision.verdict).toBe("unknown");
-    expect(decision.evidence).toContain("olx_inventory_incomplete=1");
-    expect(decision.verdict).not.toBe("seller_inventory_limit");
-
-    const page2 = parseOlxProfileInventory({
-      userListing: {
-        userListing: {
-          totalPages: 3,
-          totalElements: 20,
-          ads: [preciseAd(5, "Харків", "вул. Д 5")],
-        },
-      },
-    });
-    const merged = mergeOlxProfilePages(page1, page2);
-    expect(merged.pagesFetched).toBe(2);
-    expect(merged.precisePropertyKeys).toHaveLength(5);
-    // Once 5 precise properties are established, exclude — unread pages are unnecessary.
-    expect(classifyOlxProfileInventory(merged).verdict).toBe("seller_inventory_limit");
+    expect(classifyOlxProfileInventory(page1).verdict).toBe("profile_likely_intermediary");
   });
 });
 
