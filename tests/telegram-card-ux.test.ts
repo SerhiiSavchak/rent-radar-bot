@@ -136,7 +136,101 @@ describe("Telegram card search tags and seller UX", () => {
     expect(card).toContain("58 м²");
     expect(card).toContain("2 кімнати");
     expect(card).toContain("4/9 поверх");
-    expect(card).toContain("Львів, Франківський");
+    expect(card).toContain("Львів, Франківський район");
+    expect(card).not.toContain("🏡");
     expect(card).toContain("OLX");
+  });
+});
+
+describe("Telegram card address detail", () => {
+  it("renders city+district+street+house", () => {
+    const card = formatListingTelegramHtml(
+      listing({
+        metadata: {
+          floor: 4,
+          totalFloors: 9,
+          street: "вул. Наукова",
+          houseNumber: "12",
+        },
+      }),
+    );
+    expect(card).toContain("📍 Львів, Франківський район");
+    expect(card).toContain("🏡 вул. Наукова, 12");
+  });
+
+  it("renders city+district+street only", () => {
+    const card = formatListingTelegramHtml(
+      listing({
+        metadata: { street: "вул. Наукова" },
+      }),
+    );
+    expect(card).toContain("📍 Львів, Франківський район");
+    expect(card).toContain("🏡 вул. Наукова");
+    expect(card).not.toMatch(/🏡 вул\. Наукова,/);
+  });
+
+  it("renders city/district only without address line", () => {
+    const card = formatListingTelegramHtml(listing());
+    expect(card).toContain("📍 Львів, Франківський район");
+    expect(card).not.toContain("🏡");
+  });
+
+  it("renders street without district", () => {
+    const card = formatListingTelegramHtml(
+      listing({
+        location: { raw: "Львів, вул. Личаківська", city: "Львів" },
+        metadata: { street: "вул. Личаківська", houseNumber: "5" },
+      }),
+    );
+    expect(card).toContain("📍 Львів");
+    expect(card).not.toContain("район");
+    expect(card).toContain("🏡 вул. Личаківська, 5");
+  });
+
+  it("omits address line when street metadata is missing", () => {
+    const card = formatListingTelegramHtml(
+      listing({
+        location: { raw: "unknown" },
+        metadata: { floor: 1 },
+      }),
+    );
+    expect(card).not.toContain("🏡");
+  });
+
+  it("does not duplicate city/district inside the address detail line", () => {
+    const card = formatListingTelegramHtml(
+      listing({
+        metadata: {
+          streetAddress: "Львів, Франківський район, вул. Наукова, 12",
+        },
+      }),
+    );
+    expect(card).toContain("📍 Львів, Франківський район");
+    expect(card).toContain("🏡 вул. Наукова, 12");
+    expect(card).not.toContain("🏡 Львів, Франківський район, вул. Наукова, 12");
+  });
+
+  it("escapes HTML in street/house fields", () => {
+    const card = formatListingTelegramHtml(
+      listing({
+        metadata: {
+          street: "вул. A & B <C>",
+          houseNumber: "1 > 2",
+        },
+      }),
+    );
+    expect(card).toContain("&amp;");
+    expect(card).toContain("&lt;");
+    expect(card).toContain("&gt;");
+    expect(card).not.toContain("вул. A & B <C>");
+  });
+
+  it("keeps length fitting with long street metadata", () => {
+    const card = formatListingTelegramHtml(
+      listing({
+        metadata: { street: "вул. ".concat("Довга".repeat(2000)), houseNumber: "1" },
+      }),
+    );
+    expect(card.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE_LENGTH);
   });
 });

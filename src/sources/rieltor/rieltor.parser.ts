@@ -273,6 +273,7 @@ export function parseRieltorCard(
       ownerEvidenceLevel: owner.ownerEvidenceLevel,
       platformRoleLabel: roleLabel ?? null,
       ...sellerAnnotation(owner),
+      ...(address ? { streetAddress: address } : {}),
       coordinatePrecision: lat !== undefined && lng !== undefined ? "unspecified_point" : "missing",
       timestampPrecision: publishedAt
         ? "jsonld_availabilityStarts_seconds_unknown_semantics"

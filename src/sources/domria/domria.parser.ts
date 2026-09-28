@@ -110,6 +110,7 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
       advertType: info.advert_type_name_uk ?? info.advert_type_name,
       userId: info.user_id,
       ...(agencyId > 0 ? { agencyId } : {}),
+      ...(street ? { street } : {}),
       characteristic1437Recognized: role.recognized,
       ...sellerAnnotation(owner),
     },

@@ -292,6 +292,7 @@ export function parseLunCard(
       originalHost: originalListingHost(card.urlRaw),
       withoutCommission: card.withoutCommission,
       isOwner: card.isOwner,
+      ...(address?.streetAddress ? { streetAddress: address.streetAddress } : {}),
       ...sellerAnnotation(owner),
       ...lunProvenanceMetadata(card),
     },

@@ -259,13 +259,105 @@ function propertyFacts(listing: Listing): string | undefined {
   return bits.length > 0 ? bits.join(" · ") : undefined;
 }
 
-function locationLine(listing: Listing): string {
+function metaString(listing: Listing, key: string): string | undefined {
+  const value = listing.metadata?.[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Append «район» when the platform district token lacks it. */
+export function formatDistrictLabel(district: string): string {
+  const trimmed = district.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (/(?:район|р-н|р\.\s*н)/iu.test(trimmed)) {
+    return trimmed;
+  }
+  return `${trimmed} район`;
+}
+
+/**
+ * City / district line for the card. Prefers structured city+district.
+ * Falls back to location.raw only when neither city nor district is set.
+ */
+export function formatLocationAreaLine(listing: Listing): string {
   const city = listing.location.city?.trim();
   const district = listing.location.district?.trim();
   if (city && district) {
-    return `${city}, ${district}`;
+    return `${city}, ${formatDistrictLabel(district)}`;
   }
-  return city || district || listing.location.raw;
+  if (city) {
+    return city;
+  }
+  if (district) {
+    return formatDistrictLabel(district);
+  }
+  return listing.location.raw;
+}
+
+/**
+ * Optional street/house detail from structured metadata only.
+ * Never invents or geocodes; never uses free-form description text.
+ * Omits the line when empty or when it only repeats city/district.
+ */
+export function formatLocationAddressDetailLine(listing: Listing): string | undefined {
+  const city = listing.location.city?.trim();
+  const district = listing.location.district?.trim();
+  const street = metaString(listing, "street");
+  const houseNumber = metaString(listing, "houseNumber");
+  const streetAddress = metaString(listing, "streetAddress");
+
+  let detail: string | undefined;
+  if (street && houseNumber) {
+    detail = `${street}, ${houseNumber}`;
+  } else if (street) {
+    detail = street;
+  } else if (streetAddress) {
+    detail = streetAddress;
+  } else {
+    return undefined;
+  }
+
+  let out = detail.trim();
+  const areaCombo = [city, district].filter(Boolean).join(", ");
+  const areaComboLabeled =
+    city && district ? `${city}, ${formatDistrictLabel(district)}` : undefined;
+  if (
+    (city && out.toLowerCase() === city.toLowerCase()) ||
+    (district && out.toLowerCase() === district.toLowerCase()) ||
+    (areaCombo && out.toLowerCase() === areaCombo.toLowerCase()) ||
+    (areaComboLabeled && out.toLowerCase() === areaComboLabeled.toLowerCase())
+  ) {
+    return undefined;
+  }
+
+  const stripParts = [city, district, district ? formatDistrictLabel(district) : undefined].filter(
+    (part): part is string => Boolean(part),
+  );
+  for (const part of stripParts) {
+    const escaped = escapeRegExp(part);
+    out = out.replace(new RegExp(`^${escaped}\\s*[,/–-]\\s*`, "iu"), "");
+    out = out.replace(new RegExp(`\\s*[,/–-]\\s*${escaped}$`, "iu"), "");
+  }
+  out = out.replace(/\s{2,}/g, " ").replace(/^[\s,]+|[\s,]+$/g, "").trim();
+  if (!out) {
+    return undefined;
+  }
+  if (city && out.toLowerCase() === city.toLowerCase()) {
+    return undefined;
+  }
+  if (district && out.toLowerCase() === district.toLowerCase()) {
+    return undefined;
+  }
+  return out;
 }
 
 export type ListingDeliveryKindOption =
@@ -298,6 +390,7 @@ export function formatListingTelegramHtml(
   },
 ): string {
   const facts = propertyFacts(listing);
+  const addressDetail = formatLocationAddressDetailLine(listing);
   const published = listing.publishedAt
     ? `Опубліковано: ${formatClientPublishedAt(listing.publishedAt)}`
     : "Опубліковано: дата не вказана";
@@ -308,7 +401,8 @@ export function formatListingTelegramHtml(
     `🏠 <b>${escapeHtml(propertyHeadline(listing))}</b>`,
     "",
     `💰 <b>${escapeHtml(formatPrice(listing))}</b>`,
-    `📍 ${escapeHtml(locationLine(listing))}`,
+    `📍 ${escapeHtml(formatLocationAreaLine(listing))}`,
+    ...(addressDetail ? [`🏡 ${escapeHtml(addressDetail)}`] : []),
     ...(facts ? [`📐 ${escapeHtml(facts)}`] : []),
     `👤 ${escapeHtml(formatSellerLabel(listing))}`,
     `🛡 ${escapeHtml(formatSellerVerificationLine(listing))}`,
