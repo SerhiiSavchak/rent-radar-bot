@@ -160,7 +160,7 @@ async function scan(handler: (url: string) => string | "timeout"): Promise<{
 }
 
 function housePage(): string {
-  return catalogHtml([house(9001)], { pageNumber: 1, totalPages: 1, totalElements: 14 });
+  return catalogHtml([house(9001)], { pageNumber: 0, totalPages: 1, totalElements: 14 });
 }
 
 describe("OLX private-only catalog URL contract", () => {
@@ -198,7 +198,7 @@ describe("OLX private-only structured full scan", () => {
             : page === 3
               ? [apartment(104, "2026-07-01T10:00:00+03:00")]
               : [apartment(105, "2026-09-29T10:00:00+03:00")];
-      return catalogHtml(ads, { pageNumber: page, totalPages: 4, totalElements: 140 });
+      return catalogHtml(ads, { pageNumber: page - 1, totalPages: 4, totalElements: 140 });
     });
 
     const apartmentUrls = urls.filter((url) => url.includes("/kvartiry/"));
@@ -240,10 +240,10 @@ describe("OLX private-only structured full scan", () => {
     const { urls } = await scan((url) => {
       const page = requestedPage(url);
       if (url.includes("/doma/")) {
-        return catalogHtml([house(9001)], { pageNumber: 1, totalPages: 1, totalElements: 14 });
+        return catalogHtml([house(9001)], { pageNumber: 0, totalPages: 1, totalElements: 14 });
       }
       return catalogHtml([apartment(101, "2026-09-01T10:00:00+03:00")], {
-        pageNumber: page,
+        pageNumber: page - 1,
         totalPages: 1,
         totalElements: 140,
       });
@@ -255,10 +255,10 @@ describe("OLX private-only structured full scan", () => {
   it("treats a structured page mismatch as failure, never valid_empty", async () => {
     const { result } = await scan((url) => {
       if (url.includes("/doma/")) {
-        return catalogHtml([], { pageNumber: 1, totalPages: 1, totalElements: 0 });
+        return catalogHtml([], { pageNumber: 0, totalPages: 1, totalElements: 0 });
       }
       return catalogHtml([apartment(101, "2026-09-01T10:00:00+03:00")], {
-        pageNumber: 2,
+        pageNumber: 1,
         totalPages: 4,
         totalElements: 140,
       });
@@ -297,7 +297,7 @@ describe("OLX private-only structured full scan", () => {
         return "timeout";
       }
       return catalogHtml([apartment(100 + page, "2026-09-01T10:00:00+03:00")], {
-        pageNumber: page,
+        pageNumber: page - 1,
         totalPages: 4,
         totalElements: 140,
       });
@@ -326,7 +326,7 @@ describe("OLX private-only structured full scan", () => {
       }
       const totalPages = page === 1 ? 4 : 6;
       return catalogHtml([apartment(100 + page, "2026-09-01T10:00:00+03:00")], {
-        pageNumber: page,
+        pageNumber: page - 1,
         totalPages,
         totalElements: 140,
       });
@@ -351,7 +351,7 @@ describe("OLX private-only structured full scan", () => {
           apartment(101, "2026-09-01T10:00:00+03:00", false),
           apartment(202, "2026-09-02T10:00:00+03:00", true),
         ],
-        { pageNumber: 1, totalPages: 1, totalElements: 2 },
+        { pageNumber: 0, totalPages: 1, totalElements: 2 },
       );
     });
     expect(result.listings.some((item) => item.sourceId === "101")).toBe(true);
@@ -377,7 +377,7 @@ describe("OLX private-only structured full scan", () => {
         return "timeout";
       }
       return catalogHtml([apartment(101, "2026-09-01T10:00:00+03:00")], {
-        pageNumber: 1,
+        pageNumber: 0,
         totalPages: 1,
         totalElements: 1,
       });
@@ -399,7 +399,7 @@ describe("OLX private-only structured full scan", () => {
   it("does not report valid_empty when apartments fail and houses are a real empty catalog", async () => {
     const { result } = await scan((url) => {
       if (url.includes("/doma/")) {
-        return catalogHtml([], { pageNumber: 1, totalPages: 1, totalElements: 0 });
+        return catalogHtml([], { pageNumber: 0, totalPages: 1, totalElements: 0 });
       }
       return "timeout";
     });
@@ -416,7 +416,7 @@ describe("OLX private-only structured full scan", () => {
   });
 
   it("accepts a structured empty catalog as valid_empty only when both categories complete", async () => {
-    const { result } = await scan(() => catalogHtml([], { pageNumber: 1, totalPages: 1, totalElements: 0 }));
+    const { result } = await scan(() => catalogHtml([], { pageNumber: 0, totalPages: 1, totalElements: 0 }));
     expect(privateScan(result)?.apartments.status).toBe("complete");
     expect(privateScan(result)?.houses.status).toBe("complete");
     expect(result.listings).toHaveLength(0);
@@ -488,12 +488,12 @@ describe("OLX structured catalog page reader", () => {
     }
     expect(
       read({
-        listing: { listing: { pageNumber: 1, totalPages: 4, totalElements: 140, ads: [] } },
+        listing: { listing: { pageNumber: 0, totalPages: 4, totalElements: 140, ads: [] } },
       }),
     ).toEqual({ pageNumber: 1, totalPages: 4, totalElements: 140 });
     expect(
       read({
-        listing: { listing: { page_number: 2, total_pages: 4, total_elements: 14, ads: [] } },
+        listing: { listing: { page_number: 1, total_pages: 4, total_elements: 14, ads: [] } },
       }),
     ).toEqual({ pageNumber: 2, totalPages: 4, totalElements: 14 });
     expect(read({ listing: { listing: { ads: [{ id: 1 }] } } })).toBeUndefined();

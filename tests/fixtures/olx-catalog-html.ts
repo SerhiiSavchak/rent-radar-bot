@@ -32,7 +32,7 @@ export function olxCatalogHtmlWithPrerenderedOffers(options?: {
     listing: {
       listing: {
         ads: [ad],
-        pageNumber: 1,
+        pageNumber: 0,
         totalPages: 1,
         totalElements: 1,
       },

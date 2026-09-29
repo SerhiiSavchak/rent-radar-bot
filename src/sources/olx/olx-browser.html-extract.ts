@@ -203,6 +203,7 @@ export function extractListingAdsFromPrerenderedState(state: unknown): unknown[]
 }
 
 export type OlxStructuredCatalogPage = {
+  /** 1-based logical page. Live OLX `pageNumber` is 0-based and is converted only in the reader. */
   pageNumber: number;
   totalPages: number;
   totalElements: number;
@@ -230,17 +231,19 @@ function structuredInt(value: unknown): number | undefined {
 /**
  * Structured catalog end condition from prerendered `listing.listing`.
  * CamelCase is the live field set. Snake_case is accepted as the same fields.
- * Missing or non-integer values are a structured-state failure, not an empty catalog.
+ * Live `pageNumber` is 0-based. Returned `pageNumber` is 1-based logical page.
+ * That conversion happens only here. Missing, negative, or non-integer pagination
+ * is invalid, not an empty catalog.
  */
 export function readOlxStructuredCatalogPage(state: unknown): OlxStructuredCatalogPage | undefined {
   const inner = listingListingRecord(state);
   if (!inner) {
     return undefined;
   }
-  const pageNumber = structuredInt(inner.pageNumber ?? inner.page_number);
+  const rawPageNumber = structuredInt(inner.pageNumber ?? inner.page_number);
   const totalPages = structuredInt(inner.totalPages ?? inner.total_pages);
   const totalElements = structuredInt(inner.totalElements ?? inner.total_elements);
-  if (pageNumber === undefined || pageNumber < 1) {
+  if (rawPageNumber === undefined || rawPageNumber < 0) {
     return undefined;
   }
   if (totalPages === undefined || totalPages < 1) {
@@ -249,7 +252,7 @@ export function readOlxStructuredCatalogPage(state: unknown): OlxStructuredCatal
   if (totalElements === undefined || totalElements < 0) {
     return undefined;
   }
-  return { pageNumber, totalPages, totalElements };
+  return { pageNumber: rawPageNumber + 1, totalPages, totalElements };
 }
 
 /** Trusted catalog booleans only. A Private query is not proof these are absent. */

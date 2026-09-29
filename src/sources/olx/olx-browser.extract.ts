@@ -1420,13 +1420,10 @@ async function scanOlxPrivateCategory(
     const structured = extracted.structuredCatalog;
     if (!structured) {
       absorbPage(extracted);
-      const missing = extracted.rejections.find((item) => item.reason === "olx_structured_state_missing");
-      rememberFailure(
-        page,
-        "olx_structured_state_missing",
-        missing?.detail ?? `${category}_page_${page}_structured_state_missing`,
-      );
-      stop("parser_failure", `${category}_page_${page}_structured_state_missing`);
+      const statePresent = extracted.htmlDiagnostics?.hasPrerenderedState === true;
+      const reason = statePresent ? "olx_pagination_invalid" : "olx_structured_state_missing";
+      rememberFailure(page, reason, `${category}_page_${page}_${reason}`);
+      stop("parser_failure", `${category}_page_${page}_${reason}`);
       break;
     }
 

@@ -114,9 +114,9 @@ async function run(handler: (url: string) => string | "timeout") {
 
 function onePageCatalog(url: string): string {
   if (url.includes("/doma/")) {
-    return catalogHtml([house()], { pageNumber: 1, totalPages: 1, totalElements: 14 });
+    return catalogHtml([house()], { pageNumber: 0, totalPages: 1, totalElements: 14 });
   }
-  return catalogHtml([apartment()], { pageNumber: 1, totalPages: 1, totalElements: 140 });
+  return catalogHtml([apartment()], { pageNumber: 0, totalPages: 1, totalElements: 140 });
 }
 
 describe("OLX private catalog document transport", () => {
@@ -188,7 +188,7 @@ describe("OLX private catalog document transport", () => {
 
   it("treats a structured empty main document as parsed and skips networkidle", async () => {
     const { result, waitForLoadState } = await run(() =>
-      catalogHtml([], { pageNumber: 1, totalPages: 1, totalElements: 0 }),
+      catalogHtml([], { pageNumber: 0, totalPages: 1, totalElements: 0 }),
     );
     expect(result.privateScan?.apartments.status).toBe("complete");
     expect(result.privateScan?.houses.status).toBe("complete");
