@@ -3,7 +3,8 @@
  *
  * Prints one JSON object on stdout:
  * commit, apartments/houses expected and fetched pages, totalElements,
- * unique listing ids, businessLeakCount, parser/navigation failures, elapsedMs, complete.
+ * unique listing ids, businessLeakCount, parser/navigation failures,
+ * per-page elapsedMs and failure details, elapsedMs, complete.
  *
  * Required:
  *   OLX_PRIVATE_CATALOG_VERIFY=true
@@ -70,9 +71,13 @@ try {
         apartmentsExpectedPages: null,
         apartmentsFetchedPages: [],
         apartmentsTotalElements: null,
+        apartmentsPageElapsedMs: [],
+        apartmentsFailureDetails: [],
         housesExpectedPages: null,
         housesFetchedPages: [],
         housesTotalElements: null,
+        housesPageElapsedMs: [],
+        housesFailureDetails: [],
         uniqueListingIds: 0,
         businessLeakCount: 0,
         parserFailures: [],

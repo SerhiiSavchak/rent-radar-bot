@@ -836,6 +836,8 @@ describe("OLX publication watermark wiring", () => {
             uniqueListingIds: many.length,
             businessLeakCount: 0,
             privateFilterContractLeak: false,
+            failureDetails: [],
+            pageElapsedMs: [],
           },
           houses: {
             status: "complete",
@@ -845,6 +847,8 @@ describe("OLX publication watermark wiring", () => {
             uniqueListingIds: 0,
             businessLeakCount: 0,
             privateFilterContractLeak: false,
+            failureDetails: [],
+            pageElapsedMs: [],
           },
         },
         coverage: {

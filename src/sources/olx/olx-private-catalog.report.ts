@@ -1,13 +1,21 @@
-import type { OlxBrowserExtractResult, OlxPrivateCategoryScan } from "./olx-browser.extract.ts";
+import type {
+  OlxBrowserExtractResult,
+  OlxPrivateCatalogFailureDetail,
+  OlxPrivateCategoryScan,
+} from "./olx-browser.extract.ts";
 
 export type OlxPrivateCatalogReport = {
   commit: string;
   apartmentsExpectedPages: number | null;
   apartmentsFetchedPages: number[];
   apartmentsTotalElements: number | null;
+  apartmentsPageElapsedMs: number[];
+  apartmentsFailureDetails: OlxPrivateCatalogFailureDetail[];
   housesExpectedPages: number | null;
   housesFetchedPages: number[];
   housesTotalElements: number | null;
+  housesPageElapsedMs: number[];
+  housesFailureDetails: OlxPrivateCatalogFailureDetail[];
   uniqueListingIds: number;
   businessLeakCount: number;
   parserFailures: string[];
@@ -17,6 +25,24 @@ export type OlxPrivateCatalogReport = {
   complete: boolean;
   healthDegraded: boolean;
 };
+
+function clipDetail(detail: string): string {
+  return detail
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+}
+
+function clipFailures(
+  details: OlxPrivateCatalogFailureDetail[] | undefined,
+): OlxPrivateCatalogFailureDetail[] {
+  return (details ?? []).map((item) => ({
+    page: item.page,
+    reason: item.reason.slice(0, 80),
+    detail: clipDetail(item.detail),
+  }));
+}
 
 function classify(
   category: "apartments" | "houses",
@@ -80,9 +106,13 @@ export function buildOlxPrivateCatalogReport(input: {
     apartmentsExpectedPages: apartments?.expectedPages ?? null,
     apartmentsFetchedPages: apartments?.fetchedPages ?? [],
     apartmentsTotalElements: apartments?.totalElements ?? null,
+    apartmentsPageElapsedMs: apartments?.pageElapsedMs ?? [],
+    apartmentsFailureDetails: clipFailures(apartments?.failureDetails),
     housesExpectedPages: houses?.expectedPages ?? null,
     housesFetchedPages: houses?.fetchedPages ?? [],
     housesTotalElements: houses?.totalElements ?? null,
+    housesPageElapsedMs: houses?.pageElapsedMs ?? [],
+    housesFailureDetails: clipFailures(houses?.failureDetails),
     uniqueListingIds: new Set(input.result.listings.map((listing) => listing.sourceId)).size,
     businessLeakCount,
     parserFailures,

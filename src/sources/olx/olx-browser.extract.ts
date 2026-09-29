@@ -3,10 +3,12 @@
  * Opt-in only — not wired into Telegram delivery until a live Oracle check passes.
  *
  * Parser input priority:
- * 1. original page.goto() response body (`response.body()`), read before page.content()
- * 2. rendered DOM (`page.content()`) — diagnostic / fallback only when the original body
- *    has no `__PRERENDERED_STATE__`
- * 3. intercepted /api/v1/offers JSON when present
+ * 1. main-document `response.body()` after `waitUntil: "commit"`.
+ *    Routing allows only resourceType "document" and aborts every other subresource.
+ *    A parsed structured catalog does not wait for hydration, networkidle, or /api/v1/offers.
+ * 2. rendered DOM (`page.content()`) — fallback only when the main document
+ *    has no structured catalog
+ * 3. intercepted /api/v1/offers JSON — same fallback only, never a requirement
  *
  * timeoutMs = per-navigation (page.goto) deadline only.
  * categoryBudgetMs / totalBudgetMs abort in-flight navigation/capture, skip the next
@@ -22,7 +24,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { chromium, type Browser, type Response } from "playwright";
+import { chromium, type Browser, type Response, type Route } from "playwright";
 import { awaitWithTimeout } from "../../utils/deadline.ts";
 import type { Listing } from "../../domain/listing.ts";
 import {
@@ -180,6 +182,12 @@ export type OlxPrivateScanStatus =
   | "pagination_unstable"
   | "incomplete";
 
+export type OlxPrivateCatalogFailureDetail = {
+  page: number;
+  reason: string;
+  detail: string;
+};
+
 export type OlxPrivateCategoryScan = {
   status: OlxPrivateScanStatus;
   expectedPages: number | null;
@@ -188,6 +196,9 @@ export type OlxPrivateCategoryScan = {
   uniqueListingIds: number;
   businessLeakCount: number;
   privateFilterContractLeak: boolean;
+  failureDetails: OlxPrivateCatalogFailureDetail[];
+  /** Elapsed time of each catalog page attempt, including a failed page. */
+  pageElapsedMs: number[];
 };
 
 export type OlxBrowserExtractResult = {
@@ -404,6 +415,15 @@ function safeErrorDetail(error: unknown): string {
   return message.replace(/\s+/g, " ").slice(0, 180);
 }
 
+/** Catalog HTML is in the main document. Subresources are not parser input. */
+async function continueCatalogDocumentOnly(route: Route): Promise<void> {
+  if (route.request().resourceType() === "document") {
+    await route.continue();
+    return;
+  }
+  await route.abort();
+}
+
 function expectedCategoryId(category: "apartments" | "houses"): number {
   return category === "apartments" ? 1760 : 330;
 }
@@ -607,10 +627,12 @@ async function extractCategory(
       return result;
     }
 
+    await page.route("**/*", (route) => continueCatalogDocumentOnly(route));
+
     const navigationStarted = deps.clock();
     const response = await raceDeadline(
       page.goto(url, {
-        waitUntil: "domcontentloaded",
+        waitUntil: "commit",
         timeout: gotoBudget,
       }),
       categoryDeadlineAt,
@@ -676,8 +698,10 @@ async function extractCategory(
       rejections.push(...htmlExtract.rejections);
     }
     timing.parseMs += deps.clock() - parseStarted;
+    refreshStructured(mainDocumentHtml);
+    const mainDocumentStructured = listingsFromMain.length > 0 || structuredCatalog !== undefined;
 
-    if (listingsFromMain.length === 0 && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
+    if (!mainDocumentStructured && remainingMs(categoryDeadlineAt, deps.clock()) > 200) {
       await raceDeadline(
         page
           .waitForLoadState("networkidle", {
@@ -774,7 +798,7 @@ async function extractCategory(
       ...(contentType !== undefined ? { contentType } : {}),
     });
 
-    if (classified.success && capturedPayloads.length === 0) {
+    if (!mainDocumentStructured && classified.success && capturedPayloads.length === 0) {
       rejections.push({
         reason: "no_offers_api_payload_captured",
         detail: "page accessible but no /api/v1/offers JSON intercepted",
@@ -1009,6 +1033,8 @@ export async function extractOlxListingsViaBrowser(
   }
   const notes: string[] = [
     "transport=stock_playwright_chromium",
+    "catalog_transport=document_only",
+    "catalog_wait_until=commit",
     "opt_in_only=true",
     `privateCatalogPageCap=${OLX_PRIVATE_CATALOG_PAGE_CAP}`,
     "concurrency=1",
@@ -1080,7 +1106,16 @@ export async function extractOlxListingsViaBrowser(
           "category_page_navigation_failed",
           detail,
         );
-        housesScan = emptyPrivateScan("navigation_failed");
+        housesScan = {
+          ...emptyPrivateScan("navigation_failed"),
+          failureDetails: [
+            {
+              page: 1,
+              reason: "category_page_navigation_failed",
+              detail,
+            },
+          ],
+        };
         notes.push(`houses_category_extraction_error=${detail}`);
       }
     }
@@ -1226,6 +1261,8 @@ function emptyPrivateScan(status: OlxPrivateScanStatus): OlxPrivateCategoryScan 
     uniqueListingIds: 0,
     businessLeakCount: 0,
     privateFilterContractLeak: false,
+    failureDetails: [],
+    pageElapsedMs: [],
   };
 }
 
@@ -1287,6 +1324,12 @@ async function scanOlxPrivateCategory(
   let status: OlxPrivateScanStatus = "complete";
   let failureDetail: string | undefined;
   let pageAccessible = false;
+  const failureDetails: OlxPrivateCatalogFailureDetail[] = [];
+  const pageElapsedMs: number[] = [];
+
+  const rememberFailure = (page: number, reason: string, detail: string) => {
+    failureDetails.push({ page, reason, detail });
+  };
 
   const stop = (next: OlxPrivateScanStatus, detail: string) => {
     if (status === "complete") {
@@ -1319,16 +1362,21 @@ async function scanOlxPrivateCategory(
       break;
     }
     if (remainingMs(deps.runDeadlineAt, deps.clock()) < MIN_GOTO_BUDGET_MS) {
-      stop(
-        fetchedPages.length === 0 ? "navigation_failed" : "incomplete",
-        `${category}_page_${page}_skipped_budget`,
+      const detail = `${category}_page_${page}_skipped_budget`;
+      pageElapsedMs.push(0);
+      rememberFailure(
+        page,
+        fetchedPages.length === 0 ? "category_page_navigation_failed" : "category_budget_exhausted",
+        detail,
       );
+      stop(fetchedPages.length === 0 ? "navigation_failed" : "incomplete", detail);
       break;
     }
     const url = buildOlxBrowserCategoryUrl(category, { page });
     const left = remainingMs(deps.runDeadlineAt, deps.clock());
     const pageBudget = Math.min(deps.categoryBudgetMs, left);
     let extracted: OlxBrowserCategoryExtract;
+    const pageStarted = deps.clock();
     try {
       extracted = await extractCategory(browser, category, url, {
         navigationTimeoutMs: Math.min(deps.navigationTimeoutMs, pageBudget),
@@ -1344,12 +1392,27 @@ async function scanOlxPrivateCategory(
       if (!isRecoverableOlxCategoryExtractionError(error)) {
         throw error;
       }
-      stop("navigation_failed", `${category}_page_${page}_extraction_error=${safeErrorDetail(error)}`);
+      const detail = safeErrorDetail(error);
+      pageElapsedMs.push(Math.max(0, deps.clock() - pageStarted));
+      rememberFailure(page, "category_page_navigation_failed", detail);
+      stop("navigation_failed", `${category}_page_${page}_extraction_error=${detail}`);
       break;
     }
+    pageElapsedMs.push(extracted.elapsedMs);
 
     if (navigationFailed(extracted)) {
       absorbPage(extracted);
+      const nav = extracted.rejections.find(
+        (item) =>
+          item.reason === "category_page_navigation_failed" ||
+          item.reason === "category_budget_exhausted" ||
+          item.reason === "navigation_response_missing",
+      );
+      rememberFailure(
+        page,
+        nav?.reason ?? "category_page_navigation_failed",
+        nav?.detail ?? `${category}_page_${page}_navigation_failed`,
+      );
       stop("navigation_failed", `${category}_page_${page}_navigation_failed`);
       break;
     }
@@ -1357,6 +1420,12 @@ async function scanOlxPrivateCategory(
     const structured = extracted.structuredCatalog;
     if (!structured) {
       absorbPage(extracted);
+      const missing = extracted.rejections.find((item) => item.reason === "olx_structured_state_missing");
+      rememberFailure(
+        page,
+        "olx_structured_state_missing",
+        missing?.detail ?? `${category}_page_${page}_structured_state_missing`,
+      );
       stop("parser_failure", `${category}_page_${page}_structured_state_missing`);
       break;
     }
@@ -1364,10 +1433,9 @@ async function scanOlxPrivateCategory(
     if (structured.pageNumber !== page) {
       // Do not keep cards from a mismatched page — coverage is invalid.
       pageAccessible = pageAccessible || extracted.accessibilityOk;
-      stop(
-        "page_mismatch",
-        `${category}_page_${page}_mismatch structured=${structured.pageNumber}`,
-      );
+      const detail = `${category}_page_${page}_mismatch structured=${structured.pageNumber}`;
+      rememberFailure(page, "olx_page_mismatch", detail);
+      stop("page_mismatch", detail);
       break;
     }
 
@@ -1379,17 +1447,18 @@ async function scanOlxPrivateCategory(
       }
     } else if (structured.totalPages !== expectedPages) {
       absorbPage(extracted, { countFetchedPage: page });
-      stop(
-        "pagination_unstable",
-        `${category}_page_${page}_totalPages_changed expected=${expectedPages} actual=${structured.totalPages}`,
-      );
+      const detail = `${category}_page_${page}_totalPages_changed expected=${expectedPages} actual=${structured.totalPages}`;
+      rememberFailure(page, "olx_pagination_unstable", detail);
+      stop("pagination_unstable", detail);
       break;
     }
 
     const adsCount = extracted.structuredAdsCount ?? 0;
     if (structured.totalElements > 0 && adsCount === 0 && extracted.listings.length === 0) {
       absorbPage(extracted);
-      stop("parser_failure", `${category}_page_${page}_elements_without_ads`);
+      const detail = `${category}_page_${page}_elements_without_ads`;
+      rememberFailure(page, "olx_structured_state_missing", detail);
+      stop("parser_failure", detail);
       break;
     }
 
@@ -1425,6 +1494,8 @@ async function scanOlxPrivateCategory(
     uniqueListingIds: mergedListings.length,
     businessLeakCount,
     privateFilterContractLeak: businessLeakCount > 0,
+    failureDetails,
+    pageElapsedMs,
   };
   notes.push(
     `${category}_pages=${fetchedPages.join(",") || "none"}`,

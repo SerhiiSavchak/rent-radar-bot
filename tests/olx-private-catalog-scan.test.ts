@@ -112,6 +112,7 @@ function mockCatalog(handler: (url: string) => string | "timeout"): {
   const urls: string[] = [];
   const page = {
     on: vi.fn(),
+    route: vi.fn(async () => undefined),
     goto: vi.fn(async (navUrl: string) => {
       urls.push(navUrl);
       const outcome = handler(navUrl);
@@ -440,6 +441,8 @@ describe("OLX private catalog verify report", () => {
             uniqueListingIds: 1,
             businessLeakCount: 1,
             privateFilterContractLeak: true,
+            failureDetails: [],
+            pageElapsedMs: [],
           },
           houses: {
             status: "complete",
@@ -449,6 +452,8 @@ describe("OLX private catalog verify report", () => {
             uniqueListingIds: 0,
             businessLeakCount: 0,
             privateFilterContractLeak: false,
+            failureDetails: [],
+            pageElapsedMs: [],
           },
         },
       }),

@@ -133,6 +133,7 @@ describe("OLX browser extract integration", () => {
     let lastUrl =
       "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
     const page = {
+      route: vi.fn(async () => undefined),
       on: (event: string, handler: (response: Response) => void) => {
         if (event === "response") {
           responseHandler = handler;
@@ -229,7 +230,7 @@ describe("OLX browser extract integration", () => {
     expect(result.listings.length).toBeGreaterThan(0);
     expect(result.apartments.extractSource).toBe("prerendered_state");
     expect(result.apartments.rejections.some((r) => r.reason === "no_offers_api_payload_captured")).toBe(
-      true,
+      false,
     );
   });
 
@@ -278,6 +279,7 @@ describe("OLX browser extract integration", () => {
     const browserClose = vi.fn(async () => undefined);
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         expect(
@@ -341,6 +343,7 @@ describe("OLX browser extract integration", () => {
     let lastUrl = OLX_BROWSER_APARTMENTS_URL;
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         nowMs += 20;
@@ -599,6 +602,7 @@ describe("OLX browser extract deadlines", () => {
     let hungReject: ((error: Error) => void) | undefined;
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(
         () =>
           new Promise((_, reject) => {
@@ -651,6 +655,7 @@ describe("OLX browser extract deadlines", () => {
     });
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         nowMs += 20;
@@ -713,6 +718,7 @@ describe("OLX browser extract deadlines", () => {
     let lastUrl = OLX_BROWSER_APARTMENTS_URL;
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         nowMs += 70;
@@ -769,6 +775,7 @@ describe("OLX browser extract deadlines", () => {
 
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         gotoUrls.push(navUrl);
         if (navUrl.includes("/doma/")) {
@@ -860,6 +867,7 @@ describe("OLX browser extract deadlines", () => {
 
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         return {

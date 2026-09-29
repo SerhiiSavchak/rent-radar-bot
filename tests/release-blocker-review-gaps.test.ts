@@ -184,6 +184,7 @@ describe("release blocker review gaps — OLX identity and browser fallback", ()
     let lastUrl = OLX_BROWSER_APARTMENTS_URL;
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         nowMs += 20;
