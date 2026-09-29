@@ -7,6 +7,7 @@ import {
   ACQUIRED_RESPONSE_CAP_PER_CATEGORY,
   keepAcquiredByCategory,
 } from "../src/delivery/catalog-sample.ts";
+import { OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY } from "../src/sources/olx/olx-browser.coverage.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
 import type { TelegramTestSink } from "../src/outputs/telegram-test.sink.ts";
@@ -42,6 +43,23 @@ describe("acquired catalog cards", () => {
     expect(kept.some((item) => item.sourceId === "a28")).toBe(true);
     expect(kept.filter((item) => item.propertyType === "house")).toHaveLength(36);
     expect(kept).toHaveLength(87);
+  });
+
+  it("keeps a verified OLX private catalog of 140 apartments and 14 houses", () => {
+    const apartments = Array.from({ length: 140 }, (_, index) => ({
+      propertyType: "apartment",
+      sourceId: `a${index + 1}`,
+    }));
+    const houses = Array.from({ length: 14 }, (_, index) => ({
+      propertyType: "house",
+      sourceId: `h${index + 1}`,
+    }));
+    const acquired = keepAcquiredByCategory(
+      [...apartments, ...houses],
+      OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY,
+    );
+    expect(acquired.truncated).toBe(false);
+    expect(acquired.kept).toHaveLength(154);
   });
 
   it("caps a runaway category without dropping the other category", () => {

@@ -758,7 +758,7 @@ describe("OLX browser extract deadlines", () => {
     expect(result.browserClosed).toBe(true);
   });
 
-  it("preserves apartment listings/catch-up when houses page.goto times out", async () => {
+  it("preserves apartment listings when houses page.goto times out", async () => {
     const ads = [derivedOracleApartmentPrivateAd()];
     const main = derivedOracleMainDocumentHtml(ads);
     const target = "2026-09-19T21:15:02.350Z";
@@ -819,13 +819,12 @@ describe("OLX browser extract deadlines", () => {
     expect(gotoUrls.some((u) => u.includes("/kvartiry/"))).toBe(true);
     expect(gotoUrls.some((u) => u.includes("/doma/"))).toBe(true);
 
-    // Apartments survived the houses timeout.
+    // Apartments survived the houses timeout. A page cursor is not coverage.
     expect(result.apartments.listings.length).toBeGreaterThan(0);
     expect(result.listings.some((l) => l.sourceId === "935081899")).toBe(true);
-    expect(result.coverage?.catchup?.apartment).toEqual({ target, resumePage: 4 });
+    expect(result.coverage?.catchup?.apartment ?? null).toBeNull();
     expect(result.coverage?.committedBoundary?.apartment).toBeUndefined();
 
-    // Houses failed/truncated with retryable cursor — not a coverage PASS.
     expect(result.houses.listings).toHaveLength(0);
     expect(
       result.houses.rejections.some(
@@ -837,7 +836,7 @@ describe("OLX browser extract deadlines", () => {
     expect(result.coverage?.coverageTruncated).toBe(true);
     expect(result.coverage?.boundaryReached).toBe(false);
     expect(result.coverage?.committedBoundary?.house).toBeUndefined();
-    expect(result.coverage?.catchup?.house).toEqual({ target, resumePage: 1 });
+    expect(result.coverage?.catchup?.house ?? null).toBeNull();
     expect(
       result.notes.some(
         (n) =>
@@ -849,7 +848,7 @@ describe("OLX browser extract deadlines", () => {
     ).toBe(true);
   });
 
-  it("keeps partial listings but does not advance catch-up when owed page fails after parse", async () => {
+  it("does not request a stored catch-up page when structured totalPages is absent", async () => {
     const ads = [derivedOracleApartmentPrivateAd()];
     const main = derivedOracleMainDocumentHtml(ads);
     const target = "2026-09-19T21:15:02.350Z";
@@ -910,15 +909,9 @@ describe("OLX browser extract deadlines", () => {
 
     expect(result.browserClosed).toBe(true);
     expect(result.apartments.listings.some((l) => l.sourceId === "935081899")).toBe(true);
-    expect(
-      result.apartments.rejections.some((r) => r.reason === "category_page_navigation_failed"),
-    ).toBe(true);
-    expect(result.notes.some((n) => n.includes("apartments_page_3_navigation_failed"))).toBe(true);
-    expect(result.notes.some((n) => n.includes("apartments_pages=1"))).toBe(true);
-    expect(result.notes.some((n) => /apartments_pages=1,3\b/.test(n))).toBe(false);
-
-    // Failed owed page is retried — cursor must not silently advance to 4.
-    expect(result.coverage?.catchup?.apartment).toEqual({ target, resumePage: 3 });
+    expect(result.notes.some((n) => n.includes("apartments_page_3_navigation_failed"))).toBe(false);
+    expect(result.notes.some((n) => /page=3/.test(n))).toBe(false);
+    expect(result.coverage?.catchup?.apartment ?? null).toBeNull();
     expect(result.coverage?.coverageTruncated).toBe(true);
     expect(result.coverage?.boundaryReached).toBe(false);
     expect(result.coverage?.committedBoundary?.apartment).toBeUndefined();
