@@ -32,10 +32,7 @@ import {
 import {
   formatOlxCoverage,
   olxCatchupKey,
-  olxCategoryToCoverageKey,
   olxPublicationBoundaryKey,
-  parseOlxCatchup,
-  serializeOlxCatchup,
   type OlxBrowserCategoryName,
 } from "../sources/olx/olx-browser.coverage.ts";
 import {
@@ -858,48 +855,6 @@ export async function runTelegramTestCycle(
     }
     return Object.keys(watermarks).length > 0 ? watermarks : undefined;
   };
-  const readOlxWatermarks = ():
-    | Partial<Record<"apartment" | "house", Date>>
-    | undefined => {
-    const watermarks: Partial<Record<"apartment" | "house", Date>> = {};
-    for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
-      const parsed = Date.parse(readMetaValue(olxPublicationBoundaryKey(category)) ?? "");
-      if (Number.isFinite(parsed)) {
-        watermarks[olxCategoryToCoverageKey(category)] = new Date(parsed);
-      }
-    }
-    return Object.keys(watermarks).length > 0 ? watermarks : undefined;
-  };
-  const readOlxCatchup = ():
-    | Partial<Record<"apartment" | "house", { target: string; resumePage: number }>>
-    | undefined => {
-    const catchup: Partial<Record<"apartment" | "house", { target: string; resumePage: number }>> =
-      {};
-    for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
-      const parsed = parseOlxCatchup(readMetaValue(olxCatchupKey(category)));
-      if (parsed) {
-        catchup[olxCategoryToCoverageKey(category)] = parsed;
-      }
-    }
-    return Object.keys(catchup).length > 0 ? catchup : undefined;
-  };
-  const readOlxBootstrapTarget = (): Date | undefined => {
-    if (!holdDb) {
-      return undefined;
-    }
-    const hasBoundary = Boolean(readOlxWatermarks());
-    const hasCatchup = Boolean(readOlxCatchup());
-    if (hasBoundary || hasCatchup) {
-      return undefined;
-    }
-    const row = holdDb
-      .prepare(
-        `SELECT established_at AS establishedAt FROM source_baselines WHERE source = 'olx'`,
-      )
-      .get() as { establishedAt: string } | undefined;
-    const parsed = Date.parse(row?.establishedAt ?? "");
-    return Number.isFinite(parsed) ? new Date(parsed) : undefined;
-  };
   const readRieltorCatchup = ():
     | Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>>
     | undefined => {
@@ -983,16 +938,10 @@ export async function runTelegramTestCycle(
 
     try {
       const publicationWatermarks =
-        adapter.source === "rieltor"
-          ? readRieltorWatermarks()
-          : adapter.source === "olx"
-            ? readOlxWatermarks()
-            : undefined;
+        adapter.source === "rieltor" ? readRieltorWatermarks() : undefined;
       const rieltorCatchup = adapter.source === "rieltor" ? readRieltorCatchup() : undefined;
       const rieltorBootstrapTarget =
         adapter.source === "rieltor" ? readRieltorBootstrapTarget() : undefined;
-      const olxCatchup = adapter.source === "olx" ? readOlxCatchup() : undefined;
-      const olxBootstrapTarget = adapter.source === "olx" ? readOlxBootstrapTarget() : undefined;
       const domriaKnownIds =
         adapter.source === "domria"
           ? parseDomriaAcquiredIds(readMetaValue(DOMRIA_ACQUIRED_IDS_KEY))
@@ -1002,8 +951,6 @@ export async function runTelegramTestCycle(
         ...(publicationWatermarks ? { publicationWatermarks } : {}),
         ...(rieltorCatchup ? { rieltorCatchup } : {}),
         ...(rieltorBootstrapTarget ? { rieltorBootstrapTarget } : {}),
-        ...(olxCatchup ? { olxCatchup } : {}),
-        ...(olxBootstrapTarget ? { olxBootstrapTarget } : {}),
         ...(domriaKnownIds && domriaKnownIds.length > 0 ? { domriaKnownIds } : {}),
       });
       const classified = classifySourceAttempt(adapter.source, result);
@@ -1074,24 +1021,12 @@ export async function runTelegramTestCycle(
         }
       }
       if (holdDb && adapter.source === "olx" && result.coverage) {
-        const writeMeta = holdDb.prepare(
-          "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
-        );
+        // Page cursors and publication boundaries are not OLX coverage.
+        // Drop leftovers so a restart cannot treat them as progress.
         const deleteMeta = holdDb.prepare("DELETE FROM schema_meta WHERE key = ?");
         for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
-          const mapped = olxCategoryToCoverageKey(category);
-          const committed = result.coverage.committedBoundary?.[mapped];
-          if (committed) {
-            writeMeta.run(olxPublicationBoundaryKey(category), committed);
-          }
-          if (result.coverage.catchup && mapped in result.coverage.catchup) {
-            const state = result.coverage.catchup[mapped];
-            if (state) {
-              writeMeta.run(olxCatchupKey(category), serializeOlxCatchup(state));
-            } else {
-              deleteMeta.run(olxCatchupKey(category));
-            }
-          }
+          deleteMeta.run(olxCatchupKey(category));
+          deleteMeta.run(olxPublicationBoundaryKey(category));
         }
       }
       const collectedIds = collectedSourceIdsForLog(result.listings);

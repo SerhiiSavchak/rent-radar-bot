@@ -21,7 +21,13 @@ import {
   type OlxBrowserExtractDeps,
   type OlxBrowserExtractResult,
 } from "./olx-browser.extract.ts";
-import { buildOlxBrowserCategoryUrl, OLX_BROWSER_PAGE_BUDGET } from "./olx-browser.coverage.ts";
+import {
+  buildOlxBrowserCategoryUrl,
+  OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY,
+  OLX_PRIVATE_CATEGORY_BUDGET_MS,
+  OLX_PRIVATE_NAVIGATION_TIMEOUT_MS,
+  OLX_PRIVATE_TOTAL_BUDGET_MS,
+} from "./olx-browser.coverage.ts";
 
 export const OLX_BROWSER_TRANSPORT = "stock_playwright_chromium";
 
@@ -38,11 +44,17 @@ export function resolveOlxBrowserBudgets(env: NodeJS.ProcessEnv = process.env): 
   categoryBudgetMs: number;
   totalBudgetMs: number;
 } {
-  const timeoutMs = Math.max(5_000, Number(env.OLX_BROWSER_TIMEOUT_MS ?? "45000"));
-  const categoryBudgetMs = Math.max(5_000, Number(env.OLX_BROWSER_CATEGORY_BUDGET_MS ?? String(timeoutMs)));
+  const timeoutMs = Math.max(
+    5_000,
+    Number(env.OLX_BROWSER_TIMEOUT_MS ?? String(OLX_PRIVATE_NAVIGATION_TIMEOUT_MS)),
+  );
+  const categoryBudgetMs = Math.max(
+    timeoutMs,
+    Number(env.OLX_BROWSER_CATEGORY_BUDGET_MS ?? String(OLX_PRIVATE_CATEGORY_BUDGET_MS)),
+  );
   const totalBudgetMs = Math.max(
     categoryBudgetMs + 5_000,
-    Number(env.OLX_BROWSER_TOTAL_BUDGET_MS ?? String(categoryBudgetMs * 2 + 5_000)),
+    Number(env.OLX_BROWSER_TOTAL_BUDGET_MS ?? String(OLX_PRIVATE_TOTAL_BUDGET_MS)),
   );
   return { timeoutMs, categoryBudgetMs, totalBudgetMs };
 }
@@ -58,7 +70,7 @@ export function mapOlxBrowserExtractToFetchResult(
   if (options.includeHouses === false) {
     listings = listings.filter((item) => item.propertyType !== "house");
   }
-  const acquired = keepAcquiredByCategory(dedupe(listings));
+  const acquired = keepAcquiredByCategory(dedupe(listings), OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY);
   const unique = acquired.kept;
 
   const statuses = [result.apartments.httpStatus, result.houses.httpStatus].filter(
@@ -70,8 +82,16 @@ export function mapOlxBrowserExtractToFetchResult(
 
   const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
   const walkCoverage = result.coverage;
+  const privateScan = result.privateScan;
+  const businessLeakCount =
+    (privateScan?.apartments.businessLeakCount ?? 0) + (privateScan?.houses.businessLeakCount ?? 0);
+  const scanFailed = privateScan
+    ? privateScan.apartments.status !== "complete" || privateScan.houses.status !== "complete"
+    : false;
   const coverageTruncated =
-    Boolean(capCoverage?.coverageTruncated) || Boolean(walkCoverage?.coverageTruncated);
+    Boolean(capCoverage?.coverageTruncated) ||
+    Boolean(walkCoverage?.coverageTruncated) ||
+    scanFailed;
   // Acquired-card cap must never let a walk commit a boundary past discarded cards.
   const allowCommit = !acquired.truncated;
   const coverage =
@@ -101,14 +121,18 @@ export function mapOlxBrowserExtractToFetchResult(
     resultKind = "http_error";
   } else if (unique.length > 0 && result.extractionOk) {
     resultKind = "ok";
-  } else if (result.accessibilityOk && unique.length === 0) {
+  } else if (privateScan && !scanFailed && businessLeakCount === 0 && unique.length === 0) {
+    resultKind = "valid_empty";
+  } else if (!privateScan && result.accessibilityOk && unique.length === 0) {
     resultKind = result.extractionOk ? "valid_empty" : "parser_failure";
   } else {
     resultKind = "parser_failure";
   }
 
   const healthy =
-    (resultKind === "ok" || resultKind === "valid_empty") && !coverageTruncated;
+    (resultKind === "ok" || resultKind === "valid_empty") &&
+    !coverageTruncated &&
+    businessLeakCount === 0;
   const notes = [
     `transport=${OLX_BROWSER_TRANSPORT}`,
     "no_http_api_fallback=true",
@@ -140,13 +164,15 @@ export function mapOlxBrowserExtractToFetchResult(
       ...(reportedStatus !== undefined ? { httpStatus: reportedStatus } : {}),
       message: healthy
         ? `OLX browser extract returned ${unique.length} listings`
-        : coverageTruncated
-          ? `OLX browser partial coverage: kept ${unique.length} listings (page/budget truncated)`
-          : acquired.truncated
-            ? `OLX browser extract kept ${unique.length} listings after the acquired-response cap`
-            : blockedWithoutExtract
-              ? `OLX browser transport_blocked HTTP ${blockedStatus} — not an HTTP API success and not a catalog extract`
-              : `OLX browser extract did not return listings (${resultKind})`,
+        : businessLeakCount > 0
+          ? `OLX private filter contract leak: rejected ${businessLeakCount} Business card(s); kept ${unique.length} listings`
+          : coverageTruncated
+            ? `OLX browser partial coverage: kept ${unique.length} listings (structured scan incomplete)`
+            : acquired.truncated
+              ? `OLX browser extract kept ${unique.length} listings after the acquired-response cap`
+              : blockedWithoutExtract
+                ? `OLX browser transport_blocked HTTP ${blockedStatus} — not an HTTP API success and not a catalog extract`
+                : `OLX browser extract did not return listings (${resultKind})`,
     },
   };
 }
@@ -179,29 +205,13 @@ export class OlxBrowserSource implements ListingSourceAdapter {
     const config = getConfig();
     const budgets = resolveOlxBrowserBudgets();
     const extract = this.deps.extract ?? extractOlxListingsViaBrowser;
-    const publicationWatermarks: NonNullable<OlxBrowserExtractDeps["publicationWatermarks"]> = {};
-    if (options?.publicationWatermarks?.apartment) {
-      publicationWatermarks.apartments = options.publicationWatermarks.apartment;
-    }
-    if (options?.publicationWatermarks?.house) {
-      publicationWatermarks.houses = options.publicationWatermarks.house;
-    }
-    const catchup: NonNullable<OlxBrowserExtractDeps["catchup"]> = {};
-    if (options?.olxCatchup?.apartment) {
-      catchup.apartments = options.olxCatchup.apartment;
-    }
-    if (options?.olxCatchup?.house) {
-      catchup.houses = options.olxCatchup.house;
-    }
+    // Publication watermarks, catch-up cursors, and bootstrap targets are not
+    // collection inputs. Structured totalPages decides the private catalog walk.
     const result = await extract({
       timeoutMs: this.deps.timeoutMs ?? budgets.timeoutMs,
       categoryBudgetMs: this.deps.categoryBudgetMs ?? budgets.categoryBudgetMs,
       totalBudgetMs: this.deps.totalBudgetMs ?? budgets.totalBudgetMs,
-      maxPagesPerCategory: OLX_BROWSER_PAGE_BUDGET,
       now: this.deps.now ?? (() => new Date()),
-      ...(Object.keys(publicationWatermarks).length > 0 ? { publicationWatermarks } : {}),
-      ...(Object.keys(catchup).length > 0 ? { catchup } : {}),
-      ...(options?.olxBootstrapTarget ? { bootstrapTarget: options.olxBootstrapTarget } : {}),
     });
     const mapped = mapOlxBrowserExtractToFetchResult(result, {
       startedMs: started,

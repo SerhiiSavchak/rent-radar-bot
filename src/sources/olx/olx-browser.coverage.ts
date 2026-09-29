@@ -17,33 +17,44 @@ import {
  *   non-monotone organic `createdTime` is present in OLX prerendered ads order
  *   (not introduced by extract). URL retention is not newest-by-createdTime proof.
  *   Publication-time stop stays off.
- * - full order-independent scan: BLOCKED — apartments catalog end not established
- *   (still novel at page 25; continue-from-26 hit wall_cap_300s at page 222 with
- *   zero empty pages / totalElements=1000; see `olx-coverage-scan/COVERAGE_SCAN_LIMIT.md`).
- *   Do not claim complete-scan time exceeds the ~95s OLX extract budget until end
- *   is proven. Page cursor resume is unsafe under reshuffle. Page budget 2 remains
- *   a bounded sample only. Publication-time stop stays off.
- * Do not treat HTTP 200, fixtures, or a single OK request as coverage PASS.
+ * - full unfiltered order-independent scan: historical BLOCKED (apartments still
+ *   novel at page 25). That probe is not the production collector.
  *
- * Because HTML sort is unverified, publication-time stop must not mark a walk
- * complete. Progress uses seed → committed boundary, then page catch-up cursors,
- * and confirmed-empty catalog evidence only.
+ * Production collection (private catalog, verified shape apartments 140/4 pages,
+ * houses 14/1 page) walks every structured page. `search[private_business]=private`
+ * is an account filter, not ownership. A stored page cursor does not prove coverage.
+ * Publication time and createdTime order do not end the walk.
+ * Do not treat HTTP 200, fixtures, or a single OK request as coverage PASS.
  */
 export const OLX_BROWSER_APARTMENTS_PATH =
   "/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
 export const OLX_BROWSER_HOUSES_PATH = "/uk/nedvizhimost/doma/arenda-domov/lvov/";
 
 /**
- * Per-category page budget inside one poll.
- *
- * Observed steady volume on city page-1 was ~81–89 combined apartments+houses
- * (~40–55/category). Two pages ≈ 80–110 organic cards/category before the
- * acquired-response cap (120). At a 10-minute poll that covers normal churn
- * and a short downtime backlog without pretending deep history is complete.
- * Exhausting this budget before the publication boundary → coverage_degraded
- * and a stored catch-up cursor (next poll continues; does not rescan only page 1).
+ * Retired page budget. Production OLX collection does not stop after two pages
+ * and does not persist a resume cursor. Kept so historical planner tests stay
+ * readable. Cursor progress is not catalog coverage.
  */
 export const OLX_BROWSER_PAGE_BUDGET = 2;
+
+/**
+ * Safety ceiling for one private-catalog walk. Verified apartments are 4 pages.
+ * A larger structured totalPages is incomplete coverage, not a deep cursor.
+ */
+export const OLX_PRIVATE_CATALOG_PAGE_CAP = 8;
+
+/** Per page.goto. Four apartment pages plus one house page stay under a 10-minute poll. */
+export const OLX_PRIVATE_NAVIGATION_TIMEOUT_MS = 45_000;
+export const OLX_PRIVATE_CATEGORY_BUDGET_MS = 180_000;
+export const OLX_PRIVATE_TOTAL_BUDGET_MS = 360_000;
+export const OLX_PRIVATE_HOUSE_RESERVE_MS = 90_000;
+
+/**
+ * Shared acquired cap (120) was sized for one unfiltered catalog page (~51 cards).
+ * Verified private apartments are 140 unique ids. This ceiling keeps that catalog
+ * whole and still rejects a runaway payload.
+ */
+export const OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY = 250;
 
 /**
  * Hard cap used only for offline depth probes / feasibility math.
@@ -55,8 +66,8 @@ export const OLX_BROWSER_FULL_SCAN_PAGE_CAP = 25;
 export const OLX_COVERAGE_POLL_CYCLE_MS = 10 * 60 * 1000;
 
 /**
- * Feasibility of a complete order-independent page walk inside one poll.
- * Does not claim sort order. A persistent page cursor is not treated as safe.
+ * Historical feasibility math for an unfiltered catalog. Not the production
+ * private-catalog collector. A page cursor is not safe and does not prove coverage.
  */
 export function assessOlxOrderIndependentFullScan(input: {
   apartmentPagesFetched: number;
@@ -215,8 +226,16 @@ export function buildOlxBrowserCategoryUrl(
     page?: number;
     /** Defaults to OLX_DISTANCE_KM (15). Pass null to omit (city-only). */
     distanceKm?: number | null;
-    /** Requested newest-first filter key. Application is unverified for HTML. */
+    /**
+     * Historical sort probe only. Production collection leaves this off.
+     * URL retention is not proof of createdTime order and does not end a scan.
+     */
     orderCreatedDesc?: boolean;
+    /**
+     * Defaults to the Private account filter. Pass false only for a historical
+     * unfiltered probe. Private is not ownership. Do not emit owner_type=private.
+     */
+    privateOnly?: boolean;
   } = {},
 ): string {
   const path = category === "apartments" ? OLX_BROWSER_APARTMENTS_PATH : OLX_BROWSER_HOUSES_PATH;
@@ -225,7 +244,10 @@ export function buildOlxBrowserCategoryUrl(
   if (distance !== null && distance !== undefined) {
     params.set("search[dist]", String(distance));
   }
-  if (options.orderCreatedDesc !== false) {
+  if (options.privateOnly !== false) {
+    params.set("search[private_business]", "private");
+  }
+  if (options.orderCreatedDesc === true) {
     params.set("search[order]", "created_at:desc");
   }
   const page = options.page ?? 1;
@@ -242,8 +264,10 @@ export const OLX_BROWSER_APARTMENTS_URL = buildOlxBrowserCategoryUrl("apartments
 export const OLX_BROWSER_HOUSES_URL = buildOlxBrowserCategoryUrl("houses");
 
 /**
- * Plan pages for one category. Seed is page 1 only (monitoring start).
- * Catch-up always rechecks page 1 for new listings, then resumes deeper pages.
+ * Retired page-budget planner. Production OLX collection does not call this.
+ * A stored resumePage is not catalog coverage.
+ *
+ * Seed is page 1 only. Catch-up rechecks page 1, then the owed deeper page.
  */
 export function planOlxCategoryFetch(input: {
   committedBoundary?: string;
@@ -536,6 +560,51 @@ export function assessOlxBrowserWalk(input: {
   };
 }
 
+export type OlxPrivateScanNoteInput = {
+  distanceKm: number | null;
+  apartmentsStatus: string;
+  apartmentsExpectedPages: number | null;
+  apartmentsFetchedPages: number[];
+  apartmentsTotalElements: number | null;
+  housesStatus: string;
+  housesExpectedPages: number | null;
+  housesFetchedPages: number[];
+  housesTotalElements: number | null;
+  businessLeakCount: number;
+};
+
+/** Production coverage notes. A page cursor is not an input and is not a result. */
+export function olxPrivateCatalogNotes(input: OlxPrivateScanNoteInput): string[] {
+  const pagesComplete =
+    input.apartmentsStatus === "complete" && input.housesStatus === "complete";
+  const degraded = !pagesComplete || input.businessLeakCount > 0;
+  return [
+    "olx_browser_catalog=private_only",
+    "olx_browser_private_filter=search[private_business]=private",
+    "olx_browser_private_is_not_owner=true",
+    `olx_browser_distance_km=${input.distanceKm === null ? "omit" : input.distanceKm}`,
+    "olx_browser_concurrency=1",
+    "olx_browser_end_condition=structured_totalPages",
+    "olx_browser_sort_not_used_for_coverage=true",
+    "olx_browser_publication_time_stop=not_used",
+    "olx_browser_page_cursor_not_used_for_coverage=true",
+    `olx_private_apartments_status=${input.apartmentsStatus}`,
+    `olx_private_apartments_expected_pages=${input.apartmentsExpectedPages ?? "none"}`,
+    `olx_private_apartments_fetched_pages=${input.apartmentsFetchedPages.join(",") || "none"}`,
+    `olx_private_apartments_total_elements=${input.apartmentsTotalElements ?? "none"}`,
+    `olx_private_houses_status=${input.housesStatus}`,
+    `olx_private_houses_expected_pages=${input.housesExpectedPages ?? "none"}`,
+    `olx_private_houses_fetched_pages=${input.housesFetchedPages.join(",") || "none"}`,
+    `olx_private_houses_total_elements=${input.housesTotalElements ?? "none"}`,
+    `olx_private_business_leak_count=${input.businessLeakCount}`,
+    `olx_browser_full_scan_status=${degraded ? "degraded" : "complete"}`,
+  ];
+}
+
+/**
+ * Retired notes for the page-budget walk. Do not log these as production coverage.
+ * `full_scan_status=blocked` described the unfiltered catalog, not the private scan.
+ */
 export function olxBrowserCoverageNotes(input: {
   distanceKm: number | null;
   pageBudget: number;
@@ -546,6 +615,7 @@ export function olxBrowserCoverageNotes(input: {
   catchupResume?: string;
 }): string[] {
   return [
+    "retired_page_budget_notes_not_collection_coverage=true",
     `olx_browser_distance_km=${input.distanceKm === null ? "omit" : input.distanceKm}`,
     `olx_browser_page_budget=${input.pageBudget}`,
     `olx_browser_pages_fetched=${input.pagesFetched}`,
@@ -584,13 +654,14 @@ export function formatOlxCoverage(coverage: {
         .join(",")
     : "";
   return [
-    "olx_incremental",
+    "olx_private_catalog",
+    "page_cursor_not_coverage=true",
     `pagesFetched=${coverage.pagesFetched}`,
     `cardsFetched=${coverage.cardsFetched}`,
     `boundaryReached=${coverage.boundaryReached}`,
     `coverageTruncated=${coverage.coverageTruncated}`,
     `oldestObservedPublication=${coverage.oldestObservedPublication ?? "none"}`,
     `newestObservedPublication=${coverage.newestObservedPublication ?? "none"}`,
-    `catchupResume=${resume || "none"}`,
+    `retiredPageCursor=${resume || "none"}`,
   ].join(" ");
 }

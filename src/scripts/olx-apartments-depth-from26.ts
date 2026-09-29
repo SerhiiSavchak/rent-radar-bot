@@ -1,6 +1,7 @@
 /**
- * Continue apartments depth from page 26. Cap wall 300s. Same production URL builder.
- * Stop only: confirmed empty (0 ads + 200) OR wall 300s. Do not stop on zero-novel.
+ * Historical unfiltered depth probe from page 26. Not the production collector.
+ * Production collection is the Private catalog and stops at structured totalPages.
+ * This probe opts out of Private so it still measures the old unfiltered catalog.
  */
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -46,7 +47,7 @@ async function main() {
         stopReason = "wall_cap_300s";
         break;
       }
-      const url = buildOlxBrowserCategoryUrl("apartments", { page: p });
+      const url = buildOlxBrowserCategoryUrl("apartments", { page: p, privateOnly: false });
       const t0 = Date.now();
       const resp = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
       const html = (await resp?.text()) ?? "";
@@ -117,7 +118,7 @@ async function main() {
     startPage: START_PAGE,
     wallCapMs: WALL_CAP_MS,
     gapMs: GAP_MS,
-    query: buildOlxBrowserCategoryUrl("apartments", { page: START_PAGE }),
+    query: buildOlxBrowserCategoryUrl("apartments", { page: START_PAGE, privateOnly: false }),
     stopReason: stopReason ?? "unknown",
     confirmedEmptyAt,
     totalElementsLastSeen: totalElements,
