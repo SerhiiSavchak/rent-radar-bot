@@ -1,5 +1,9 @@
 # OLX order-independent coverage — budget limit (BLOCKED)
 
+Historical unfiltered-catalog probe. Production collection is the Private catalog
+(`search[private_business]=private`) and ends at structured `totalPages`.
+A page cursor is not coverage. Do not read this file as the current collector.
+
 **Verdict: BLOCKED.** Catalog end for apartments was **not** established (`confirmed_empty` never observed). Do **not** claim that a complete scan exceeds the ~95 s OLX budget — complete-scan wall time is still unproven. Time-stop remains **disabled**. Sort gate remains **BLOCKED**. No deploy. Poller / frequency / source settings unchanged.
 
 ## ~95 s OLX budget — what it is

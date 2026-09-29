@@ -8,22 +8,22 @@ Does **not** change seller policy, hosting, SQLite, or `TELEGRAM_POLL_INTERVAL_M
 
 | Source | Queries / geography | Apt / house / long-term | Sort evidence | Pagination | Budgets | Stop | First-run | Recovery | Empty vs PF | Truncation | Verdict |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| **OLX browser** | Lviv long-term paths + requested `search[dist]=15` / `search[order]=created_at:desc` | Separate apartments / houses walks; house wall-clock reserve | Radius **PASS** (suburb listing evidence 2026-09-26 ×3); sort **BLOCKED** — organic created/refresh not monotone | Seed page 1; steady/catch-up up to `OLX_BROWSER_PAGE_BUDGET` (2); catch-up cursor in `schema_meta` | Pages + category/total ms; acquired cap 120/cat | Seed commits monitoring newest; time-stop **disabled** until HTML sort verified; confirmed_empty closes; else catch-up | Silent baseline + seed commit; no historical “new” flood | Catch-up resumePage persists across restarts; page 1 rechecked | confirmed_empty vs parse_failed / unknown | `coverage_degraded`, no boundary past acquired-cap discards | **PARTIAL** (radius PASS; sort BLOCKED; autonomous seed/catch-up PASS in tests) |
+| **OLX browser** | Lviv long-term paths + `search[dist]=15` + `search[private_business]=private` (not `owner_type`) | Separate apartments / houses walks; one Chromium; concurrency=1; house wall-clock reserve | Radius **PASS** (2026-09-26). Sort is **not** a coverage input. Private is an account filter, not ownership | Sequential pages 1..structured `totalPages`. Verified shape: apartments 140/4, houses 14/1. A page cursor is not coverage | Per-page navigation 45s; category 180s; total 360s; acquired cap 250/cat so 140 apartments stay whole | Structured `totalPages` from page 1. `totalPages` mutation, page mismatch, missing state, or a failed page is incomplete — never a silent empty catalog | Silent baseline. No OLX publication boundary and no catch-up cursor | Next poll scans the private catalog again. Stored `olx_incremental_*` keys are deleted, not resumed | `valid_empty` only when both categories complete with a structured empty catalog. Failures stay `parser_failure` | Business cards in the Private catalog are rejected and health is degraded. Incomplete scans are `coverage_degraded` | **Local collector updated.** Source-layer live PASS still requires 3 Oracle runs of `olx-private-catalog-verify` |
 | **RIELTOR** | Lviv rent search `sort=bycreated` | apartment / house | Live newest-first noted 2026-09-22 | Up to 3 pages/cat; seed page 1; catch-up cursor | Page budget + request gap | `stopAt = target−30m`; empty/crossed/HTTP | Seed commits newest | Catch-up across polls | VE vs PF classified | `coverage_degraded` | **PASS** (sort evidence dated; keep monitoring) |
 | **LUN** | Bare flats + houses Lviv URLs + live-verified `?page=N` | Two categories × `LUN_POLL_PAGE_BUDGET` (2) | Site default only — **no explicit sort param** | **PASS** `?page=2` novel ids 2026-09-26 ×3 (`/page/2` 404; offset duplicates) | Acquired cap 120/cat | End of bounded page sample (no catch-up cursor) | Silent baseline | No watermark/catch-up — deeper than page budget still unwalked | VE: RSC + 0 cards; PF: marker/parse | Cap / deeper-page fail → degraded | **PARTIAL** — page1+2 wired; deep backlog beyond budget not claimed |
 | **DIM.RIA** | Newest search `sort=created_at` + bounded details | Apt/house caps | UI “Спочатку нові” mapping in code | Search page 0 only + detail cap | Detail caps / poll budget | Cap / deferred / fail | Known-id retention | Retained ids skip re-detail | VE vs PF distinguished; body_kind classifier on PF; **historical Sep 25 PF cause unresolved** | Truncated when deferred/fail | **PARTIAL** — current live PASS_CURRENT ×3; history **UNRESOLVED** |
 
 **Historical incident A:** evidence was not retained; do not re-investigate the same dead end. Traces help *future* missing-listing forensics only.
 
-## 2. Autonomous OLX bootstrap (no manual SQL)
+## 2. OLX private catalog (no page cursor)
 
-1. **Fresh DB / no OLX keys:** seed page 1 → commit `olx_incremental_boundary_*` to newest organic → catch-up cleared. Baseline suppresses historical as “new”.
-2. **Existing baseline, no OLX watermark:** `olxBootstrapTarget` from `source_baselines.established_at` until a boundary/catch-up exists.
-3. **More pages than budget:** walk stores `olx_incremental_catchup_*` `{target, resumePage}`; next poll rechecks page 1 (new listings) then resumes deeper pages.
-4. **Restart mid catch-up:** cursor survives in SQLite; no manual edit.
-5. **Acquired-card cap:** discards cannot commit `committedBoundary` past dropped cards.
+1. Every poll scans the Private catalog from page 1 through structured `totalPages`. Apartments and houses are separate. One Chromium, concurrency=1.
+2. `search[private_business]=private` is not ownership and is not `owner_type=private`.
+3. `createdTime`, `lastRefreshTime`, and `search[order]` do not decide when the scan is complete.
+4. `olx_incremental_catchup_*` and `olx_incremental_boundary_*` are not collection inputs. A poll that returns OLX coverage deletes those keys. A stored resume page does not prove coverage.
+5. The acquired-card cap for OLX is 250 per category so the verified 140-apartment private catalog is kept whole. Hitting the cap is still incomplete coverage.
 
-Time-based stop stays off while `olx_browser_sort_status=blocked` (radius is live-verified separately).
+Historical page-budget / catch-up notes remain in code for old probes. They are labeled retired and are not the collector.
 
 ## 3. Lifecycle (isolated only — do not touch customer DB)
 
