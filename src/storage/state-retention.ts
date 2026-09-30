@@ -12,7 +12,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * diagnostic history table, so those windows are not applied to current rows.
  */
 export const STATE_RETENTION = {
+  /** Not applied. Seen rows are dedup tombstones and are not deleted by age. */
   seenInactiveMs: 30 * DAY_MS,
+  /** Not applied. Cross-source keys are dedup tombstones and are not deleted by age. */
   crossSourceIdentityMs: 90 * DAY_MS,
   sentOutboxMs: 30 * DAY_MS,
   cleanupIntervalMs: DAY_MS,
@@ -46,7 +48,9 @@ export type StateCleanupReport = {
  * Delete aged operational rows.
  * Never deletes seen listings, cross-source identities, pending/sending/failed
  * outbox rows, baselines, the poller lock, seller-policy metadata, or the
- * current source_health row. Those rows are dedup and delivery state.
+ * current source_health row. seen_listings and cross_source_identities are
+ * dedup tombstones (ids and timestamps only, no listing body). A few hundred
+ * bytes per row stays small for SQLite over several years of Lviv rentals.
  */
 export function runStateCleanupIfDue(
   db: DatabaseSync,

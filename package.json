@@ -21,6 +21,7 @@
     "live:olx:browser-extract": "tsx src/scripts/oracle-olx-browser-extract.ts",
     "live:olx:private-catalog": "tsx src/scripts/olx-private-catalog-verify.ts",
     "audit:olx:private-sellers": "tsx src/scripts/audit-olx-private-sellers.ts",
+    "backup:sqlite": "tsx src/scripts/backup-sqlite.ts",
     "live:olx:owner-detail": "tsx src/scripts/oracle-olx-owner-detail.ts",
     "live:oracle:soak": "tsx src/scripts/oracle-soak.ts",
     "test:lifecycle-smoke": "bash scripts/oracle-telegram-test/test-lifecycle-smoke.sh",

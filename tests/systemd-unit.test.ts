@@ -16,7 +16,11 @@ describe("Oracle systemd unit", () => {
     expect(service).toContain("Restart=on-failure");
     expect(service).toContain("TELEGRAM_POLL_CYCLES=0");
     expect(service).toContain("ENABLE_OLX=false");
-    expect(service).not.toMatch(/ENABLE_OLX_BROWSER=true/);
+    expect(service).toContain("ENABLE_OLX_BROWSER=true");
+    expect(service).toContain("ENABLE_RIELTOR=false");
+    expect(service).toContain("GEO_UNKNOWN_POLICY=exclude");
+    expect(service).toContain("TARGET_RADIUS_KM=15");
+    expect(service).not.toMatch(/\bnpm\b/);
     expect(service).toContain("one instance of this unit");
     expect(service).toContain("__NODE_BIN__ --import tsx ./src/scripts/test-telegram-poll.ts");
     expect(service).toContain("KillMode=control-group");

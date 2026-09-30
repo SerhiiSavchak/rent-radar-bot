@@ -67,8 +67,9 @@ const envSchema = z.object({
    */
   SELLER_POLICY: z.enum(["reject_intermediaries", "owner_only"]).default("reject_intermediaries"),
   /**
-   * Heuristic profile inventory (≥3 addresses). Default reject matches the client
-   * request. send keeps the listing while classification and cache still run.
+   * Text-family profile_likely_intermediary. Default reject.
+   * Address count is not that verdict: 3–4 precise properties stay unknown.
+   * send keeps the listing while classification and cache still run.
    */
   SELLER_PROFILE_LIKELY_POLICY: z.enum(["send", "reject"]).default("reject"),
   /**

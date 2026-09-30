@@ -394,7 +394,7 @@ export function appliedSchemaVersion(db: DatabaseSync): number {
   return tableExists(db, "listings") ? 1 : 0;
 }
 
-export function applyMigrations(db: DatabaseSync): number {
+export function applyMigrations(db: DatabaseSync, targetVersion = SCHEMA_VERSION): number {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -411,7 +411,8 @@ export function applyMigrations(db: DatabaseSync): number {
     }
   }
   current = appliedSchemaVersion(db);
-  for (let version = current + 1; version <= SCHEMA_VERSION; version += 1) {
+  const target = Math.min(targetVersion, SCHEMA_VERSION);
+  for (let version = current + 1; version <= target; version += 1) {
     const sql = MIGRATIONS[version];
     if (!sql) {
       throw new Error(`Missing SQLite migration ${version}`);
@@ -429,8 +430,11 @@ export function applyMigrations(db: DatabaseSync): number {
       throw error;
     }
   }
-  db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)").run(
-    String(SCHEMA_VERSION),
-  );
-  return SCHEMA_VERSION;
+  const applied = appliedSchemaVersion(db);
+  if (tableExists(db, "schema_meta")) {
+    db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)").run(
+      String(applied),
+    );
+  }
+  return applied;
 }

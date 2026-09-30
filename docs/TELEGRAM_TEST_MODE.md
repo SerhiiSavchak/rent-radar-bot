@@ -111,13 +111,13 @@ Schema version was 4 and is now 5. Opening the poller applies the new migration 
 
 The long-running poller (`npm run live:test-telegram:poll`) runs cleanup at process start and then at most once every 24 hours. The clock is `schema_meta.state_cleanup_at`, so a 10-minute poll does not repeat the delete. The one-shot command records health and does not run retention.
 
-| Data                                                                       | Retention                                                                             |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Seen listing inactive (`last_seen_at`)                                     | 30 days, unless an outbox row still protects it                                       |
-| Cross-source identity                                                      | 90 days, unless a pending, sending, failed, or sent-within-30-days outbox row matches |
-| Outbox `sent`                                                              | 30 days after `sent_at`                                                               |
-| Outbox `pending`, `sending`, `failed`                                      | Never deleted because of age                                                          |
-| Source baseline, poller lock, seller-policy cutover, current source health | Never deleted because of age                                                          |
+| Data                                                                       | Retention                                                        |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Seen listing (`seen_listings`)                                             | Kept. Id and timestamps only; deleting it can deliver again     |
+| Cross-source identity                                                      | Kept. Small key tombstone; deleting it can deliver again        |
+| Outbox `sent`                                                              | 30 days after `sent_at`                                          |
+| Outbox `pending`, `sending`, `failed`                                      | Never deleted because of age                                     |
+| Source baseline, poller lock, seller-policy cutover, current source health | Never deleted because of age                                     |
 
 There is no poll-diagnostic history table and no per-attempt health history, so those rows are not created and not pruned. A seen row is refreshed when a later successful poll still contains that listing.
 
