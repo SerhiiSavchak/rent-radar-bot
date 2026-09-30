@@ -44,8 +44,9 @@ export type StateCleanupReport = {
 
 /**
  * Delete aged operational rows.
- * Never deletes pending/sending/failed outbox rows, baselines, the poller lock,
- * seller-policy metadata, or the current source_health row.
+ * Never deletes seen listings, cross-source identities, pending/sending/failed
+ * outbox rows, baselines, the poller lock, seller-policy metadata, or the
+ * current source_health row. Those rows are dedup and delivery state.
  */
 export function runStateCleanupIfDue(
   db: DatabaseSync,
@@ -82,14 +83,10 @@ function runStateCleanup(
   databasePath: string | undefined,
   started: number,
 ): StateCleanupReport {
-  const seenCutoff = new Date(now.getTime() - STATE_RETENTION.seenInactiveMs).toISOString();
-  const identityCutoff = new Date(
-    now.getTime() - STATE_RETENTION.crossSourceIdentityMs,
-  ).toISOString();
   const sentCutoff = new Date(now.getTime() - STATE_RETENTION.sentOutboxMs).toISOString();
   const finishedAt = now.toISOString();
-  let seenRowsRemoved: number;
-  let crossSourceIdentitiesRemoved: number;
+  const seenRowsRemoved = 0;
+  const crossSourceIdentitiesRemoved = 0;
   let sentOutboxRowsRemoved: number;
   let externalSellerRowsRemoved: number;
   let sellerHoldRowsRemoved: number;
@@ -98,27 +95,6 @@ function runStateCleanup(
 
   db.exec("BEGIN IMMEDIATE;");
   try {
-    const identities = db
-      .prepare(
-        `DELETE FROM cross_source_identities
-         WHERE created_at < ?
-           AND NOT EXISTS (
-             SELECT 1 FROM telegram_outbox AS o
-             WHERE o.source = cross_source_identities.source
-               AND o.source_id = cross_source_identities.source_id
-               AND o.status IN ('pending', 'sending', 'failed')
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM telegram_outbox AS o
-             WHERE o.source = cross_source_identities.source
-               AND o.source_id = cross_source_identities.source_id
-               AND o.status = 'sent'
-               AND (o.sent_at IS NULL OR o.sent_at >= ?)
-           )`,
-      )
-      .run(identityCutoff, sentCutoff);
-    crossSourceIdentitiesRemoved = changed(identities);
-
     const sent = db
       .prepare(
         `DELETE FROM telegram_outbox
@@ -129,21 +105,6 @@ function runStateCleanup(
       .run(sentCutoff);
     sentOutboxRowsRemoved = changed(sent);
 
-    const seen = db
-      .prepare(
-        `DELETE FROM seen_listings
-         WHERE last_seen_at < ?
-           AND NOT EXISTS (
-             SELECT 1 FROM telegram_outbox AS o
-             WHERE (
-               (o.source = seen_listings.source AND o.source_id = seen_listings.source_id)
-               OR o.fingerprint = seen_listings.fingerprint
-             )
-             AND o.status IN ('pending', 'sending', 'failed', 'sent')
-           )`,
-      )
-      .run(seenCutoff);
-    seenRowsRemoved = changed(seen);
     externalSellerRowsRemoved = deleteExpiredSellerVerifications(db, now);
     sellerHoldRowsRemoved = deleteAbandonedSellerHolds(db, now);
     sellerProfileRowsRemoved = deleteExpiredSellerProfiles(db, now);

@@ -1,6 +1,7 @@
 import type { Listing } from "../../domain/listing.ts";
 import type { FetchResultKind } from "../../domain/source.ts";
 import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
+import { rentalTextRejectsHome } from "../../filters/property-type.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import {
   RIELTOR_CITY_PREFIX,
@@ -256,14 +257,15 @@ export function parseRieltorCard(
     url,
     title,
     location: {
-      raw:
-        [address, region].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || city || "Lviv",
+      raw: [address, region].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || city || "unknown",
       ...(city ? { city } : {}),
       ...(district ? { district } : {}),
       ...(lat !== undefined ? { latitude: lat } : {}),
       ...(lng !== undefined ? { longitude: lng } : {}),
     },
-    propertyType: options.category,
+    propertyType: rentalTextRejectsHome([title, description].filter(Boolean).join("\n"))
+      ? "unknown"
+      : options.category,
     sellerType: owner.sellerType,
     sellerConfidence: owner.confidence,
     sellerEvidence: owner.sellerEvidence,

@@ -803,21 +803,21 @@ describe("persistent source health and retention", () => {
 
     const report = runStateCleanupIfDue(db, { now, databasePath: path, force: true });
     expect(report.ran).toBe(true);
-    expect(report.seenRowsRemoved).toBe(2);
-    expect(report.crossSourceIdentitiesRemoved).toBe(2);
+    expect(report.seenRowsRemoved).toBe(0);
+    expect(report.crossSourceIdentitiesRemoved).toBe(0);
     expect(report.sentOutboxRowsRemoved).toBe(1);
     expect(report.diagnosticRowsRemoved).toBe(0);
     expect(report.databaseBytes).toBeGreaterThan(0);
     expect(existsSync(path)).toBe(true);
 
-    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-seen'")).toBe(0);
-    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-sent'")).toBe(0);
+    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-seen'")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-sent'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-seen'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-pending'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-failed'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-sent'")).toBe(1);
-    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-id'")).toBe(0);
-    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-sent'")).toBe(0);
+    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-id'")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-sent'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'keep-id'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'keep-pending'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'keep-sent'")).toBe(1);
@@ -954,7 +954,7 @@ describe("persistent source health and retention", () => {
       databasePath: path,
       force: true,
     });
-    expect(cleanup.seenRowsRemoved).toBeGreaterThan(0);
+    expect(cleanup.seenRowsRemoved).toBe(0);
     expect(store.establishedAt("domria")?.toISOString()).toBe(established);
     const replay = await runTelegramTestCycle(
       {
@@ -1116,8 +1116,9 @@ describe("persistent source health and retention", () => {
       databasePath: path,
       force: true,
     });
-    expect(report.crossSourceIdentitiesRemoved).toBe(1);
+    expect(report.crossSourceIdentitiesRemoved).toBe(0);
     expect(report.sentOutboxRowsRemoved).toBe(0);
+    expect(count(getDb(), "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'stale-other'")).toBe(1);
     expect(count(getDb(), "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source = 'lun'")).toBeGreaterThan(
       0,
     );

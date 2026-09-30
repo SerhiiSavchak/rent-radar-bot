@@ -1,5 +1,5 @@
 import { listingSchema, type Listing, type PropertyType } from "../../domain/listing.ts";
-import { detectPropertyType } from "../../filters/listing-filter.ts";
+import { rentalTextRejectsHome } from "../../filters/property-type.ts";
 import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import { olxOfferSchema, type OlxOffer } from "./olx.types.ts";
@@ -66,17 +66,19 @@ function sellerSignals(offer: OlxOffer) {
 
 function propertyTypeFromOlx(offer: OlxOffer): PropertyType {
   const categoryId = Number(offer.category?.id);
+  const text = [offer.title, offer.description].filter(Boolean).join("\n");
+  if (rentalTextRejectsHome(text)) {
+    return "unknown";
+  }
   // 1760 = long-term apartment rent; 330 = long-term house rent (see olx.source.ts).
+  // Any other or missing category stays unknown. Title text must not invent the type.
   if (categoryId === 1760) {
     return "apartment";
   }
   if (categoryId === 330) {
     return "house";
   }
-  return detectPropertyType({
-    title: offer.title,
-    categoryText: `${offer.title ?? ""} ${JSON.stringify(offer.category ?? {})}`,
-  });
+  return "unknown";
 }
 
 /**

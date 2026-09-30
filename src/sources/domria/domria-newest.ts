@@ -497,7 +497,7 @@ async function loadDomriaCandidate(
 }
 
 /**
- * Acquisition category is trusted only when the parsed type is unknown.
+ * An unknown card type stays unknown. The search category must not relabel it.
  * Explicit apartment/house contradictions are left as-is with a diagnostic note.
  */
 export function applyCategoryPropertyType(
@@ -507,7 +507,10 @@ export function applyCategoryPropertyType(
   notes: string[],
 ): Listing {
   if (listing.propertyType === "unknown") {
-    return { ...listing, propertyType: category };
+    notes.push(
+      `listing ${id} propertyType=unknown is not rewritten to search category=${category}`,
+    );
+    return listing;
   }
   if (
     (listing.propertyType === "apartment" || listing.propertyType === "house") &&

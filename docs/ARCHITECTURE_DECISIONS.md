@@ -125,13 +125,11 @@ SQLite stores current operations, not a historical archive. Schema 4 is the prev
 
 The canonical poller runs cleanup on startup and then at most once every 24 hours (`schema_meta.state_cleanup_at`). One cleanup pass deletes:
 
-- `seen_listings` with `last_seen_at` older than 30 days, unless a pending, sending, failed, or still-kept sent outbox row matches them
-- `cross_source_identities` older than 90 days, unless a pending, sending, failed, or sent-within-30-days outbox row matches that listing
 - `telegram_outbox` rows with status `sent` and `sent_at` older than 30 days
 - `external_seller_verifications` rows whose `expires_at` has passed
 - `seller_verification_holds` rows whose `release_at` is more than 24 hours behind the cleanup clock
 
-Age never deletes pending, sending, or failed outbox rows, `source_baselines`, `poller_lock`, seller-policy keys, or the current `source_health` row. There is no poll-diagnostic history table and no source-health history table, so the 14-day and 30-day history windows are not applied.
+Age never deletes `seen_listings`, `cross_source_identities`, pending, sending, or failed outbox rows, `source_baselines`, `poller_lock`, seller-policy keys, or the current `source_health` row. There is no poll-diagnostic history table and no source-health history table, so the 14-day and 30-day history windows are not applied.
 
 ## ADR: acquired catalog cards are kept; RIELTOR walks newest-first until a publication boundary
 

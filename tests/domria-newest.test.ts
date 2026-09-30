@@ -242,7 +242,7 @@ describe("DIM.RIA newest-first acquisition", () => {
     expect(secondGet.calls.some((url) => url.includes("realty/data/41"))).toBe(false);
   });
 
-  it("applies house search category when parsed property type is unknown", async () => {
+  it("does not relabel an unknown realty type as a house", async () => {
     const get = scriptedGet({
       "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([50]) },
       "realty/data/50": {
@@ -262,11 +262,11 @@ describe("DIM.RIA newest-first acquisition", () => {
       get,
       extractState: () => pageState("50", 1436),
     });
-    expect(result.listings[0]?.propertyType).toBe("house");
+    expect(result.listings[0]?.propertyType).toBe("unknown");
     expect(result.listings[0]?.sellerType).toBe("owner");
   });
 
-  it("applies apartment search category when parsed property type is unknown", async () => {
+  it("does not relabel an unknown realty type as an apartment", async () => {
     const get = scriptedGet({
       "searchEngine/v2/": { status: 200, url: "search", bodyText: searchBody([51]) },
       "realty/data/51": {
@@ -286,7 +286,7 @@ describe("DIM.RIA newest-first acquisition", () => {
       get,
       extractState: () => pageState("51", 1436),
     });
-    expect(result.listings[0]?.propertyType).toBe("apartment");
+    expect(result.listings[0]?.propertyType).toBe("unknown");
   });
 
   it("does not borrow an unrelated page 1437 owner or intermediary role", async () => {
