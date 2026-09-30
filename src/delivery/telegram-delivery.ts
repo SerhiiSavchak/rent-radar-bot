@@ -38,6 +38,24 @@ export function readTelegramRetryAfterMs(
   return undefined;
 }
 
+/** Telegram parameters.migrate_to_chat_id. The value is never a built-in production id. */
+export function readTelegramMigrateToChatId(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { parameters?: { migrate_to_chat_id?: unknown } };
+    const id = parsed.parameters?.migrate_to_chat_id;
+    if (typeof id === "number" && Number.isFinite(id)) {
+      return String(Math.trunc(id));
+    }
+    if (typeof id === "string" && /^-?\d+$/.test(id.trim())) {
+      return id.trim();
+    }
+  } catch {
+    // Some proxies return a non-JSON fragment. The regex below still reads the field.
+  }
+  const match = /"migrate_to_chat_id"\s*:\s*(-?\d+)/.exec(body);
+  return match?.[1];
+}
+
 export function classifyTelegramFailure(
   status: number | undefined,
   body: string,
@@ -47,6 +65,9 @@ export function classifyTelegramFailure(
   }
   if (status === 429 || status >= 500) {
     return { errorClass: "transient", parseError: false, reason: `HTTP ${status}` };
+  }
+  if (status === 400 && readTelegramMigrateToChatId(body)) {
+    return { errorClass: "transient", parseError: false, reason: "chat_migrated" };
   }
   const text = body.toLowerCase();
   if (

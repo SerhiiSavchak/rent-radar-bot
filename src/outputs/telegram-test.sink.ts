@@ -2,6 +2,7 @@ import {
   classifyTelegramFailure,
   fitTelegramMessage,
   IN_PROCESS_RETRY_AFTER_CAP_MS,
+  readTelegramMigrateToChatId,
   readTelegramRetryAfterMs,
   type TelegramErrorClass,
 } from "../delivery/telegram-delivery.ts";
@@ -32,6 +33,8 @@ export type TelegramTestSinkOptions = {
   maxRetries: number;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  /** Called synchronously when Telegram returns migrate_to_chat_id, before the retry. */
+  onChatMigrated?: (chatId: string) => void;
 };
 
 export type TelegramSendResult = {
@@ -47,6 +50,7 @@ export type TelegramSendResult = {
   retryAfterMs?: number;
   parseError?: boolean;
   bodies?: string[];
+  migratedChatId?: string;
 };
 
 export class TelegramTestModeError extends Error {
@@ -390,6 +394,8 @@ export function formatListingTelegramHtml(
   },
 ): string {
   const facts = propertyFacts(listing);
+  const headline = propertyHeadline(listing);
+  const title = listing.title?.trim();
   const addressDetail = formatLocationAddressDetailLine(listing);
   const published = listing.publishedAt
     ? `Опубліковано: ${formatClientPublishedAt(listing.publishedAt)}`
@@ -398,7 +404,8 @@ export function formatListingTelegramHtml(
   const html = [
     "🧪 <b>TEST</b>",
     "",
-    `🏠 <b>${escapeHtml(propertyHeadline(listing))}</b>`,
+    `🏠 <b>${escapeHtml(headline)}</b>`,
+    ...(title && title !== headline ? [escapeHtml(title)] : []),
     "",
     `💰 <b>${escapeHtml(formatPrice(listing))}</b>`,
     `📍 ${escapeHtml(formatLocationAreaLine(listing))}`,
@@ -470,6 +477,15 @@ export class TelegramTestSink {
     return this.options.chatId;
   }
 
+  /** Later sends in this process use the migrated destination. */
+  useChatId(chatId: string): void {
+    this.options.chatId = chatId;
+  }
+
+  setChatMigrationHandler(handler: (chatId: string) => void): void {
+    this.options.onChatMigrated = handler;
+  }
+
   get dryRun(): boolean {
     return this.options.dryRun;
   }
@@ -528,9 +544,15 @@ export class TelegramTestSink {
       };
     }
     let attempts = 0;
+    let activeChatId = chatId;
+    let migratedChatId: string | undefined;
     for (let i = 0; i < chunks.length; i += 1) {
       const chunk = chunks[i]!;
-      const chunkResult = await this.sendChunk(chunk, chatId, html);
+      const chunkResult = await this.sendChunk(chunk, activeChatId, html);
+      if (chunkResult.migratedChatId) {
+        migratedChatId = chunkResult.migratedChatId;
+        activeChatId = chunkResult.migratedChatId;
+      }
       attempts += chunkResult.attempts;
       if (!chunkResult.ok) {
         return {
@@ -538,8 +560,9 @@ export class TelegramTestSink {
           dryRun: false,
           ...(chunkResult.status !== undefined ? { status: chunkResult.status } : {}),
           attempts,
-          chatId,
+          chatId: activeChatId,
           messageCount: i,
+          ...(migratedChatId ? { migratedChatId } : {}),
           ...(chunkResult.errorSafe !== undefined ? { errorSafe: chunkResult.errorSafe } : {}),
           ...(chunkResult.errorClass !== undefined ? { errorClass: chunkResult.errorClass } : {}),
           ...(chunkResult.failureReason !== undefined
@@ -552,7 +575,14 @@ export class TelegramTestSink {
         };
       }
     }
-    return { ok: true, dryRun: false, attempts, chatId, messageCount: chunks.length };
+    return {
+      ok: true,
+      dryRun: false,
+      attempts,
+      chatId: activeChatId,
+      messageCount: chunks.length,
+      ...(migratedChatId ? { migratedChatId } : {}),
+    };
   }
 
   private async sendChunk(
@@ -568,9 +598,12 @@ export class TelegramTestSink {
     failureReason?: string;
     retryAfterMs?: number;
     parseError?: boolean;
+    migratedChatId?: string;
   }> {
+    let destination = chatId;
     let attempts = 0;
     let lastStatus: number | undefined;
+    let migratedChatId: string | undefined;
     let lastError: string | undefined;
     let lastClass: TelegramErrorClass | undefined;
     let lastReason: string | undefined;
@@ -585,7 +618,7 @@ export class TelegramTestSink {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            chat_id: chatId,
+            chat_id: destination,
             text,
             ...(html ? { parse_mode: "HTML" as const } : {}),
             disable_web_page_preview: true,
@@ -594,7 +627,12 @@ export class TelegramTestSink {
         });
         lastStatus = response.status;
         if (response.ok) {
-          return { ok: true, attempts, status: response.status };
+          return {
+            ok: true,
+            attempts,
+            status: response.status,
+            ...(migratedChatId ? { migratedChatId } : {}),
+          };
         }
         const rawBody = await response.text();
         lastError = redactTelegramSecrets(
@@ -605,6 +643,22 @@ export class TelegramTestSink {
         lastClass = classified.errorClass;
         lastReason = classified.reason;
         lastParseError = classified.parseError;
+        if (classified.reason === "chat_migrated") {
+          const migrated = readTelegramMigrateToChatId(rawBody);
+          if (migrated && migrated !== destination) {
+            destination = migrated;
+            migratedChatId = migrated;
+            this.options.chatId = migrated;
+            try {
+              this.options.onChatMigrated?.(migrated);
+            } catch {
+              // The in-memory destination still changes. The caller persists the result field.
+            }
+            if (attempt < this.options.maxRetries) {
+              continue;
+            }
+          }
+        }
         if (response.status === 429) {
           const retryAfterMs = readTelegramRetryAfterMs(
             response.headers.get("retry-after"),
@@ -649,6 +703,7 @@ export class TelegramTestSink {
       ...(lastReason !== undefined ? { failureReason: lastReason } : {}),
       ...(lastRetryAfterMs !== undefined ? { retryAfterMs: lastRetryAfterMs } : {}),
       ...(lastParseError ? { parseError: true } : {}),
+      ...(migratedChatId ? { migratedChatId } : {}),
     };
   }
 }
@@ -667,5 +722,6 @@ export function createTelegramTestSinkFromEnv(
     maxRetries: overrides.maxRetries ?? 2,
     ...(overrides.fetchImpl ? { fetchImpl: overrides.fetchImpl } : {}),
     ...(overrides.sleep ? { sleep: overrides.sleep } : {}),
+    ...(overrides.onChatMigrated ? { onChatMigrated: overrides.onChatMigrated } : {}),
   });
 }

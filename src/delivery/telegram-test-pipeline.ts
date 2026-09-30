@@ -729,6 +729,9 @@ async function deliverListing(
 
   try {
     const result: TelegramSendResult = await deps.sink.sendListing(listing, { deliveryKind });
+    if (result.migratedChatId) {
+      store?.rememberTelegramChatId(result.migratedChatId);
+    }
     if (result.ok) {
       if (outbox && id !== undefined) {
         outbox.markSent(id);

@@ -350,6 +350,20 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     return rows.map(rowToOutboxItem);
   }
 
+  rememberTelegramChatId(chatId: string): void {
+    if (!/^-?\d+$/.test(chatId)) {
+      return;
+    }
+    this.db
+      .prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)")
+      .run("telegram_effective_chat_id", chatId);
+  }
+
+  readTelegramChatId(): string | undefined {
+    const value = this.readMeta("telegram_effective_chat_id");
+    return value && /^-?\d+$/.test(value) ? value : undefined;
+  }
+
   seenFingerprints(): string[] {
     const rows = this.db.prepare("SELECT fingerprint FROM seen_listings").all() as SeenRow[];
     return rows.map((row) => row.fingerprint);
