@@ -12,14 +12,17 @@ export const UNKNOWN_SELLER_CACHE_MS = DAY_MS;
 /** Aligns with the seller hold: the next poll must be able to retry. Confirmed verdicts stay long-lived. */
 export const TRANSIENT_SELLER_CACHE_MS = 60 * 1000;
 
-const OWNER_LABEL = /^власник$/i;
-const REALTOR_LABEL = /^рієлтор$/i;
+/** Exact platform badge text only — never free-form title/description phrases. */
+const OWNER_LABEL = /^(?:власник|собственник|owner)$/i;
+const REALTOR_LABEL = /^(?:рієлтор|риелтор|realtor)$/i;
 const DETAIL_PATH = /^\/([a-z0-9-]+)\/(flats-rent|houses-rent)\/view\/(\d+)\/?$/i;
 
 export type StoredSellerVerdict =
   | "confirmed_owner"
   | "confirmed_intermediary"
   | "profile_likely_intermediary"
+  | "seller_registration_year_2026"
+  | "seller_inventory_limit"
   | "unknown"
   | "rate_limited"
   | "transport_failure"
@@ -27,13 +30,19 @@ export type StoredSellerVerdict =
 
 export type LinkedSellerOutcome =
   | "same_cycle_confirmed_agent"
+  | "same_cycle_registration_year_excluded"
+  | "same_cycle_inventory_limit"
   | "same_cycle_resolved"
   | "cache_confirmed_agent"
   | "cache_confirmed_owner"
+  | "cache_registration_year_excluded"
+  | "cache_inventory_limit"
   | "cache_unknown"
   | "detail_confirmed_agent"
   | "detail_confirmed_owner"
   | "detail_profile_likely"
+  | "detail_registration_year_excluded"
+  | "detail_inventory_limit"
   | "detail_unknown"
   | "detail_rate_limited"
   | "detail_transport_failure"
@@ -59,13 +68,19 @@ export type RieltorDetailPage = {
 
 export type LinkedSellerVerificationCounts = {
   sameCycleConfirmedAgent: number;
+  sameCycleRegistrationYearExcluded: number;
+  sameCycleInventoryLimit: number;
   sameCycleResolved: number;
   cacheConfirmedAgent: number;
   cacheConfirmedOwner: number;
+  cacheRegistrationYearExcluded: number;
+  cacheInventoryLimit: number;
   cacheUnknown: number;
   detailConfirmedAgent: number;
   detailConfirmedOwner: number;
   detailProfileLikely: number;
+  detailRegistrationYearExcluded: number;
+  detailInventoryLimit: number;
   detailUnknown: number;
   detailRateLimited: number;
   detailTransportFailure: number;
@@ -78,13 +93,19 @@ export type LinkedSellerVerificationCounts = {
 export function emptyLinkedSellerVerification(): LinkedSellerVerificationCounts {
   return {
     sameCycleConfirmedAgent: 0,
+    sameCycleRegistrationYearExcluded: 0,
+    sameCycleInventoryLimit: 0,
     sameCycleResolved: 0,
     cacheConfirmedAgent: 0,
     cacheConfirmedOwner: 0,
+    cacheRegistrationYearExcluded: 0,
+    cacheInventoryLimit: 0,
     cacheUnknown: 0,
     detailConfirmedAgent: 0,
     detailConfirmedOwner: 0,
     detailProfileLikely: 0,
+    detailRegistrationYearExcluded: 0,
+    detailInventoryLimit: 0,
     detailUnknown: 0,
     detailRateLimited: 0,
     detailTransportFailure: 0,

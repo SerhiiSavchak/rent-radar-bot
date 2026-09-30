@@ -2,7 +2,6 @@ import type { SellerConfidence, SellerType } from "../domain/listing.ts";
 import {
   classifySellerIdentityName,
   classifySellerText,
-  hasExplicitIntermediaryText,
   hasExplicitSelfDeclaredOwnerText,
   hasMisleadingOwnerSeekingText,
   hasOwnerText,
@@ -26,7 +25,8 @@ export type SellerEvidenceItem = {
 /**
  * Conceptual seller states. Delivery still follows `isSellerEligible`.
  * `likely_agent` is reserved for a weak intermediary hint that must stay sendable.
- * v1 does not emit it: OLX `isBusiness` and a LUN external site name stay `unknown`.
+ * v1 does not emit it for soft heuristics (e.g. LUN external site name alone).
+ * Trusted OLX Business (`isBusiness` / `platformBusiness`) is `confirmed_agent`.
  * Evidence the existing gate already treats as an explicit intermediary is `confirmed_agent`.
  */
 export type SellerAssessmentState =
@@ -72,6 +72,10 @@ export type OwnerSignals = {
   agencyName?: string | null | undefined;
   /** Profile / company / seller display name — judged in identity-name context. */
   sellerIdentityName?: string | null | undefined;
+  /**
+   * Trusted OLX account-type flag (`offer.isBusiness` / `offer.business`).
+   * Asymmetric: true is strong commercial evidence; false is Private and never ownership.
+   */
   isBusiness?: boolean | undefined;
   withoutCommission?: boolean | undefined;
   text?: string | undefined;
@@ -132,7 +136,12 @@ function emptyClassification(
 /**
  * Owner detection is evidence-based.
  * Title/description phrases never promote sellerType to owner by themselves.
- * Generic business/private account flags are not agency or ownership proof.
+ * Contract: `sellerType === "owner"` is set only from trusted `platformOwner` and is
+ * always paired with `ownerEvidenceLevel === "platform_confirmed"`. Free text and
+ * Private account type cannot produce either field.
+ * Trusted OLX Business (`platformBusiness` or `isBusiness`) is strong commercial
+ * reject evidence under `reject_intermediaries`. Private (`platformPrivate`) never
+ * implies ownership.
  */
 function pushItem(items: SellerEvidenceItem[], item: SellerEvidenceItem): void {
   items.push(item);
@@ -145,6 +154,8 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     pushItem(items, { source: "adapter", type: "note", value: note, strength: "context" });
   }
   const text = signals.text;
+  const trustedBusiness =
+    signals.platformBusiness === true || signals.isBusiness === true;
 
   if (signals.platformOwner === true) {
     evidence.push("platform seller type = owner");
@@ -178,12 +189,14 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     });
   }
   if (signals.isBusiness === true) {
-    evidence.push("platform account type = business (not proof of agency/realtor status)");
+    evidence.push(
+      "platform account type = business (trusted commercial/intermediary evidence)",
+    );
     pushItem(items, {
       source: "account",
       type: "business_flag",
       value: "true",
-      strength: "weak",
+      strength: "strong",
     });
   }
   if (signals.offerTypeLabel) {
@@ -278,21 +291,16 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
       strength: "weak",
     });
   }
-  if (text && hasExplicitIntermediaryText(text)) {
-    evidence.push(
-      "listing text contains explicit agency/realtor self-description or commission offer",
-    );
-    pushItem(items, {
-      source: "listing_text",
-      type: "intermediary_self_description",
-      value: "explicit_intermediary",
-      strength: "strong",
-    });
-  }
 
   const judged = classifySellerText(text);
   if (judged.level === "confirmed") {
     evidence.push(`seller text confirmed: ${judged.strongSignals.join(", ")}`);
+    pushItem(items, {
+      source: "listing_text",
+      type: "seller_text_strong_intermediary",
+      value: judged.strongSignals[0] ?? "strong_intermediary",
+      strength: "strong",
+    });
   } else if (judged.level === "likely") {
     evidence.push(`seller text likely: ${judged.supportingFamilies.join("+")}`);
   }
@@ -303,29 +311,26 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   const agency = hasAgencyMarker(signals);
   const agentCopy = judged.level === "confirmed";
   const explicitIntermediaryRole =
-    signals.platformAgent === true || signals.platformBusiness === true || agency || agentCopy;
+    signals.platformAgent === true || trustedBusiness || agency || agentCopy;
   const ownerClaim = hasExplicitSelfDeclaredOwnerText(text);
   const selfDeclared = ownerClaim && !explicitIntermediaryRole && judged.level !== "likely";
   const textLevel =
     judged.level === "likely" && !explicitIntermediaryRole ? "likely" : judged.level;
   const aggregatorOwner = signals.aggregatorOwner === true;
 
-  if (signals.platformOwner === true && explicitIntermediaryRole && !aggregatorOwner) {
-    uniqueEvidence.push("platform-confirmed owner overrides intermediary evidence");
-  }
-  if (signals.platformOwner === true && aggregatorOwner && explicitIntermediaryRole) {
-    uniqueEvidence.push("aggregator owner claim yields to exact intermediary evidence");
-  }
-
   if (signals.platformOwner === true) {
-    if (aggregatorOwner && explicitIntermediaryRole) {
-      return emptyClassification(
-        "unknown",
-        ownerClaim || aggregatorOwner ? "conflict" : "intermediary",
-        uniqueEvidence,
-        items,
-        { confidence: "high", sellerTextLevel: agentCopy ? "confirmed" : "unknown" },
+    if (explicitIntermediaryRole) {
+      // Trusted platform owner + strong intermediary (text/agency/business/agent)
+      // contradict. Prefer conflict reject over silently confirming or clearing ownership.
+      uniqueEvidence.push(
+        aggregatorOwner
+          ? "aggregator owner claim yields to exact intermediary evidence"
+          : "platform owner conflicts with strong intermediary evidence",
       );
+      return emptyClassification("unknown", "conflict", uniqueEvidence, items, {
+        confidence: "high",
+        sellerTextLevel: agentCopy ? "confirmed" : "unknown",
+      });
     }
     return emptyClassification("owner", "platform_confirmed", uniqueEvidence, items, {
       confidence: "high",
@@ -346,7 +351,7 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     );
   }
 
-  if (signals.platformBusiness === true) {
+  if (trustedBusiness) {
     return emptyClassification(
       "business",
       ownerClaim ? "conflict" : "intermediary",

@@ -30,6 +30,7 @@ import {
 import { createCollectionAdapters } from "../collection/create-source-adapters.ts";
 import { openDurableRuntime, PollerLockError } from "../storage/durable-runtime.ts";
 import { writeHeartbeat } from "../storage/heartbeat.ts";
+import { resolveReleaseCommit } from "../storage/release-commit.ts";
 import { waitMsUntilNextPollStart } from "../delivery/poll-cadence.ts";
 import { resolvePollProcessExitCode } from "../delivery/poll-process-exit.ts";
 import { readOlxDisplayedPrices } from "../sources/olx/olx-display-price.ts";
@@ -66,6 +67,12 @@ try {
     lockHolder: "telegram-poll",
   });
   closeRuntime = () => runtime.close();
+  const storedChatId = runtime.store.readTelegramChatId();
+  if (storedChatId) {
+    sink.useChatId(storedChatId);
+  }
+  sink.setChatMigrationHandler((chatId) => runtime.store.rememberTelegramChatId(chatId));
+  const releaseCommit = resolveReleaseCommit();
   const heartbeatPath =
     process.env.HEARTBEAT_PATH ?? join(dirname(config.databasePath), "heartbeat.json");
   const dryRun = sink.dryRun;
@@ -112,7 +119,7 @@ try {
     state: "started",
     pid: process.pid,
     bootId: runtime.lock.bootId,
-    commit: process.env.RENT_RADAR_COMMIT?.trim() || process.env.SOAK_COMMIT?.trim() || "unknown",
+    commit: releaseCommit,
     schemaVersion: runtime.schemaVersion,
     intervalMs,
     unbounded,
@@ -201,7 +208,7 @@ try {
       state: "cycle",
       pid: process.pid,
       bootId: runtime.lock.bootId,
-      commit: process.env.RENT_RADAR_COMMIT?.trim() || process.env.SOAK_COMMIT?.trim() || "unknown",
+      commit: releaseCommit,
       cycle,
       cycleElapsedMs,
       intervalMs,
@@ -213,6 +220,11 @@ try {
       decisionTraceTruncated: report.decisionTrace?.truncated ?? false,
       decisionTraceDropped: report.decisionTrace?.dropped ?? 0,
       dryRun: report.dryRun,
+      sources: report.sourceAttempts.map((attempt) => ({
+        source: attempt.source,
+        ok: attempt.ok,
+        resultKind: attempt.resultKind ?? null,
+      })),
     });
     if (report.sentFailed > 0 || report.hasSourceFailures) {
       operationalFailureObserved = true;
@@ -258,6 +270,8 @@ try {
   writeHeartbeat(heartbeatPath, {
     state: stop ? "stopped" : "done",
     pid: process.pid,
+    bootId: runtime.lock.bootId,
+    commit: releaseCommit,
     cyclesAttempted,
     totalSentOk,
     totalSentFailed,

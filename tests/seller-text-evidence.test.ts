@@ -110,8 +110,8 @@ describe("seller text evidence", () => {
     },
   );
 
-  it("does not treat OLX isBusiness alone as intermediary", () => {
-    expect(eligible("Оренда", { isBusiness: true }).send).toBe(true);
+  it("rejects trusted OLX isBusiness as intermediary", () => {
+    expect(eligible("Оренда", { isBusiness: true }).send).toBe(false);
   });
 
   it.each([
@@ -160,20 +160,20 @@ describe("seller text evidence", () => {
     expect(classifySellerText("представнику агентства нерухомості").level).toBe("confirmed");
   });
 
-  it("lets a platform-confirmed owner override strong text and still drops a structured agency", () => {
-    expect(classifySellerText("Ксенія АН").level).toBe("unknown");
+  it("platform-confirmed owner conflicts with strong text; structured agency still drops", () => {
+    expect(classifySellerText("Ксенія АН").level).toBe("confirmed");
     const owner = classifyOwner({
       platformOwner: true,
       text: "рієлторську комісію - 100 %",
     });
-    expect(owner.sellerType).toBe("owner");
-    expect(owner.sellerEvidence.join(" ")).toContain("overrides intermediary evidence");
+    expect(owner.ownerEvidenceLevel).toBe("conflict");
+    expect(owner.sellerType).not.toBe("owner");
     expect(
       isSellerEligible({
         sellerType: owner.sellerType,
         metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel },
       }),
-    ).toBe(true);
+    ).toBe(false);
     const mixed = classifyOwner({
       agencyName: "АН Золотий дім",
       text: "від власника",
@@ -255,7 +255,7 @@ describe("seller evidence review gaps", () => {
   it("rejects Ксенія АН in the OLX display/profile name as agency brand", () => {
     const listing = olx("Ксенія АН", "Оренда квартири");
     expect(sends(listing)).toBe(false);
-    expect(classifySellerText("Ксенія АН").supportingFamilies).toEqual(["agency_brand"]);
+    expect(classifySellerText("Ксенія АН").level).toBe("confirmed");
     expect(classifySellerIdentityName("Ксенія АН").level).toBe("confirmed");
   });
 
@@ -283,8 +283,8 @@ describe("seller evidence review gaps", () => {
     expect(sends(rieltor("Рієлтор", "Світла квартира"))).toBe(false);
   });
 
-  it("keeps an explicit RIELTOR owner even when the description has commission text", () => {
-    expect(sends(rieltor("Власник", "рієлторська комісія 50%"))).toBe(true);
+  it("rejects an explicit RIELTOR owner when the description has strong commission text", () => {
+    expect(sends(rieltor("Власник", "рієлторська комісія 50%"))).toBe(false);
   });
 
   it.each([
@@ -373,22 +373,21 @@ describe("seller evidence review gaps", () => {
     "агентство недвижимости аренда",
     "агентство нерухомості не цікавить",
     "агентство недвижимости не интересует",
-  ])("does not confirm a lowercase nominative agency continuation: %s", (text) => {
+  ])("confirms bare agency realty phrase as strong intermediary: %s", (text) => {
     const judged = classifySellerText(text);
-    expect(judged.strongSignals).not.toContain("агентство нерухомості");
-    expect(judged.strongSignals).not.toContain("агенція нерухомості");
-    expect(judged.strongSignals).not.toContain("агентство недвижимости");
-    expect(judged.level).not.toBe("confirmed");
+    expect(judged.level).toBe("confirmed");
+    expect(judged.strongSignals.some((s) => /агентств|агенці/i.test(s))).toBe(true);
+    expect(eligible(text).send).toBe(false);
   });
 
-  it("treats a cased АН brand as supporting and ignores a bare acronym", () => {
-    expect(classifySellerText("Ксенія АН").supportingFamilies).toEqual(["agency_brand"]);
-    expect(classifySellerText("Ксенія Ан").supportingFamilies).toEqual(["agency_brand"]);
-    expect(classifySellerText("АН Золотий Дім").level).toBe("unknown");
-    expect(classifySellerText("АН Золотий Дім").supportingFamilies).toEqual(["agency_brand"]);
-    expect(classifySellerText("Ксенія").supportingFamilies).toEqual([]);
-    expect(classifySellerText("АН").strongSignals).toEqual([]);
-    expect(classifySellerText("АН").supportingFamilies).toEqual([]);
+  it("treats lexical АН as strong intermediary, not a weak supporting family", () => {
+    expect(classifySellerText("Ксенія АН").level).toBe("confirmed");
+    expect(classifySellerText("Ксенія Ан").level).toBe("confirmed");
+    expect(classifySellerText("АН Золотий Дім").level).toBe("confirmed");
+    expect(classifySellerText("АН Золотий Дім").strongSignals).toContain("АН");
+    expect(classifySellerText("Ксенія").level).toBe("unknown");
+    expect(classifySellerText("АН").level).toBe("confirmed");
+    expect(classifySellerText("АН").strongSignals).toContain("АН");
   });
 
   it("counts only ключі after a protected anti-realtor collaboration phrase", () => {

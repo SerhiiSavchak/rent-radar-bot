@@ -4,12 +4,19 @@ function wrapQuotedState(state: unknown): string {
   return JSON.stringify(JSON.stringify(state));
 }
 
-export function derivedOracleOfferDetailHtml(ad: unknown): string {
+export function derivedOracleOfferDetailHtml(
+  ad: unknown,
+  options?: { memberSince?: string },
+): string {
   const record = ad as { url?: string; id?: number };
+  const memberSince = options?.memberSince
+    ? `<p data-testid="member-since">на OLX з <span>${options.memberSince}</span></p>`
+    : "";
   return `<!DOCTYPE html><html lang="uk"><head><title>OLX</title>
 <link rel="canonical" href="${record.url ?? ""}">
 </head><body>
 <a href="${record.url ?? "/d/uk/obyavlenie/x-ID10xy7c.html"}">offer</a>
+${memberSince}
 <script>window.__PRERENDERED_STATE__ = ${wrapQuotedState({ ad: { ad } })};</script>
 </body></html>`;
 }

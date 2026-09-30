@@ -12,6 +12,7 @@ import {
   emptyOlxBrowserExtractResult,
   mapOlxBrowserExtractToFetchResult,
 } from "../src/sources/olx/olx-browser.source.ts";
+import { OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY } from "../src/sources/olx/olx-browser.coverage.ts";
 import { rieltorCatchupKey } from "../src/sources/rieltor/rieltor-incremental.ts";
 import { closeDb, getDb } from "../src/storage/db.ts";
 import { DurableDeliveryStore } from "../src/storage/durable-delivery-store.ts";
@@ -366,7 +367,10 @@ describe("OLX acquired-card mapping", () => {
   }
 
   it("marks a trimmed browser extract as truncated coverage and keeps the capped cards", () => {
-    const apartments = Array.from({ length: 121 }, (_, index) => card(`a${index + 1}`, "apartment"));
+    const apartments = Array.from(
+      { length: OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY + 1 },
+      (_, index) => card(`a${index + 1}`, "apartment"),
+    );
     const houses = [card("h1", "house"), card("h2", "house")];
     const mapped = mapOlxBrowserExtractToFetchResult(
       emptyOlxBrowserExtractResult({
@@ -377,9 +381,13 @@ describe("OLX acquired-card mapping", () => {
       { startedMs: Date.now() },
     );
     expect(mapped.resultKind).toBe("ok");
-    expect(mapped.listings).toHaveLength(122);
+    expect(mapped.listings).toHaveLength(OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY + 2);
     expect(mapped.listings.filter((item) => item.propertyType === "house")).toHaveLength(2);
-    expect(mapped.listings.some((item) => item.sourceId === "a121")).toBe(false);
+    expect(
+      mapped.listings.some(
+        (item) => item.sourceId === `a${OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY + 1}`,
+      ),
+    ).toBe(false);
     expect(mapped.coverage?.coverageTruncated).toBe(true);
     expect(mapped.coverage?.boundaryReached).toBe(false);
     expect(mapped.health.healthy).toBe(false);

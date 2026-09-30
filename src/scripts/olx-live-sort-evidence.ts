@@ -2,7 +2,10 @@
  * Source-layer live evidence: OLX HTML newest-first sort only.
  * Not production. Requires Playwright. Does not enable time-stop.
  *
- * Uses exact production catalog URL builder (dist=15, order=created_at:desc).
+ * Historical sort probe. Not the production collector.
+ * Production URLs are Private-only and do not send search[order].
+ * This probe opts into order and opts out of the Private filter so it still
+ * measures the unfiltered catalog sort behavior. Sort does not prove coverage.
  * PASS (≥3 cycles, listing-level):
  * - organic createdTime non-increasing within page 1 and page 2
  * - page2 newest organic createdTime ≤ page1 oldest organic createdTime
@@ -162,8 +165,16 @@ async function fetchPage(url: string, pageNumber: number) {
 }
 
 async function oneCycle(cycle: number) {
-  const page1Url = buildOlxBrowserCategoryUrl(CATEGORY, { page: 1 });
-  const page2Url = buildOlxBrowserCategoryUrl(CATEGORY, { page: 2 });
+  const page1Url = buildOlxBrowserCategoryUrl(CATEGORY, {
+    page: 1,
+    orderCreatedDesc: true,
+    privateOnly: false,
+  });
+  const page2Url = buildOlxBrowserCategoryUrl(CATEGORY, {
+    page: 2,
+    orderCreatedDesc: true,
+    privateOnly: false,
+  });
   const page1 = await fetchPage(page1Url, 1);
   await new Promise((r) => setTimeout(r, 1_200));
   const page2 = await fetchPage(page2Url, 2);

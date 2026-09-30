@@ -1,6 +1,7 @@
 import type { Listing } from "../../domain/listing.ts";
 import type { FetchResultKind } from "../../domain/source.ts";
 import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
+import { rentalTextRejectsHome } from "../../filters/property-type.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import {
   RIELTOR_CITY_PREFIX,
@@ -25,8 +26,9 @@ export type RieltorPageInspection = {
 
 const LVIV_NAME = /львов/i;
 const EMPTY_MARKET = /пропозицій не знайдено/i;
-const OWNER_LABEL = /^власник$/i;
-const REALTOR_LABEL = /^рієлтор$/i;
+/** Exact platform badge text only — never free-form title/description phrases. */
+const OWNER_LABEL = /^(?:власник|собственник|owner)$/i;
+const REALTOR_LABEL = /^(?:рієлтор|риелтор|realtor)$/i;
 
 export function buildRieltorSearchUrl(
   category: RieltorCategory,
@@ -255,14 +257,15 @@ export function parseRieltorCard(
     url,
     title,
     location: {
-      raw:
-        [address, region].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || city || "Lviv",
+      raw: [address, region].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || city || "unknown",
       ...(city ? { city } : {}),
       ...(district ? { district } : {}),
       ...(lat !== undefined ? { latitude: lat } : {}),
       ...(lng !== undefined ? { longitude: lng } : {}),
     },
-    propertyType: options.category,
+    propertyType: rentalTextRejectsHome([title, description].filter(Boolean).join("\n"))
+      ? "unknown"
+      : options.category,
     sellerType: owner.sellerType,
     sellerConfidence: owner.confidence,
     sellerEvidence: owner.sellerEvidence,
@@ -272,6 +275,7 @@ export function parseRieltorCard(
       ownerEvidenceLevel: owner.ownerEvidenceLevel,
       platformRoleLabel: roleLabel ?? null,
       ...sellerAnnotation(owner),
+      ...(address ? { streetAddress: address } : {}),
       coordinatePrecision: lat !== undefined && lng !== undefined ? "unspecified_point" : "missing",
       timestampPrecision: publishedAt
         ? "jsonld_availabilityStarts_seconds_unknown_semantics"

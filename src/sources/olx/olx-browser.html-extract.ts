@@ -197,19 +197,83 @@ export function inspectPrerenderedState(html: string): PrerenderedStateInspectio
 
 /** Evidenced Oracle path: decodedState.listing.listing.ads */
 export function extractListingAdsFromPrerenderedState(state: unknown): unknown[] {
+  const inner = listingListingRecord(state);
+  const ads = inner?.ads;
+  return Array.isArray(ads) ? ads : [];
+}
+
+export type OlxStructuredCatalogPage = {
+  /** 1-based logical page. Live OLX `pageNumber` is 0-based and is converted only in the reader. */
+  pageNumber: number;
+  totalPages: number;
+  totalElements: number;
+};
+
+function listingListingRecord(state: unknown): Record<string, unknown> | undefined {
   if (!state || typeof state !== "object") {
-    return [];
+    return undefined;
   }
   const listing = (state as { listing?: unknown }).listing;
   if (!listing || typeof listing !== "object") {
-    return [];
+    return undefined;
   }
   const inner = (listing as { listing?: unknown }).listing;
-  if (!inner || typeof inner !== "object") {
-    return [];
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) {
+    return undefined;
   }
-  const ads = (inner as { ads?: unknown }).ads;
-  return Array.isArray(ads) ? ads : [];
+  return inner as Record<string, unknown>;
+}
+
+function structuredInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+/**
+ * Structured catalog end condition from prerendered `listing.listing`.
+ * CamelCase is the live field set. Snake_case is accepted as the same fields.
+ * Live `pageNumber` is 0-based. Returned `pageNumber` is 1-based logical page.
+ * That conversion happens only here. Missing, negative, or non-integer pagination
+ * is invalid, not an empty catalog.
+ */
+export function readOlxStructuredCatalogPage(state: unknown): OlxStructuredCatalogPage | undefined {
+  const inner = listingListingRecord(state);
+  if (!inner) {
+    return undefined;
+  }
+  const rawPageNumber = structuredInt(inner.pageNumber ?? inner.page_number);
+  const totalPages = structuredInt(inner.totalPages ?? inner.total_pages);
+  const totalElements = structuredInt(inner.totalElements ?? inner.total_elements);
+  if (rawPageNumber === undefined || rawPageNumber < 0) {
+    return undefined;
+  }
+  if (totalPages === undefined || totalPages < 1) {
+    return undefined;
+  }
+  if (totalElements === undefined || totalElements < 0) {
+    return undefined;
+  }
+  return { pageNumber: rawPageNumber + 1, totalPages, totalElements };
+}
+
+/** Trusted catalog booleans only. A Private query is not proof these are absent. */
+export function trustedOlxBusinessAdIds(state: unknown): string[] {
+  const ids: string[] = [];
+  for (const raw of extractListingAdsFromPrerenderedState(state)) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      continue;
+    }
+    const ad = raw as Record<string, unknown>;
+    if (ad.isBusiness !== true && ad.business !== true) {
+      continue;
+    }
+    const id = ad.id;
+    if (typeof id === "number" && Number.isFinite(id)) {
+      ids.push(String(id));
+    } else if (typeof id === "string" && id.trim()) {
+      ids.push(id.trim());
+    }
+  }
+  return ids;
 }
 
 export function extractNextDataJson(html: string): unknown | undefined {

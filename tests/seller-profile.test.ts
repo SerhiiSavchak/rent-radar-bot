@@ -102,7 +102,7 @@ describe("seller profile classifier", () => {
     expect(gated.kept).toHaveLength(2);
   });
 
-  it("rejects three addresses by default and still sends them when likely policy is send", () => {
+  it("does not hard-reject three addresses; address count is not a likely verdict", () => {
     const listings = [
       card({
         source: "olx",
@@ -131,21 +131,13 @@ describe("seller profile classifier", () => {
       addresses: ["a", "b", "c"],
       now,
     });
-    expect(decision.verdict).toBe("profile_likely_intermediary");
-    expect(shouldRejectSellerProfile(decision.verdict, DEFAULT_SELLER_PROFILE_POLICIES)).toBe(true);
+    expect(decision.verdict).toBe("unknown");
+    expect(shouldRejectSellerProfile(decision.verdict, DEFAULT_SELLER_PROFILE_POLICIES)).toBe(false);
     const gated = applySellerProfileGate(listings, undefined, now);
-    expect(gated.profileLikelyIntermediary).toBe(3);
-    expect(gated.dropped).toBe(3);
-    expect(gated.profileRejected).toBe(3);
-    expect(gated.kept).toHaveLength(0);
-    const sent = applySellerProfileGate(listings, undefined, now, {
-      likelyPolicy: "send",
-      newAccountPolicy: "reject",
-    });
-    expect(sent.profileLikelyIntermediary).toBe(3);
-    expect(sent.profileRejected).toBe(0);
-    expect(sent.dropped).toBe(0);
-    expect(sent.kept).toHaveLength(3);
+    expect(gated.profileLikelyIntermediary).toBe(0);
+    expect(gated.dropped).toBe(0);
+    expect(gated.profileRejected).toBe(0);
+    expect(gated.kept).toHaveLength(3);
   });
 
   it("reuses cached addresses after reopen and does not mix seller ids across sources", () => {
@@ -204,9 +196,10 @@ describe("seller profile classifier", () => {
       reopened,
       now,
     );
-    expect(rejected.profileLikelyIntermediary).toBe(1);
-    expect(rejected.profileRejected).toBe(1);
-    expect(rejected.dropped).toBe(1);
+    expect(rejected.profileLikelyIntermediary).toBe(0);
+    expect(rejected.profileRejected).toBe(0);
+    expect(rejected.dropped).toBe(0);
+    expect(rejected.kept).toHaveLength(1);
     reopened.close();
   });
 
@@ -230,7 +223,8 @@ describe("seller profile classifier", () => {
     db.close();
   });
 
-  it("keeps OLX isBusiness alone and does not treat it as confirmed intermediary", () => {
+  it("does not treat stale olxIsBusiness metadata alone as seller rejection without classification", () => {
+    // Raw metadata flag is not the delivery gate; classifyOwner must have run.
     const businessOnly = card({
       source: "olx",
       sourceId: "1",

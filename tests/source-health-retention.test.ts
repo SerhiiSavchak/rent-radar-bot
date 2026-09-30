@@ -189,7 +189,7 @@ describe("persistent source health and retention", () => {
   });
 
   it("migrates schema 4 to schema 8 without dropping rows, and a second migrate is a no-op", () => {
-    expect(SCHEMA_VERSION).toBe(11);
+    expect(SCHEMA_VERSION).toBe(13);
     const path = dbPath();
     const db = new DatabaseSync(path);
     db.exec(`
@@ -222,12 +222,12 @@ describe("persistent source health and retention", () => {
     ).run();
     expect(appliedSchemaVersion(db)).toBe(4);
 
-    expect(applyMigrations(db)).toBe(11);
-    expect(appliedSchemaVersion(db)).toBe(11);
+    expect(applyMigrations(db)).toBe(13);
+    expect(appliedSchemaVersion(db)).toBe(13);
     const version = db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get() as {
       value: string;
     };
-    expect(version.value).toBe("11");
+    expect(version.value).toBe("13");
     expect(count(db, "SELECT COUNT(*) AS n FROM listings WHERE source_id = 'keep-1'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM source_baselines WHERE source = 'lun'")).toBe(1);
     expect(
@@ -258,7 +258,7 @@ describe("persistent source health and retention", () => {
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'source_admin_alerts'").get(),
     ).toBeTruthy();
-    expect(applyMigrations(db)).toBe(11);
+    expect(applyMigrations(db)).toBe(13);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 5")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 6")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 7")).toBe(1);
@@ -266,6 +266,8 @@ describe("persistent source health and retention", () => {
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 9")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 10")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 11")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 12")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 13")).toBe(1);
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'seller_profile_cache'")
         .get(),
@@ -801,21 +803,21 @@ describe("persistent source health and retention", () => {
 
     const report = runStateCleanupIfDue(db, { now, databasePath: path, force: true });
     expect(report.ran).toBe(true);
-    expect(report.seenRowsRemoved).toBe(2);
-    expect(report.crossSourceIdentitiesRemoved).toBe(2);
+    expect(report.seenRowsRemoved).toBe(0);
+    expect(report.crossSourceIdentitiesRemoved).toBe(0);
     expect(report.sentOutboxRowsRemoved).toBe(1);
     expect(report.diagnosticRowsRemoved).toBe(0);
     expect(report.databaseBytes).toBeGreaterThan(0);
     expect(existsSync(path)).toBe(true);
 
-    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-seen'")).toBe(0);
-    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-sent'")).toBe(0);
+    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-seen'")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'drop-sent'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-seen'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-pending'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-failed'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM seen_listings WHERE source_id = 'keep-sent'")).toBe(1);
-    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-id'")).toBe(0);
-    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-sent'")).toBe(0);
+    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-id'")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'drop-sent'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'keep-id'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'keep-pending'")).toBe(1);
     expect(count(db, "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'keep-sent'")).toBe(1);
@@ -952,7 +954,7 @@ describe("persistent source health and retention", () => {
       databasePath: path,
       force: true,
     });
-    expect(cleanup.seenRowsRemoved).toBeGreaterThan(0);
+    expect(cleanup.seenRowsRemoved).toBe(0);
     expect(store.establishedAt("domria")?.toISOString()).toBe(established);
     const replay = await runTelegramTestCycle(
       {
@@ -1114,8 +1116,9 @@ describe("persistent source health and retention", () => {
       databasePath: path,
       force: true,
     });
-    expect(report.crossSourceIdentitiesRemoved).toBe(1);
+    expect(report.crossSourceIdentitiesRemoved).toBe(0);
     expect(report.sentOutboxRowsRemoved).toBe(0);
+    expect(count(getDb(), "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source_id = 'stale-other'")).toBe(1);
     expect(count(getDb(), "SELECT COUNT(*) AS n FROM cross_source_identities WHERE source = 'lun'")).toBeGreaterThan(
       0,
     );

@@ -12,12 +12,20 @@ EnvironmentFile=%h/.config/rent-radar/telegram-test.env
 Environment=NODE_ENV=production
 Environment=DATABASE_PATH=__DATABASE_PATH__
 Environment=HEARTBEAT_PATH=__HEARTBEAT_PATH__
+# These override EnvironmentFile. HTTP OLX stays off. Browser OLX stays on. RIELTOR stays off.
+Environment=ENABLE_DOMRIA=true
+Environment=ENABLE_LUN=true
+Environment=ENABLE_OLX=false
+Environment=ENABLE_OLX_BROWSER=true
+Environment=ENABLE_RIELTOR=false
+Environment=GEO_UNKNOWN_POLICY=exclude
+Environment=TARGET_RADIUS_KM=15
+Environment=FIRST_RUN_MODE=seed
 ExecStartPre=/bin/mkdir -p __RUNTIME_DIR__
 ExecStartPre=/bin/chmod 700 __RUNTIME_DIR__
-# Force unbounded poll and keep the blocked OLX HTTP adapter off even if the env file differs.
 # Canonical production entry. src/index.ts exits 2 and does not persist or send.
-# ENABLE_OLX_BROWSER stays explicit in the env file only. Leave it false until hosted browser acquisition passes.
-ExecStart=/usr/bin/env TELEGRAM_POLL_CYCLES=0 ENABLE_OLX=false __NODE_BIN__ --import tsx ./src/scripts/test-telegram-poll.ts
+# Node is the main process. KillMode=control-group delivers SIGTERM to it and to Chromium.
+ExecStart=/usr/bin/env TELEGRAM_POLL_CYCLES=0 ENABLE_OLX=false ENABLE_OLX_BROWSER=true ENABLE_RIELTOR=false __NODE_BIN__ --import tsx ./src/scripts/test-telegram-poll.ts
 Restart=on-failure
 RestartSec=20
 RestartPreventExitStatus=2 3

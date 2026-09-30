@@ -60,8 +60,9 @@ describe("OLX parser", () => {
     expect(listings[0]?.metadata?.lastRefreshTime).toBe("2026-09-14T18:22:44+03:00");
     expect(listings[0]?.metadata?.urlToken).toBe("11gqaj");
     expect(listings[0]?.metadata?.olxIsBusiness).toBe(true);
-    expect(listings[0]?.sellerType).toBe("unknown");
-    expect(isSellerEligible(listings[0]!)).toBe(true);
+    expect(listings[0]?.sellerType).toBe("business");
+    expect(listings[0]?.metadata?.ownerEvidenceLevel).toBe("intermediary");
+    expect(isSellerEligible(listings[0]!)).toBe(false);
   });
 
   it("accepts catalog photos as URL strings without requiring { link } objects", () => {

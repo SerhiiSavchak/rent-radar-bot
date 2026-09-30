@@ -103,7 +103,7 @@ describe("OLX HTML structured extract", () => {
     const next = extractListingsFromOlxCatalogHtml(olxCatalogHtmlWithNextDataOffers());
     expect(next.source).toBe("next_data");
     expect(next.listings[0]?.sourceId).toBe("222");
-    expect(next.listings[0]?.sellerType).toBe("unknown");
+    expect(next.listings[0]?.sellerType).toBe("business");
     expect(next.listings[0]?.metadata?.olxIsBusiness).toBe(true);
   });
 
@@ -133,6 +133,7 @@ describe("OLX browser extract integration", () => {
     let lastUrl =
       "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
     const page = {
+      route: vi.fn(async () => undefined),
       on: (event: string, handler: (response: Response) => void) => {
         if (event === "response") {
           responseHandler = handler;
@@ -229,7 +230,7 @@ describe("OLX browser extract integration", () => {
     expect(result.listings.length).toBeGreaterThan(0);
     expect(result.apartments.extractSource).toBe("prerendered_state");
     expect(result.apartments.rejections.some((r) => r.reason === "no_offers_api_payload_captured")).toBe(
-      true,
+      false,
     );
   });
 
@@ -278,6 +279,7 @@ describe("OLX browser extract integration", () => {
     const browserClose = vi.fn(async () => undefined);
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         expect(
@@ -341,6 +343,7 @@ describe("OLX browser extract integration", () => {
     let lastUrl = OLX_BROWSER_APARTMENTS_URL;
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         nowMs += 20;
@@ -419,7 +422,8 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(live?.metadata?.pushupTime).toBe("2026-09-17T10:27:55+03:00");
     expect(live?.metadata?.olxIsBusiness).toBe(true);
     expect(live?.metadata?.coordinatesApproximate).toBe(true);
-    expect(live?.sellerType).toBe("unknown");
+    expect(live?.sellerType).toBe("business");
+    expect(live?.metadata?.ownerEvidenceLevel).toBe("intermediary");
   });
 
   it("maps camelCase catalog fields without inventing ownership", () => {
@@ -454,15 +458,18 @@ describe("OLX Oracle-derived prerendered catalog adapter", () => {
     expect(result.diagnostics.rejectedMalformed).toBe(0);
 
     const biz = result.listings.find((item) => item.sourceId === "931996810");
-    expect(biz?.sellerType).toBe("unknown");
+    expect(biz?.sellerType).toBe("business");
     expect(biz?.metadata?.olxIsBusiness).toBe(true);
+    expect(biz?.metadata?.ownerEvidenceLevel).toBe("intermediary");
     expect(biz?.metadata?.pushupTime).toBe("2026-09-17T10:27:55+03:00");
     expect(result.diagnostics.ownerEligibleCount).toBe(0);
     expect(result.diagnostics.privateAccountCount).toBe(1);
     expect(result.diagnostics.businessAccountCount).toBe(1);
     expect(result.diagnostics.selfDeclaredOwnerCount).toBe(0);
-    expect(result.diagnostics.ownerEvidenceLevelCounts?.private_unknown).toBe(2);
-    expect(result.diagnostics.ownerRejectionReasonCounts?.unknown_seller_allowed).toBe(2);
+    expect(result.diagnostics.ownerEvidenceLevelCounts?.private_unknown).toBe(1);
+    expect(result.diagnostics.ownerEvidenceLevelCounts?.intermediary).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.unknown_seller_allowed).toBe(1);
+    expect(result.diagnostics.ownerRejectionReasonCounts?.explicit_intermediary).toBe(1);
     expect(result.diagnostics.ownerRejectionReasonCounts?.business_account).toBeUndefined();
     expect(result.diagnostics.publishedAtPresentCount).toBe(2);
     expect(result.diagnostics.withinAgeWindowCount).toBe(1);
@@ -595,6 +602,7 @@ describe("OLX browser extract deadlines", () => {
     let hungReject: ((error: Error) => void) | undefined;
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(
         () =>
           new Promise((_, reject) => {
@@ -647,6 +655,7 @@ describe("OLX browser extract deadlines", () => {
     });
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         nowMs += 20;
@@ -709,6 +718,7 @@ describe("OLX browser extract deadlines", () => {
     let lastUrl = OLX_BROWSER_APARTMENTS_URL;
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         nowMs += 70;
@@ -752,5 +762,179 @@ describe("OLX browser extract deadlines", () => {
     expect(result.notes.some((item) => item.includes("houses_skipped_total_budget"))).toBe(true);
     expect(result.budgetExceeded).toBe(false);
     expect(result.browserClosed).toBe(true);
+  });
+
+  it("preserves apartment listings when houses page.goto times out", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    const target = "2026-09-19T21:15:02.350Z";
+    const gotoUrls: string[] = [];
+    const pageClose = vi.fn(async () => undefined);
+    const contextClose = vi.fn(async () => undefined);
+    const browserClose = vi.fn(async () => undefined);
+
+    const page = {
+      on: vi.fn(),
+      route: vi.fn(async () => undefined),
+      goto: vi.fn(async (navUrl: string) => {
+        gotoUrls.push(navUrl);
+        if (navUrl.includes("/doma/")) {
+          const err = new Error(
+            'page.goto: Timeout 45000ms exceeded.\nCall log:\n  - navigating to "' +
+              navUrl +
+              '", waiting until "domcontentloaded"',
+          );
+          err.name = "TimeoutError";
+          throw err;
+        }
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => Buffer.from(main, "utf8"),
+          text: async () => main,
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content: vi.fn(async () => main),
+      url: () => gotoUrls[gotoUrls.length - 1] ?? "https://www.olx.ua/",
+      title: async () => "OLX",
+      close: pageClose,
+    } as unknown as Page;
+
+    const browser = {
+      newContext: async () =>
+        ({
+          newPage: async () => page,
+          close: contextClose,
+        }) as unknown as BrowserContext,
+      close: browserClose,
+    } as unknown as Browser;
+
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 5_000,
+      maxPagesPerCategory: 2,
+      launch: async () => browser,
+      catchup: {
+        apartments: { target, resumePage: 3 },
+        houses: { target, resumePage: 1 },
+      },
+    });
+
+    expect(result.browserClosed).toBe(true);
+    expect(browserClose).toHaveBeenCalled();
+    expect(gotoUrls.some((u) => u.includes("/kvartiry/"))).toBe(true);
+    expect(gotoUrls.some((u) => u.includes("/doma/"))).toBe(true);
+
+    // Apartments survived the houses timeout. A page cursor is not coverage.
+    expect(result.apartments.listings.length).toBeGreaterThan(0);
+    expect(result.listings.some((l) => l.sourceId === "935081899")).toBe(true);
+    expect(result.coverage?.catchup?.apartment ?? null).toBeNull();
+    expect(result.coverage?.committedBoundary?.apartment).toBeUndefined();
+
+    expect(result.houses.listings).toHaveLength(0);
+    expect(
+      result.houses.rejections.some(
+        (r) =>
+          r.reason === "category_page_navigation_failed" ||
+          r.reason === "category_page_extraction_failed",
+      ),
+    ).toBe(true);
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.coverage?.boundaryReached).toBe(false);
+    expect(result.coverage?.committedBoundary?.house).toBeUndefined();
+    expect(result.coverage?.catchup?.house ?? null).toBeNull();
+    expect(
+      result.notes.some(
+        (n) =>
+          n.includes("houses_page_1_navigation_failed") ||
+          n.includes("houses_page_1_failed") ||
+          n.includes("houses_page_1_extraction_error") ||
+          n.includes("houses_category_extraction_error"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not request a stored catch-up page when structured totalPages is absent", async () => {
+    const ads = [derivedOracleApartmentPrivateAd()];
+    const main = derivedOracleMainDocumentHtml(ads);
+    const target = "2026-09-19T21:15:02.350Z";
+    let lastUrl =
+      "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
+    const pageClose = vi.fn(async () => undefined);
+    const contextClose = vi.fn(async () => undefined);
+    const browserClose = vi.fn(async () => undefined);
+
+    const page = {
+      on: vi.fn(),
+      route: vi.fn(async () => undefined),
+      goto: vi.fn(async (navUrl: string) => {
+        lastUrl = navUrl;
+        return {
+          url: () => navUrl,
+          status: () => 200,
+          headers: () => ({ "content-type": "text/html; charset=utf-8" }),
+          body: async () => Buffer.from(main, "utf8"),
+          text: async () => main,
+        };
+      }),
+      waitForLoadState: vi.fn(async () => undefined),
+      content: vi.fn(async () => main),
+      // Later phase after main-document listings were already parsed (title is
+      // swallowed with .catch; url() still surfaces recoverable Playwright errors).
+      url: () => {
+        if (/[?&]page=3(?:&|$)/.test(lastUrl)) {
+          const err = new Error(
+            'page.url: Timeout 45000ms exceeded.\nCall log:\n  - reading page url',
+          );
+          err.name = "TimeoutError";
+          throw err;
+        }
+        return lastUrl;
+      },
+      title: async () => "OLX",
+      close: pageClose,
+    } as unknown as Page;
+
+    const browser = {
+      newContext: async () =>
+        ({
+          newPage: async () => page,
+          close: contextClose,
+        }) as unknown as BrowserContext,
+      close: browserClose,
+    } as unknown as Browser;
+
+    const result = await extractOlxListingsViaBrowser({
+      timeoutMs: 5_000,
+      maxPagesPerCategory: 2,
+      launch: async () => browser,
+      catchup: {
+        apartments: { target, resumePage: 3 },
+        houses: { target, resumePage: 1 },
+      },
+    });
+
+    expect(result.browserClosed).toBe(true);
+    expect(result.apartments.listings.some((l) => l.sourceId === "935081899")).toBe(true);
+    expect(result.notes.some((n) => n.includes("apartments_page_3_navigation_failed"))).toBe(false);
+    expect(result.notes.some((n) => /page=3/.test(n))).toBe(false);
+    expect(result.coverage?.catchup?.apartment ?? null).toBeNull();
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.coverage?.boundaryReached).toBe(false);
+    expect(result.coverage?.committedBoundary?.apartment).toBeUndefined();
+    expect(result.coverage?.committedBoundary?.house).toBeUndefined();
+  });
+});
+
+describe("isRecoverableOlxCategoryExtractionError", () => {
+  it("recognizes Playwright TimeoutError from page.goto", async () => {
+    const { isRecoverableOlxCategoryExtractionError } = await import(
+      "../src/sources/olx/olx-browser.extract.ts"
+    );
+    const err = new Error('page.goto: Timeout 45000ms exceeded.');
+    err.name = "TimeoutError";
+    expect(isRecoverableOlxCategoryExtractionError(err)).toBe(true);
+    expect(isRecoverableOlxCategoryExtractionError(new TypeError("bug"))).toBe(false);
   });
 });

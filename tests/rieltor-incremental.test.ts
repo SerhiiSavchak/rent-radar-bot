@@ -745,7 +745,7 @@ describe("RIELTOR coverage health and upgrade bootstrap", () => {
       ).run(at, at),
     ).toThrow();
 
-    expect(applyMigrations(db)).toBe(11);
+    expect(applyMigrations(db)).toBe(13);
     expect(
       (db.prepare("SELECT COUNT(*) AS n FROM source_baselines").get() as { n: number }).n,
     ).toBe(1);

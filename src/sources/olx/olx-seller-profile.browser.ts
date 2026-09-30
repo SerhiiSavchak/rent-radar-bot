@@ -1,17 +1,20 @@
 import { inspectPrerenderedState } from "./olx-browser.html-extract.ts";
+import { SELLER_INVENTORY_LIMIT_MIN } from "../../delivery/seller-profile.ts";
 import {
   mergeOlxProfilePages,
   parseOlxProfileInventory,
   resolveOlxInventoryProbeTarget,
+  OLX_PROFILE_PAGE_HARD_CAP,
   type OlxProfileSnapshot,
 } from "./olx-seller-profile.ts";
 
 const UNREADABLE: OlxProfileSnapshot = { acquired: false };
 
-function pageTwoPath(hrefs: string[], probeTarget: string): string | undefined {
+function pagePath(hrefs: string[], probeTarget: string, page: number): string | undefined {
   const slug = probeTarget.match(/\/uk\/list\/user\/[A-Za-z0-9]+/)?.[0];
+  const pageRe = new RegExp(`[?&]page=${page}(?:&|$)`);
   return hrefs.find((href) => {
-    if (!/(?:\?|&)page=2(?:&|$)/.test(href)) {
+    if (!pageRe.test(href)) {
       return false;
     }
     if (!slug) {
@@ -23,8 +26,9 @@ function pageTwoPath(hrefs: string[], probeTarget: string): string | undefined {
 
 /**
  * Bounded public inventory for an exact OLX listing, a `/uk/list/user/…` path,
- * or a seller-linked shop/home URL. One stock Chromium, at most two profile
- * pages, closed before return. Transport failure → unreadable (unknown, not owner).
+ * or a seller-linked shop/home URL. One stock Chromium, pages until inventory
+ * reject threshold / exhaustion / hard cap, closed before return.
+ * Transport failure → unreadable (unknown, not owner).
  *
  * Shop/storefront hosts are probe targets only — presence of a shop is not
  * intermediary proof.
@@ -37,6 +41,7 @@ export async function probeOlxSellerProfile(input: {
 }): Promise<OlxProfileSnapshot> {
   const timeoutMs = input.timeoutMs ?? 20_000;
   let probeTarget = input.profilePath ?? undefined;
+  let listingHtml = input.listingHtml;
   if (!probeTarget && input.listingHtml) {
     probeTarget = resolveOlxInventoryProbeTarget(input.listingHtml);
   }
@@ -59,10 +64,10 @@ export async function probeOlxSellerProfile(input: {
         waitUntil: "domcontentloaded",
         timeout: timeoutMs,
       });
-      const listingHtml = (await listingResponse?.text()) ?? "";
+      listingHtml = (await listingResponse?.text()) ?? "";
       probeTarget = resolveOlxInventoryProbeTarget(listingHtml);
       if (!probeTarget || listingResponse?.status() !== 200) {
-        return UNREADABLE;
+        return { acquired: false, ...(listingHtml ? { listingHtml } : {}) };
       }
     }
 
@@ -71,38 +76,59 @@ export async function probeOlxSellerProfile(input: {
       timeout: timeoutMs,
     });
     if (profileResponse?.status() !== 200) {
-      return UNREADABLE;
+      return { acquired: false, ...(listingHtml ? { listingHtml } : {}) };
     }
-    const first = parseOlxProfileInventory(
+    let merged = parseOlxProfileInventory(
       inspectPrerenderedState((await profileResponse.text()) ?? "").decoded,
     );
-    if (!first.acquired || (first.totalPages ?? 0) < 2) {
-      return first;
+    if (listingHtml) {
+      merged = { ...merged, listingHtml };
     }
-    const hrefs = await page.$$eval("a[href]", (nodes) =>
-      nodes.map((node) => node.getAttribute("href") ?? ""),
-    );
-    const nextPath = pageTwoPath(hrefs, probeTarget);
-    if (!nextPath) {
-      return first;
+    // Stop as soon as ≥5 precise properties are known.
+    if (!merged.acquired || (merged.precisePropertyKeys?.length ?? 0) >= SELLER_INVENTORY_LIMIT_MIN) {
+      return merged;
     }
-    try {
-      const secondResponse = await page.goto(new URL(nextPath, page.url()).toString(), {
-        waitUntil: "domcontentloaded",
-        timeout: timeoutMs,
-      });
-      if (secondResponse?.status() !== 200) {
-        return first;
-      }
-      const second = parseOlxProfileInventory(
-        inspectPrerenderedState((await secondResponse.text()) ?? "").decoded,
+
+    let nextPage = 2;
+    while (
+      (merged.totalPages ?? 0) >= nextPage &&
+      nextPage <= OLX_PROFILE_PAGE_HARD_CAP &&
+      (merged.precisePropertyKeys?.length ?? 0) < SELLER_INVENTORY_LIMIT_MIN
+    ) {
+      const hrefs = await page.$$eval("a[href]", (nodes) =>
+        nodes.map((node) => node.getAttribute("href") ?? ""),
       );
-      return mergeOlxProfilePages(first, second);
-    } catch {
-      return first;
+      const nextPath = pagePath(hrefs, probeTarget, nextPage);
+      if (!nextPath) {
+        break;
+      }
+      try {
+        const nextResponse = await page.goto(new URL(nextPath, page.url()).toString(), {
+          waitUntil: "domcontentloaded",
+          timeout: timeoutMs,
+        });
+        if (nextResponse?.status() !== 200) {
+          // Partial pages remain; caller treats incompleteness as unresolved.
+          break;
+        }
+        const nextSnap = parseOlxProfileInventory(
+          inspectPrerenderedState((await nextResponse.text()) ?? "").decoded,
+        );
+        merged = mergeOlxProfilePages(merged, nextSnap);
+        if (listingHtml) {
+          merged = { ...merged, listingHtml };
+        }
+      } catch {
+        break;
+      }
+      if ((merged.precisePropertyKeys?.length ?? 0) >= SELLER_INVENTORY_LIMIT_MIN) {
+        break;
+      }
+      nextPage += 1;
     }
+    return merged;
   } catch {
-    return UNREADABLE;
+    return { acquired: false, ...(listingHtml ? { listingHtml } : {}) };
   } finally {
     await browser?.close().catch(() => undefined);
   }

@@ -89,7 +89,7 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
     url,
     title,
     location: {
-      raw: [street, district, city].filter(Boolean).join(", ") || "Lviv",
+      raw: [street, district, city].filter(Boolean).join(", ") || "unknown",
       ...(city ? { city } : {}),
       ...(district ? { district } : {}),
       ...(lat !== undefined ? { latitude: lat } : {}),
@@ -97,6 +97,8 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
     },
     propertyType: detectPropertyType({
       realtyTypeId: info.realty_type_id,
+      title,
+      ...(description ? { description } : {}),
       categoryText: `${info.realty_type_name_uk ?? ""} ${info.advert_type_name_uk ?? ""} ${path}`,
     }),
     sellerType: owner.sellerType,
@@ -110,6 +112,7 @@ export function parseDomriaInfo(raw: unknown, discoveredAt = new Date()): Listin
       advertType: info.advert_type_name_uk ?? info.advert_type_name,
       userId: info.user_id,
       ...(agencyId > 0 ? { agencyId } : {}),
+      ...(street ? { street } : {}),
       characteristic1437Recognized: role.recognized,
       ...sellerAnnotation(owner),
     },

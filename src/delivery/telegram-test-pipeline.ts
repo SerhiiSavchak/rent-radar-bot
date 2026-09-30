@@ -18,6 +18,10 @@ import {
 import { applySellerProfileGate } from "./seller-profile.ts";
 import type { SellerProfilePolicies } from "./seller-profile.ts";
 import {
+  OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+  sellerRegistrationYearRejectionReason,
+} from "../sources/olx/olx-account-registration.ts";
+import {
   formatRieltorCoverage,
   parseRieltorCatchup,
   rieltorCatchupKey,
@@ -28,10 +32,7 @@ import {
 import {
   formatOlxCoverage,
   olxCatchupKey,
-  olxCategoryToCoverageKey,
   olxPublicationBoundaryKey,
-  parseOlxCatchup,
-  serializeOlxCatchup,
   type OlxBrowserCategoryName,
 } from "../sources/olx/olx-browser.coverage.ts";
 import {
@@ -399,6 +400,12 @@ function noteLinkedSeller(
     case "same_cycle_confirmed_agent":
       linked.sameCycleConfirmedAgent += 1;
       break;
+    case "same_cycle_registration_year_excluded":
+      linked.sameCycleRegistrationYearExcluded += 1;
+      break;
+    case "same_cycle_inventory_limit":
+      linked.sameCycleInventoryLimit += 1;
+      break;
     case "same_cycle_resolved":
       linked.sameCycleResolved += 1;
       break;
@@ -407,6 +414,12 @@ function noteLinkedSeller(
       break;
     case "cache_confirmed_owner":
       linked.cacheConfirmedOwner += 1;
+      break;
+    case "cache_registration_year_excluded":
+      linked.cacheRegistrationYearExcluded += 1;
+      break;
+    case "cache_inventory_limit":
+      linked.cacheInventoryLimit += 1;
       break;
     case "cache_unknown":
       linked.cacheUnknown += 1;
@@ -419,6 +432,12 @@ function noteLinkedSeller(
       break;
     case "detail_profile_likely":
       linked.detailProfileLikely += 1;
+      break;
+    case "detail_registration_year_excluded":
+      linked.detailRegistrationYearExcluded += 1;
+      break;
+    case "detail_inventory_limit":
+      linked.detailInventoryLimit += 1;
       break;
     case "detail_unknown":
       linked.detailUnknown += 1;
@@ -592,10 +611,7 @@ function classifySourceAttempt(
       errorSafe: result.health.message ?? "parser_failure",
     };
   }
-  if (
-    result.coverage?.coverageTruncated &&
-    ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty" || kind === "ok")
-  ) {
+  if (result.coverage?.coverageTruncated && (kind === "ok" || kind === "valid_empty")) {
     return {
       ok: false,
       processable: true,
@@ -603,7 +619,8 @@ function classifySourceAttempt(
       errorSafe: coverageDiagnostic(source, result.coverage),
     };
   }
-  if ((kind === "ok" && result.listings.length > 0) || kind === "valid_empty") {
+  // `ok` includes idle polls with zero newly assembled listings (all known / filtered later).
+  if (kind === "ok" || kind === "valid_empty") {
     return { ok: true, processable: true, resultKind: kind };
   }
   if (kind === "disabled") {
@@ -712,6 +729,9 @@ async function deliverListing(
 
   try {
     const result: TelegramSendResult = await deps.sink.sendListing(listing, { deliveryKind });
+    if (result.migratedChatId) {
+      store?.rememberTelegramChatId(result.migratedChatId);
+    }
     if (result.ok) {
       if (outbox && id !== undefined) {
         outbox.markSent(id);
@@ -838,48 +858,6 @@ export async function runTelegramTestCycle(
     }
     return Object.keys(watermarks).length > 0 ? watermarks : undefined;
   };
-  const readOlxWatermarks = ():
-    | Partial<Record<"apartment" | "house", Date>>
-    | undefined => {
-    const watermarks: Partial<Record<"apartment" | "house", Date>> = {};
-    for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
-      const parsed = Date.parse(readMetaValue(olxPublicationBoundaryKey(category)) ?? "");
-      if (Number.isFinite(parsed)) {
-        watermarks[olxCategoryToCoverageKey(category)] = new Date(parsed);
-      }
-    }
-    return Object.keys(watermarks).length > 0 ? watermarks : undefined;
-  };
-  const readOlxCatchup = ():
-    | Partial<Record<"apartment" | "house", { target: string; resumePage: number }>>
-    | undefined => {
-    const catchup: Partial<Record<"apartment" | "house", { target: string; resumePage: number }>> =
-      {};
-    for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
-      const parsed = parseOlxCatchup(readMetaValue(olxCatchupKey(category)));
-      if (parsed) {
-        catchup[olxCategoryToCoverageKey(category)] = parsed;
-      }
-    }
-    return Object.keys(catchup).length > 0 ? catchup : undefined;
-  };
-  const readOlxBootstrapTarget = (): Date | undefined => {
-    if (!holdDb) {
-      return undefined;
-    }
-    const hasBoundary = Boolean(readOlxWatermarks());
-    const hasCatchup = Boolean(readOlxCatchup());
-    if (hasBoundary || hasCatchup) {
-      return undefined;
-    }
-    const row = holdDb
-      .prepare(
-        `SELECT established_at AS establishedAt FROM source_baselines WHERE source = 'olx'`,
-      )
-      .get() as { establishedAt: string } | undefined;
-    const parsed = Date.parse(row?.establishedAt ?? "");
-    return Number.isFinite(parsed) ? new Date(parsed) : undefined;
-  };
   const readRieltorCatchup = ():
     | Partial<Record<RieltorCategoryName, { target: string; resumePage: number }>>
     | undefined => {
@@ -963,16 +941,10 @@ export async function runTelegramTestCycle(
 
     try {
       const publicationWatermarks =
-        adapter.source === "rieltor"
-          ? readRieltorWatermarks()
-          : adapter.source === "olx"
-            ? readOlxWatermarks()
-            : undefined;
+        adapter.source === "rieltor" ? readRieltorWatermarks() : undefined;
       const rieltorCatchup = adapter.source === "rieltor" ? readRieltorCatchup() : undefined;
       const rieltorBootstrapTarget =
         adapter.source === "rieltor" ? readRieltorBootstrapTarget() : undefined;
-      const olxCatchup = adapter.source === "olx" ? readOlxCatchup() : undefined;
-      const olxBootstrapTarget = adapter.source === "olx" ? readOlxBootstrapTarget() : undefined;
       const domriaKnownIds =
         adapter.source === "domria"
           ? parseDomriaAcquiredIds(readMetaValue(DOMRIA_ACQUIRED_IDS_KEY))
@@ -982,8 +954,6 @@ export async function runTelegramTestCycle(
         ...(publicationWatermarks ? { publicationWatermarks } : {}),
         ...(rieltorCatchup ? { rieltorCatchup } : {}),
         ...(rieltorBootstrapTarget ? { rieltorBootstrapTarget } : {}),
-        ...(olxCatchup ? { olxCatchup } : {}),
-        ...(olxBootstrapTarget ? { olxBootstrapTarget } : {}),
         ...(domriaKnownIds && domriaKnownIds.length > 0 ? { domriaKnownIds } : {}),
       });
       const classified = classifySourceAttempt(adapter.source, result);
@@ -1054,24 +1024,12 @@ export async function runTelegramTestCycle(
         }
       }
       if (holdDb && adapter.source === "olx" && result.coverage) {
-        const writeMeta = holdDb.prepare(
-          "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
-        );
+        // Page cursors and publication boundaries are not OLX coverage.
+        // Drop leftovers so a restart cannot treat them as progress.
         const deleteMeta = holdDb.prepare("DELETE FROM schema_meta WHERE key = ?");
         for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
-          const mapped = olxCategoryToCoverageKey(category);
-          const committed = result.coverage.committedBoundary?.[mapped];
-          if (committed) {
-            writeMeta.run(olxPublicationBoundaryKey(category), committed);
-          }
-          if (result.coverage.catchup && mapped in result.coverage.catchup) {
-            const state = result.coverage.catchup[mapped];
-            if (state) {
-              writeMeta.run(olxCatchupKey(category), serializeOlxCatchup(state));
-            } else {
-              deleteMeta.run(olxCatchupKey(category));
-            }
-          }
+          deleteMeta.run(olxCatchupKey(category));
+          deleteMeta.run(olxPublicationBoundaryKey(category));
         }
       }
       const collectedIds = collectedSourceIdsForLog(result.listings);
@@ -1200,6 +1158,22 @@ export async function runTelegramTestCycle(
     if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
       return { status: "defer", reasonCode: "linked_seller_hold" };
     }
+    const registrationYear = listing.metadata?.accountRegistrationYear;
+    const year =
+      typeof registrationYear === "number"
+        ? registrationYear
+        : typeof registrationYear === "string"
+          ? Number(registrationYear)
+          : undefined;
+    if (sellerRegistrationYearRejectionReason(year)) {
+      retractAcceptedSeller(listing, sourceAttempts, sellerTotals);
+      persistTerminalLinkedSellerReject(listing, {
+        dryRun: deps.sink.dryRun === true,
+        dedupe: deps.dedupe,
+        ...(holdDb ? { holdDb } : {}),
+      });
+      return { status: "reject", reasonCode: OLX_SELLER_REGISTRATION_YEAR_2026_REASON };
+    }
     const decision = await verifyLinkedSeller(listing);
     noteLinkedSeller(listing, decision, linkedSellerVerification, linkedSellerEvents);
     if (decision.drop) {
@@ -1216,21 +1190,21 @@ export async function runTelegramTestCycle(
     const rieltorTarget = canonicalRieltorDetailTarget(
       typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
     );
-    const olxTarget = canonicalOlxDetailTarget(
-      typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
-    );
+    const olxTarget =
+      canonicalOlxDetailTarget(
+        typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
+      ) ??
+      (listing.source === "olx" ? canonicalOlxDetailTarget(listing.url) : undefined);
     const holdTarget = rieltorTarget
       ? { id: rieltorTarget.id, source: "rieltor" as const }
       : olxTarget
         ? { id: olxTarget.token, source: "olx" as const }
         : undefined;
-    if (
-      holdDb &&
-      deps.sink.dryRun !== true &&
-      holdTarget &&
-      shouldHoldSellerVerification(decision)
-    ) {
-      upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
+    if (shouldHoldSellerVerification(decision)) {
+      // Dry-run must defer without writing hold/seen/outbox.
+      if (holdDb && deps.sink.dryRun !== true && holdTarget) {
+        upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
+      }
       return { status: "defer", reasonCode: decision.outcome };
     }
     return { status: "allow" };

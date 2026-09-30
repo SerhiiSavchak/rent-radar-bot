@@ -31,13 +31,13 @@ export function filterByLocation(
 ): LocationFilterResult {
   const validated = validateCoordinates(input.latitude, input.longitude);
   if (!validated.ok) {
-    if (config.unknownPolicy === "include") {
+    if (validated.reason === "missing" && config.unknownPolicy === "include") {
       return { matched: true, reason: "allowed-missing-coordinates" };
     }
-    return {
-      matched: false,
-      reason: validated.reason === "malformed" || validated.reason === "missing" ? "no-coordinates" : "invalid-coordinates",
-    };
+    if (validated.reason === "missing") {
+      return { matched: false, reason: "no-coordinates" };
+    }
+    return { matched: false, reason: "invalid-coordinates" };
   }
 
   const distanceKm = haversineKm(

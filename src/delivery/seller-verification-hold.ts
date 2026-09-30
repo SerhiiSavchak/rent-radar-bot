@@ -3,7 +3,10 @@ import type { Listing } from "../domain/listing.ts";
 import type { LinkedSellerDecision } from "./rieltor-detail-seller.ts";
 import { deserializeListing, serializeListing } from "../storage/durable-delivery-store.ts";
 
-/** Two 10-minute polls. An unresolved seller is sent after this, not on the first 403. */
+/**
+ * Retry window between hold checks. Unresolved sellers are never auto-sent when
+ * this elapses — the hold is extended and rechecked on later cycles.
+ */
 export const SELLER_HOLD_MAX_MS = 20 * 60 * 1000;
 
 export type SellerHoldRow = {
@@ -18,12 +21,15 @@ export type SellerHoldRow = {
   releaseAt: string;
 };
 
+/** Outcomes that mean seller verification is unresolved — hold, do not SEND. */
 export function shouldHoldSellerVerification(decision: LinkedSellerDecision): boolean {
   return (
     decision.outcome === "detail_transport_failure" ||
     decision.outcome === "detail_rate_limited" ||
     decision.outcome === "detail_parser_failure" ||
-    decision.outcome === "skipped_after_rate_limit"
+    decision.outcome === "skipped_after_rate_limit" ||
+    decision.outcome === "detail_unknown" ||
+    decision.outcome === "cache_unknown"
   );
 }
 
@@ -106,11 +112,13 @@ export function deleteSellerHold(db: DatabaseSync, source: string, sourceId: str
 
 export function keepSellerHold(db: DatabaseSync, source: string, sourceId: string, now: Date): void {
   const nextCheck = new Date(now.getTime() + 1000).toISOString();
+  // Refresh release_at so actively retried unresolved holds are not abandoned.
+  const releaseAt = new Date(now.getTime() + SELLER_HOLD_MAX_MS).toISOString();
   db.prepare(
     `UPDATE seller_verification_holds
-     SET attempt_count = attempt_count + 1, next_check_at = ?
+     SET attempt_count = attempt_count + 1, next_check_at = ?, release_at = ?
      WHERE source = ? AND source_id = ?`,
-  ).run(nextCheck, source, sourceId);
+  ).run(nextCheck, releaseAt, source, sourceId);
 }
 
 export function countSellerHolds(db: DatabaseSync): number {
@@ -136,13 +144,9 @@ export async function resolveDueSellerHolds(
       continue;
     }
     if (shouldHoldSellerVerification(decision)) {
-      if (now.getTime() >= Date.parse(hold.releaseAt)) {
-        deleteSellerHold(db, hold.source, hold.sourceId);
-        actions.push({ listing: hold.listing, action: "send" });
-      } else {
-        keepSellerHold(db, hold.source, hold.sourceId, now);
-        actions.push({ listing: hold.listing, action: "keep" });
-      }
+      // Unresolved must never auto-send after the hold window — keep retrying.
+      keepSellerHold(db, hold.source, hold.sourceId, now);
+      actions.push({ listing: hold.listing, action: "keep" });
       continue;
     }
     deleteSellerHold(db, hold.source, hold.sourceId);

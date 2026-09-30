@@ -85,6 +85,11 @@ const PROTECTED_SPANS: RegExp[] = [
   /я\s+не\s+агент\s+(?:з|по)\s+не(?:рухомост|движимост)\p{L}*/giu,
   /з\s+рі[єе]лторами\s+не\s+співпрац\p{L}*/giu,
   /з\s+риелторами\s+не\s+(?:співпрац|сотруднича)\p{L}*/giu,
+  // Owner offering to cooperate with realtors is not a self-declared realtor role.
+  /співпрац\p{L}*\s+з\s+рі[єе]лтор\p{L}*/giu,
+  /співпрац\p{L}*\s+з\s+риелтор\p{L}*/giu,
+  /сотруднича\p{L}*\s+с\s+риелтор\p{L}*/giu,
+  /сотруднича\p{L}*\s+с\s+риэлтор\p{L}*/giu,
   /агентствам\s+недвижимости\s+не\s+\p{L}+/giu,
   /без\s+рі[єе]лторськ\p{L}*\s+комісі\p{L}*/giu,
   /без\s+риелторск\p{L}*\s+комисси\p{L}*/giu,
@@ -95,11 +100,62 @@ const PROTECTED_SPANS: RegExp[] = [
   /рі[єе]лторам\s+не\s+(?:дзвонити|телефонувати)/giu,
   /риелторам\s+не\s+звонить/giu,
   /агентам\s+не\s+(?:турбувати|беспокоить)/giu,
+  /(?<![\p{L}\p{N}_])не\s+співпрац\p{L}*\s+з\s+[Аа]\.?[Нн]\.?(?![\p{L}\p{N}_])/giu,
+  /(?<![\p{L}\p{N}_])не\s+сотруднича\p{L}*\s+с\s+[Аа]\.?[Нн]\.?(?![\p{L}\p{N}_])/giu,
   /агентствам\s+нерухомості\s+не\s+\p{L}+/giu,
   /агенціям\s+нерухомості\s+не\s+\p{L}+/giu,
 ];
 
 const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  // Lexical АН / А.Н. — Unicode token boundaries only (never ASCII \b).
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}[Аа]\\.?[Нн]\\.?(?![\\p{L}\\p{N}_])`, "u"),
+    label: "АН",
+  },
+  // Bare agency phrases (no following brand name required).
+  {
+    pattern: new RegExp(
+      `${CYRILLIC_WORD_START}агентство\\s+нерухомост\\p{L}*`,
+      "iu",
+    ),
+    label: "агентство нерухомості",
+  },
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}агенці\\p{L}*\\s+нерухомост\\p{L}*`, "iu"),
+    label: "агенція нерухомості",
+  },
+  {
+    pattern: new RegExp(
+      `${CYRILLIC_WORD_START}агентство\\s+(?:по\\s+)?недвижимост\\p{L}*`,
+      "iu",
+    ),
+    label: "агентство недвижимости",
+  },
+  // Realtor profession stems (UA/RU/EN) with safe inflection via stem + letters.
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}рі[єе]лтор\\p{L}*`, "iu"),
+    label: "ріелтор",
+  },
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}риелтор\\p{L}*`, "iu"),
+    label: "риелтор",
+  },
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}риэлтор\\p{L}*`, "iu"),
+    label: "риэлтор",
+  },
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}realtors?(?![\\p{L}\\p{N}_])`, "iu"),
+    label: "realtor",
+  },
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}rieltors?(?![\\p{L}\\p{N}_])`, "iu"),
+    label: "rieltor",
+  },
+  {
+    pattern: /real[-\s]+estate\s+(?:agents?|brokers?|consultants?|managers?|experts?)(?![\p{L}\p{N}_])/iu,
+    label: "real-estate professional",
+  },
   { pattern: unicodePhrase(String.raw`я\s+рі[єе]лтор`), label: "я рієлтор" },
   { pattern: unicodePhrase(String.raw`я\s+риелтор`), label: "я риелтор" },
   { pattern: unicodePhrase(String.raw`я\s+realtor${CYRILLIC_WORD_END}`), label: "я realtor" },
@@ -140,15 +196,15 @@ const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = 
   },
   {
     pattern: nominativeAgencyNamePattern("Агентство", "нерухомості"),
-    label: "агентство нерухомості",
+    label: "агентство нерухомості (бренд)",
   },
   {
     pattern: nominativeAgencyNamePattern("Агенція", "нерухомості"),
-    label: "агенція нерухомості",
+    label: "агенція нерухомості (бренд)",
   },
   {
     pattern: nominativeAgencyNamePattern("Агентство", "недвижимости"),
-    label: "агентство недвижимости",
+    label: "агентство недвижимости (бренд)",
   },
   { pattern: /real\s+estate\s+agency/iu, label: "real estate agency" },
   { pattern: /рі[єе]лторськ\p{L}*\s+комісі\p{L}*/iu, label: "рієлторська комісія" },
@@ -206,16 +262,7 @@ const SUPPORTING_FAMILIES: Array<{
     pattern: /консультаци\p{L}*\s+по\s+недвижимост/iu,
     label: "консультация по недвижимости",
   },
-  {
-    family: "agency_brand",
-    pattern: /(?<![\p{L}\p{N}_])[Аа][Нн]\s+\p{Lu}/u,
-    label: "АН назва",
-  },
-  {
-    family: "agency_brand",
-    pattern: /(?<![\p{L}\p{N}_])\p{Lu}\p{L}{2,}\s+[Аа][Нн](?![\p{L}\p{N}_])/u,
-    label: "ім'я АН",
-  },
+  // АН is a strong lexical marker (see STRONG_INTERMEDIARY_PATTERNS); not a weak family.
 ];
 
 function includesPhrase(lower: string, phrase: string): boolean {

@@ -267,6 +267,7 @@ export function parseLunCard(
       ? (jsonLd.address as { addressLocality?: string; streetAddress?: string })
       : undefined;
   const title = locationLabel(card, jsonLd);
+  const rentalDetail = [card.text, jsonDescription].filter((part): part is string => Boolean(part)).join("\n");
   const listing: Listing = {
     source: "lun",
     sourceId,
@@ -274,11 +275,13 @@ export function parseLunCard(
     title,
     location: {
       raw: [address?.streetAddress, address?.addressLocality, title].filter(Boolean).join(", "),
-      ...(address?.addressLocality ? { city: address.addressLocality } : { city: "Львів" }),
+      ...(address?.addressLocality ? { city: address.addressLocality } : {}),
       ...coords,
     },
     propertyType: detectPropertyType({
       sectionId: card.sectionId,
+      title,
+      ...(rentalDetail ? { description: rentalDetail } : {}),
       categoryText: `${title} ${jsonLd && Array.isArray(jsonLd["@type"]) ? jsonLd["@type"].join(" ") : ""}`,
     }),
     sellerType: owner.sellerType,
@@ -292,6 +295,7 @@ export function parseLunCard(
       originalHost: originalListingHost(card.urlRaw),
       withoutCommission: card.withoutCommission,
       isOwner: card.isOwner,
+      ...(address?.streetAddress ? { streetAddress: address.streetAddress } : {}),
       ...sellerAnnotation(owner),
       ...lunProvenanceMetadata(card),
     },

@@ -62,7 +62,7 @@ describe("DIM.RIA parser", () => {
     expect(listing?.metadata?.characteristic1437Recognized).toBe(false);
   });
 
-  it("trusts 1436 even when agency_id is present", () => {
+  it("treats 1436 + agency_id as conflict (not silent platform owner confirm)", () => {
     const listing = parseDomriaInfo({
       realty_id: 4,
       beautiful_url: "realty-4.html",
@@ -71,8 +71,9 @@ describe("DIM.RIA parser", () => {
       characteristics_values: { "1437": 1436 },
       realty_type_id: 2,
     });
-    expect(listing?.sellerType).toBe("owner");
-    expect(listing ? isSellerEligible(listing) : false).toBe(true);
+    expect(listing?.sellerType).not.toBe("owner");
+    expect(listing?.metadata?.ownerEvidenceLevel).toBe("conflict");
+    expect(listing ? isSellerEligible(listing) : true).toBe(false);
   });
 
   it("preserves old publishing_date and never substitutes now", () => {

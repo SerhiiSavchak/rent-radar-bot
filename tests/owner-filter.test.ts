@@ -176,13 +176,19 @@ describe("owner classifier", () => {
     expect(result.filterConsidersSelfDeclaredOwner).toBe(false);
   });
 
-  it("keeps platform owner when an agency id is also present", () => {
+  it("platform owner + structured agency evidence → conflict (not silent confirm)", () => {
     const result = classifyOwner({
       platformOwner: true,
       agencyId: 52150,
     });
-    expect(result.sellerType).toBe("owner");
-    expect(result.ownerEvidenceLevel).toBe("platform_confirmed");
+    expect(result.sellerType).toBe("unknown");
+    expect(result.ownerEvidenceLevel).toBe("conflict");
+    expect(
+      isSellerEligible({
+        sellerType: result.sellerType,
+        metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
   });
 
   it("classifies explicit platform agent labels as agent", () => {
@@ -194,18 +200,18 @@ describe("owner classifier", () => {
     expect(result.ownerEvidenceLevel).toBe("intermediary");
   });
 
-  it("does not treat a generic business account flag as agency proof", () => {
+  it("treats trusted OLX isBusiness as commercial intermediary (not ownership)", () => {
     const result = classifyOwner({
       isBusiness: true,
     });
-    expect(result.sellerType).toBe("unknown");
-    expect(result.ownerEvidenceLevel).toBe("private_unknown");
+    expect(result.sellerType).toBe("business");
+    expect(result.ownerEvidenceLevel).toBe("intermediary");
     expect(
       isSellerEligible({
         sellerType: result.sellerType,
         metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("allows a self-declaration without the legacy OWNER_ACCEPT_SELF_DECLARED opt-in", () => {
@@ -277,19 +283,20 @@ describe("owner classifier", () => {
     ).toBe(true);
   });
 
-  it("keeps OLX isBusiness alone unknown and sendable", () => {
+  it("rejects trusted OLX isBusiness as confirmed commercial intermediary", () => {
     const result = classifyOwner({ isBusiness: true });
     const assessment = sellerAssessmentFromClassification(result);
-    expect(result.sellerType).toBe("unknown");
-    expect(assessment.state).toBe("unknown");
-    expect(assessment.send).toBe(true);
+    expect(result.sellerType).toBe("business");
+    expect(result.ownerEvidenceLevel).toBe("intermediary");
+    expect(assessment.state).toBe("confirmed_agent");
+    expect(assessment.send).toBe(false);
     expect(assessment.evidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           source: "account",
           type: "business_flag",
           value: "true",
-          strength: "weak",
+          strength: "strong",
         }),
       ]),
     );
@@ -298,7 +305,7 @@ describe("owner classifier", () => {
         sellerType: result.sellerType,
         metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("rejects an explicit RIELTOR realtor label as a confirmed intermediary", () => {

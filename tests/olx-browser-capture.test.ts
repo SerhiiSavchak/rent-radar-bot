@@ -94,6 +94,7 @@ describe("OLX browser capture helpers", () => {
       const close = vi.fn(async () => undefined);
       const page = {
         on: vi.fn(),
+        route: vi.fn(async () => undefined),
         goto: vi.fn(async () => {
           throw new Error("nav failed");
         }),
@@ -140,6 +141,7 @@ describe("OLX browser extract budgets + capture wiring", () => {
   function mockBrowser(html: string): Browser {
     let responseHandler: ((response: Response) => void) | undefined;
     const page = {
+      route: vi.fn(async () => undefined),
       on: (event: string, handler: (response: Response) => void) => {
         if (event === "response") {
           responseHandler = handler;
@@ -258,6 +260,7 @@ describe("OLX browser extract budgets + capture wiring", () => {
     const contextClose = vi.fn(async () => undefined);
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         nowMs += 6_000;
         return {
@@ -328,6 +331,7 @@ describe("OLX browser extract budgets + capture wiring", () => {
       "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/lvov/";
     const page = {
       on: vi.fn(),
+      route: vi.fn(async () => undefined),
       goto: vi.fn(async (navUrl: string) => {
         lastUrl = navUrl;
         return {

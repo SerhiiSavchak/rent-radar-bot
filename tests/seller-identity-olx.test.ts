@@ -81,24 +81,31 @@ describe("seller identity name context", () => {
     ).toBeTruthy();
   });
 
-  it("true platform-confirmed owner still overrides text intermediary", () => {
+  it("true platform-confirmed owner conflicts with strong free-text intermediary", () => {
     const owner = classifyOwner({
       platformOwner: true,
       text: "агентство нерухомості пропонує",
     });
-    expect(owner.ownerEvidenceLevel).toBe("platform_confirmed");
-    expect(owner.sellerType).toBe("owner");
+    expect(owner.ownerEvidenceLevel).toBe("conflict");
+    expect(owner.sellerType).not.toBe("owner");
+    expect(
+      sellerRejectionReason({
+        sellerType: owner.sellerType,
+        metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel },
+      }),
+    ).toBeTruthy();
   });
 
-  it("isBusiness alone stays unknown/sendable", () => {
+  it("rejects trusted OLX isBusiness as commercial intermediary", () => {
     const owner = classifyOwner({ isBusiness: true, text: "Здам квартиру" });
-    expect(owner.ownerEvidenceLevel).toBe("private_unknown");
+    expect(owner.sellerType).toBe("business");
+    expect(owner.ownerEvidenceLevel).toBe("intermediary");
     expect(
       isSellerEligible({
         sellerType: owner.sellerType,
         metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

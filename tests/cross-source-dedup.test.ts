@@ -328,6 +328,15 @@ describe("cross-source delivery", () => {
   it("sends one of a linked pair in the same cycle and keeps the identity after reopen", async () => {
     const path = dbPath();
     const { lun, olx } = linkedPair();
+    // Same-cycle clearance requires platform-confirmed OLX owner — not peer presence alone.
+    const olxOwner: Listing = {
+      ...olx,
+      sellerType: "owner",
+      metadata: {
+        ...(olx.metadata ?? {}),
+        ownerEvidenceLevel: "platform_confirmed",
+      },
+    };
     const sendListing = vi.fn(async () => ({
       ok: true,
       dryRun: true,
@@ -354,7 +363,7 @@ describe("cross-source delivery", () => {
       1,
     );
     lunBatch.push(lun);
-    olxBatch.push(olx);
+    olxBatch.push(olxOwner);
     const report = await runTelegramTestCycle(
       {
         adapters,
@@ -379,7 +388,7 @@ describe("cross-source delivery", () => {
     const reopened = new DurableDeliveryStore(getDb(path));
     const again = await runTelegramTestCycle(
       {
-        adapters: [adapter("olx", () => [olx]), adapter("lun", () => [lun])],
+        adapters: [adapter("olx", () => [olxOwner]), adapter("lun", () => [lun])],
         config,
         sink: sink(sendListing),
         dedupe: reopened,
@@ -390,13 +399,21 @@ describe("cross-source delivery", () => {
       2,
     );
     expect(again.sentOk).toBe(0);
-    expect(reopened.assessCrossSource(olx).suppress).toBe(true);
+    expect(reopened.assessCrossSource(olxOwner).suppress).toBe(true);
     expect(sendListing).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the discovered listing retryable when Telegram fails and does not also send the twin", async () => {
     const path = dbPath();
     const { lun, olx } = linkedPair();
+    const olxOwner: Listing = {
+      ...olx,
+      sellerType: "owner",
+      metadata: {
+        ...(olx.metadata ?? {}),
+        ownerEvidenceLevel: "platform_confirmed",
+      },
+    };
     let calls = 0;
     const sendListing = vi.fn(async () => {
       calls += 1;
@@ -437,7 +454,7 @@ describe("cross-source delivery", () => {
       1,
     );
     lunBatch.push(lun);
-    olxBatch.push(olx);
+    olxBatch.push(olxOwner);
     const deps = {
       adapters,
       config,
@@ -626,6 +643,32 @@ describe("cross-source delivery", () => {
         baseline: store,
         outbox: store,
         now: () => now,
+        probeOlxProfile: async () => ({
+          acquired: true,
+          listingHtml: `<!DOCTYPE html><html><body>
+<p data-testid="member-since">на OLX з <span>січень 2019 р.</span></p>
+<script>window.__PRERENDERED_STATE__=${JSON.stringify(
+            JSON.stringify({
+              ad: {
+                ad: {
+                  id: 1,
+                  url: olx.url,
+                  title: "Квартира",
+                  description: "оренда",
+                  business: false,
+                  user: { name: "Власник", sellerType: "owner", company_name: null },
+                },
+              },
+            }),
+          )}</script>
+</body></html>`,
+          totalPages: 1,
+          pagesFetched: 1,
+          precisePropertyKeys: ["львів вул тест 1"],
+          totalElements: 1,
+          visibleAds: 1,
+          realEstateAds: 1,
+        }),
       },
       2,
     );
@@ -837,7 +880,7 @@ describe("cross-source delivery", () => {
     expect(reverse.lunRejected).toBe(1);
   });
 
-  it("keeps a LUN copy linked to a RIELTOR owner or an unknown RIELTOR listing", async () => {
+  it("keeps a LUN copy linked to a RIELTOR owner; unknown RIELTOR detail stays held", async () => {
     const ownerLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/555/", "880");
     const unknownLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/556/", "881");
     expect(confirmedIntermediaryRelation(ownerLun, [rieltorCopy("555", "owner")])).toBeUndefined();
@@ -846,7 +889,8 @@ describe("cross-source delivery", () => {
     const unknownDelivery = await deliverPair(unknownLun, rieltorCopy("556", "unknown"), ["lun", "rieltor"]);
     expect(ownerDelivery.sentSources).toContain("lun");
     expect(ownerDelivery.lunRejected).toBe(0);
-    expect(unknownDelivery.sentSources).toContain("lun");
+    // Unresolved linked detail must not SEND the LUN copy.
+    expect(unknownDelivery.sentSources).not.toContain("lun");
     expect(unknownDelivery.lunRejected).toBe(0);
   });
 

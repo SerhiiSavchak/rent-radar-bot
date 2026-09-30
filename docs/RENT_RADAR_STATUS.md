@@ -224,7 +224,7 @@ Issue #2 accepts this as PASS on the existing Oracle VM after `a9d6eaf`. Five Pl
 
 ## Persistent state
 
-Schema 5 adds one `source_health` row per source and retention indexes. The canonical poller cleans once at startup and then at most once every 24 hours. Inactive seen listings (30 days), sent outbox rows (30 days), and cross-source identities (90 days) can be removed. Pending, sending, and failed outbox rows, source baselines, the poller lock, and seller-policy cutover state are not removed because of age. `DATABASE_PATH` still defaults to `./data/rent-radar.sqlite` inside the checkout. This batch does not move that file.
+Schema 5 adds one `source_health` row per source and retention indexes. The canonical poller cleans once at startup and then at most once every 24 hours. Sent outbox rows older than 30 days can be removed. `seen_listings` and `cross_source_identities` are dedup tombstones (ids and timestamps, no listing body) and are not deleted by age. Pending, sending, and failed outbox rows, source baselines, the poller lock, and seller-policy cutover state are not removed because of age. `DATABASE_PATH` still defaults to `./data/rent-radar.sqlite` inside the checkout. This batch does not move that file.
 
 ## Blockers
 

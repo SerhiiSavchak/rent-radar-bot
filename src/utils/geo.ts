@@ -40,6 +40,11 @@ export function validateCoordinates(
   latitude: unknown,
   longitude: unknown,
 ): CoordinateValidation {
+  const latitudeMissing = latitude === undefined || latitude === null || latitude === "";
+  const longitudeMissing = longitude === undefined || longitude === null || longitude === "";
+  if (latitudeMissing && longitudeMissing) {
+    return { ok: false, reason: "missing" };
+  }
   let lat = toFiniteNumber(latitude);
   let lng = toFiniteNumber(longitude);
   if (lat === undefined || lng === undefined) {

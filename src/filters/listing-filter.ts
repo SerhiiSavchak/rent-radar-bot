@@ -51,7 +51,8 @@ export function applyListingFilters(
       acceptSelfDeclared: config.ownerAcceptSelfDeclared === true,
     });
     const rejection = sellerEligible ? undefined : sellerRejectionReason(listing);
-    const propertyMatched = propertyTypes.includes(listing.propertyType);
+    const longTerm = listing.price?.period !== "day";
+    const propertyMatched = longTerm && propertyTypes.includes(listing.propertyType);
     const tooOld = isTooOld(listing, config.maxListingAgeMinutes);
     const accepted =
       location.matched && propertyMatched && sellerEligible && !tooOld;

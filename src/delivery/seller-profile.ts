@@ -1,10 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Listing, SellerType } from "../domain/listing.ts";
+import {
+  OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+  sellerRegistrationYearRejectionReason,
+} from "../sources/olx/olx-account-registration.ts";
 
 /**
- * How many distinct public addresses under one seller id count as repeated
- * unrelated inventory. Three matches the client wording "many listings".
- * Two addresses stay sendable evidence, not a likely-intermediary verdict.
+ * Kept for callers that still pass a distinct-address minimum.
+ * Address count alone is not a likely-intermediary verdict and is not a hard reject.
+ * Hard inventory exclusion is ≥5 precise real-estate properties (`seller_inventory_limit`).
  */
 export const SELLER_PROFILE_DISTINCT_ADDRESS_MIN = 3;
 
@@ -24,14 +28,23 @@ export type SellerProfileVerdict =
   | "confirmed_intermediary"
   | "profile_likely_intermediary"
   | "profile_high_risk"
+  | "seller_registration_year_2026"
+  | "seller_inventory_limit"
   | "unknown"
   | "confirmed_owner";
+
+/**
+ * Customer exclusion: ≥5 distinct active real-estate properties on the public
+ * seller profile (rent + sale, all cities). Not fraud / intermediary proof.
+ */
+export const SELLER_INVENTORY_LIMIT_MIN = 5;
+export const SELLER_INVENTORY_LIMIT_REASON = "seller_inventory_limit";
 
 /** Delivery policy for heuristic profile evidence. Classification stays independent. */
 export type SellerProfileDeliveryPolicy = "send" | "reject";
 
 export type SellerProfilePolicies = {
-  /** Default reject. Three-address inventory is likely, not confirmed intermediary proof. */
+  /** Default reject. Applies to profile_likely_intermediary from independent text families, not address count. */
   likelyPolicy: SellerProfileDeliveryPolicy;
   /** Default reject. Applies only when a source supplied accountCreatedAt. */
   newAccountPolicy: SellerProfileDeliveryPolicy;
@@ -117,8 +130,8 @@ export function verdictWhenProfileUnreadable(): SellerProfileDecision {
 
 /**
  * Classification only. Does not decide delivery.
- * Three addresses → profile_likely_intermediary. A supplied young account → profile_high_risk.
- * Neither is confirmed intermediary proof.
+ * Distinct addresses alone stay unknown, including 3 or 4.
+ * A supplied young account → profile_high_risk. That is not confirmed intermediary proof.
  */
 export function assessSellerProfile(input: {
   confirmedOwner: boolean;
@@ -135,13 +148,7 @@ export function assessSellerProfile(input: {
     };
   }
   const distinct = new Set(input.addresses.filter(Boolean));
-  const minimum = input.distinctAddressMin ?? SELLER_PROFILE_DISTINCT_ADDRESS_MIN;
-  if (distinct.size >= minimum) {
-    return {
-      verdict: "profile_likely_intermediary",
-      evidence: `distinct_addresses=${distinct.size}`,
-    };
-  }
+  void (input.distinctAddressMin ?? SELLER_PROFILE_DISTINCT_ADDRESS_MIN);
   if (input.accountCreatedAt && !Number.isNaN(input.accountCreatedAt.getTime())) {
     const maxDays = input.newAccountMaxAgeDays ?? SELLER_PROFILE_NEW_ACCOUNT_MAX_AGE_DAYS;
     const ageMs = input.now.getTime() - input.accountCreatedAt.getTime();
@@ -169,6 +176,12 @@ export function shouldRejectSellerProfile(
   if (verdict === "confirmed_intermediary") {
     return true;
   }
+  if (verdict === "seller_registration_year_2026") {
+    return true;
+  }
+  if (verdict === "seller_inventory_limit") {
+    return true;
+  }
   if (verdict === "profile_likely_intermediary") {
     return policies.likelyPolicy === "reject";
   }
@@ -176,6 +189,24 @@ export function shouldRejectSellerProfile(
     return policies.newAccountPolicy === "reject";
   }
   return false;
+}
+
+/**
+ * Exact-year customer exclusion. Reads metadata.accountRegistrationYear only —
+ * never listing publishedAt / createdTime.
+ */
+export function registrationYearDecisionFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): SellerProfileDecision | undefined {
+  const raw = metadata?.accountRegistrationYear;
+  const year = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : undefined;
+  if (sellerRegistrationYearRejectionReason(year)) {
+    return {
+      verdict: "seller_registration_year_2026",
+      evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+    };
+  }
+  return undefined;
 }
 
 function readAddresses(db: DatabaseSync, source: string, sellerId: string): string[] {
@@ -305,13 +336,18 @@ export function applySellerProfileGate(
       .find((value) => typeof value === "string");
     const accountCreatedAt = typeof createdRaw === "string" ? new Date(createdRaw) : undefined;
     const confirmedOwner = group.every((listing) => isPlatformConfirmedOwner(listing));
+    const registrationExcluded = group
+      .map((listing) => registrationYearDecisionFromMetadata(listing.metadata))
+      .find((item) => item !== undefined);
     let decision = assessSellerProfile({
       confirmedOwner,
       addresses,
       ...(accountCreatedAt ? { accountCreatedAt } : {}),
       now,
     });
-    if (
+    if (!confirmedOwner && registrationExcluded) {
+      decision = registrationExcluded;
+    } else if (
       !confirmedOwner &&
       decision.verdict === "unknown" &&
       group.some((listing) => listing.metadata?.sellerTextLevel === "likely")

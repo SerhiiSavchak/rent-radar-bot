@@ -13,7 +13,6 @@ import {
 import { createCycleOlxSellerVerifier } from "../src/delivery/olx-detail-seller.ts";
 import { selectDomriaHealthMessage } from "../src/sources/domria/domria.source.ts";
 import type { Listing } from "../src/domain/listing.ts";
-import { SELLER_PROFILE_DISTINCT_ADDRESS_MIN } from "../src/delivery/seller-profile.ts";
 import { derivedOracleOfferDetailHtml } from "./fixtures/olx-offer-detail-html.ts";
 
 function lunLinked(originalUrl: string, sourceId = "4726173400"): Listing {
@@ -125,10 +124,11 @@ describe("OLX public profile inventory (distinct properties / addresses)", () =>
       },
     });
     const merged = mergeOlxProfilePages(agent, page2);
-    expect(merged.precisePropertyKeys?.length).toBeGreaterThanOrEqual(SELLER_PROFILE_DISTINCT_ADDRESS_MIN);
-    expect(classifyOlxProfileInventory(merged).verdict).toBe("profile_likely_intermediary");
+    expect(merged.precisePropertyKeys?.length).toBe(4);
+    expect(merged.precisePropertyKeys?.length).toBeLessThan(5);
+    expect(classifyOlxProfileInventory(merged).verdict).toBe("unknown");
     expect(classifyOlxProfileInventory(merged).evidence).toContain("olx_precise_addresses=");
-    expect(classifyOlxProfileInventory(merged).evidence).toContain("olx_likely=1");
+    expect(classifyOlxProfileInventory(merged).evidence).toContain("olx_likely=0");
   });
 
   it("does not treat three listing ids for the same address as three properties", () => {
@@ -150,7 +150,7 @@ describe("OLX public profile inventory (distinct properties / addresses)", () =>
     expect(propertyKeyFromOlxProfileAd(ads[0])?.kind).toBe("precise");
   });
 
-  it("treats three coarse districts as likely locations, not verified addresses", () => {
+  it("keeps three coarse districts unknown and does not call them verified addresses", () => {
     const ads = [
       {
         id: 1,
@@ -174,10 +174,10 @@ describe("OLX public profile inventory (distinct properties / addresses)", () =>
     expect(snap.precisePropertyKeys).toHaveLength(0);
     expect(snap.coarseLocationKeys).toHaveLength(3);
     const decision = classifyOlxProfileInventory(snap);
-    expect(decision.verdict).toBe("profile_likely_intermediary");
-    expect(decision.evidence).toContain("distinct_coarse_locations=3");
+    expect(decision.verdict).toBe("unknown");
+    expect(decision.evidence).toContain("olx_coarse_locations=3");
     expect(decision.evidence).toContain("not_verified_property_addresses=1");
-    expect(decision.evidence).not.toMatch(/distinct_addresses=3/);
+    expect(decision.evidence).toContain("olx_likely=0");
   });
 
   it("keeps ordinary owners with 1–2 properties / repeated ads sendable", () => {
@@ -272,7 +272,13 @@ describe("OLX public profile inventory (distinct properties / addresses)", () =>
       },
       checked,
     );
-    expect(olxProfileCacheState(likely, new Date(checked.getTime() + 60_000))).toBe("fresh_likely");
+    expect(olxProfileCacheState(likely, new Date(checked.getTime() + 60_000))).toBe("fresh_unknown");
+    expect(
+      olxProfileCacheState(
+        `olx_likely=1;olx_checked_at=${checked.toISOString()}`,
+        new Date(checked.getTime() + 60_000),
+      ),
+    ).toBe("fresh_likely");
   });
 });
 
@@ -319,7 +325,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
     expect(decision.evidence).not.toMatch(/confirmed.?intermediary/i);
   });
 
-  it("rejects via profile_likely when shop inventory has 3+ distinct addresses", async () => {
+  it("does not reject a shop inventory of four precise addresses", async () => {
     const originalUrl =
       "https://www.olx.ua/d/uk/obyavlenie/orenda-kmnati-v-budinku-soklniki-okremo-kuhnya-ID11kYHE.html";
     const html = withShopLink(
@@ -329,7 +335,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
         title: "Оренда кімнати",
         description: "кімната",
         user: { name: "Валерія", company_name: "XHOUSE", sellerType: null },
-        isBusiness: true,
+        isBusiness: false,
       }),
       "https://xhouse.olx.ua/uk/home/",
     );
@@ -360,12 +366,13 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
       }),
     });
     const decision = await verify(lunLinked(originalUrl));
-    expect(decision.outcome).toBe("detail_profile_likely");
-    expect(decision.drop).toBe(true);
-    expect(decision.evidence).toMatch(/olx_likely=1|distinct_addresses=|olx_precise_addresses=/);
+    expect(decision.outcome).toBe("detail_unknown");
+    expect(decision.drop).toBe(false);
+    expect(decision.evidence).toContain("olx_likely=0");
+    expect(decision.evidence).toContain("olx_precise_addresses=");
   });
 
-  it("rejects XHOUSE-style unknown detail when /uk/list/user inventory has 3+ addresses", async () => {
+  it("keeps an XHOUSE-style detail when inventory is four precise addresses, not the shop name", async () => {
     const originalUrl =
       "https://www.olx.ua/d/uk/obyavlenie/orenda-kmnati-v-budinku-soklniki-okremo-kuhnya-ID11kYHE.html";
     const html = withProfileLink(
@@ -375,7 +382,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
         title: "Оренда кімнати",
         description: "кімната",
         user: { name: "Евгений", company_name: "XHOUSE", sellerType: null },
-        isBusiness: true,
+        isBusiness: false,
       }),
     );
     const verify = createCycleOlxSellerVerifier({
@@ -405,10 +412,10 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
       }),
     });
     const decision = await verify(lunLinked(originalUrl));
-    expect(decision.outcome).toBe("detail_profile_likely");
-    expect(decision.drop).toBe(true);
-    // Verdict comes from inventory evidence + policy, not the XHOUSE name/storefront alone.
-    expect(decision.evidence).toMatch(/olx_likely=1|olx_precise_addresses=/);
+    expect(decision.outcome).toBe("detail_unknown");
+    expect(decision.drop).toBe(false);
+    expect(decision.evidence).toContain("olx_likely=0");
+    expect(decision.evidence).toContain("olx_precise_addresses=");
     expect(decision.evidence).not.toMatch(/platform OLX seller shop/i);
   });
 
@@ -454,7 +461,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
         title: "Квартира",
         description: "текст",
         user: { name: "Ігор", company_name: "XHOUSE", sellerType: null },
-        isBusiness: true,
+        isBusiness: false,
       }),
       "blk",
     );
