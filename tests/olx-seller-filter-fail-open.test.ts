@@ -95,10 +95,11 @@ function incompleteMultiPageSnapshot(precise: number, coarse: number): OlxProfil
 }
 
 describe("OLX seller-filter fail-open regressions (classifier)", () => {
-  it("does not treat unread profile pages as below-threshold clearance when likely evidence already exists", () => {
+  it("does not hard-reject unread pages that only show three coarse locations", () => {
     const snap = incompleteMultiPageSnapshot(0, 3);
     expect(olxProfileInventoryIncomplete(snap)).toBe(true);
-    expect(classifyOlxProfileInventory(snap).verdict).toBe("profile_likely_intermediary");
+    expect(classifyOlxProfileInventory(snap).verdict).toBe("unknown");
+    expect(classifyOlxProfileInventory(snap).evidence).toContain("olx_inventory_incomplete=1");
   });
 
   it("keeps incomplete inventory as unknown when reject thresholds are not met", () => {

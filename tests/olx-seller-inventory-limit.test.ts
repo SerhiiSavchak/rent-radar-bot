@@ -186,7 +186,7 @@ describe("seller_inventory_limit classification", () => {
     expect(classifyOlxProfileInventory(merged).verdict).toBe("seller_inventory_limit");
   });
 
-  it("rejects incomplete inventory when already-visible addresses cross the likely threshold", () => {
+  it("keeps four visible precise properties unknown while later profile pages are unread", () => {
     const page1 = parseOlxProfileInventory({
       userListing: {
         userListing: {
@@ -202,7 +202,11 @@ describe("seller_inventory_limit classification", () => {
       },
     });
     expect(page1.precisePropertyKeys).toHaveLength(4);
-    expect(classifyOlxProfileInventory(page1).verdict).toBe("profile_likely_intermediary");
+    const decision = classifyOlxProfileInventory(page1);
+    expect(decision.verdict).toBe("unknown");
+    expect(decision.verdict).not.toBe("profile_likely_intermediary");
+    expect(decision.verdict).not.toBe("seller_inventory_limit");
+    expect(decision.evidence).toContain("olx_inventory_incomplete=1");
   });
 });
 

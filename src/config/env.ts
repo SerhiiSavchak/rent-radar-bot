@@ -123,7 +123,7 @@ export type AppConfig = {
    * Default reject_intermediaries. OWNER_ONLY=true cannot silently restore owner_only.
    */
   sellerPolicy: SellerPolicy;
-  /** Default reject. Three-address profile_likely_intermediary is not delivered. */
+  /** Default reject. Text-family profile_likely_intermediary is not delivered. Address count is not that verdict. */
   sellerProfileLikelyPolicy: "send" | "reject";
   /** Default reject. profile_high_risk is not delivered when a creation timestamp exists. */
   sellerProfileNewAccountPolicy: "send" | "reject";

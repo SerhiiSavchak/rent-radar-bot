@@ -100,6 +100,8 @@ const PROTECTED_SPANS: RegExp[] = [
   /рі[єе]лторам\s+не\s+(?:дзвонити|телефонувати)/giu,
   /риелторам\s+не\s+звонить/giu,
   /агентам\s+не\s+(?:турбувати|беспокоить)/giu,
+  /(?<![\p{L}\p{N}_])не\s+співпрац\p{L}*\s+з\s+[Аа]\.?[Нн]\.?(?![\p{L}\p{N}_])/giu,
+  /(?<![\p{L}\p{N}_])не\s+сотруднича\p{L}*\s+с\s+[Аа]\.?[Нн]\.?(?![\p{L}\p{N}_])/giu,
   /агентствам\s+нерухомості\s+не\s+\p{L}+/giu,
   /агенціям\s+нерухомості\s+не\s+\p{L}+/giu,
 ];
@@ -145,6 +147,14 @@ const STRONG_INTERMEDIARY_PATTERNS: Array<{ pattern: RegExp; label: string }> = 
   {
     pattern: new RegExp(`${CYRILLIC_WORD_START}realtors?(?![\\p{L}\\p{N}_])`, "iu"),
     label: "realtor",
+  },
+  {
+    pattern: new RegExp(`${CYRILLIC_WORD_START}rieltors?(?![\\p{L}\\p{N}_])`, "iu"),
+    label: "rieltor",
+  },
+  {
+    pattern: /real[-\s]+estate\s+(?:agents?|brokers?|consultants?|managers?|experts?)(?![\p{L}\p{N}_])/iu,
+    label: "real-estate professional",
   },
   { pattern: unicodePhrase(String.raw`я\s+рі[єе]лтор`), label: "я рієлтор" },
   { pattern: unicodePhrase(String.raw`я\s+риелтор`), label: "я риелтор" },

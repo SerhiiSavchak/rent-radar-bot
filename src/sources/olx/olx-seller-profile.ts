@@ -24,9 +24,8 @@ import {
  *
  * Exclusion policies (not fraud proof):
  * - `seller_inventory_limit` from ≥5 precise distinct real-estate properties.
- * - `profile_likely_intermediary` from ≥3 precise addresses, or from ≥3 coarse
- *   location samples labeled as coarse (not “verified addresses”). Delivery for
- *   likely still follows `SELLER_PROFILE_LIKELY_POLICY` (default reject).
+ * - 3–4 precise properties, and any number of coarse locations alone, stay unknown.
+ *   They are not `profile_likely_intermediary` and are not a hard reject.
  *
  * Incomplete / unread inventory must stay unknown — never a verified
  * “below inventory limit” clearance.
@@ -355,9 +354,8 @@ export function classifyOlxProfileInventory(
     };
   }
 
-  // Evaluate likely/inventory signals on pages already read BEFORE treating
-  // unread pages as an incomplete clearance. Partial evidence that already
-  // crosses the likely threshold must reject.
+  // Address count below 5 precise properties is not a reject, even when unread
+  // pages remain. Only an already-reached precise inventory limit excludes.
   const decision = assessSellerProfile({
     confirmedOwner: false,
     addresses: keys,
@@ -453,4 +451,15 @@ export function olxProfileCacheState(
     return "stale";
   }
   return likely ? "fresh_likely" : "fresh_unknown";
+}
+
+/**
+ * Dedicated About / «Про автора» text on a public OLX profile page.
+ *
+ * Captured listing and profile HTML in this repo expose member-since and inventory,
+ * not a stable About field or selector. This stays unsupported: callers must not
+ * scan the rest of the profile document for seller copy.
+ */
+export function extractOlxSellerAboutText(_html: string): undefined {
+  return undefined;
 }

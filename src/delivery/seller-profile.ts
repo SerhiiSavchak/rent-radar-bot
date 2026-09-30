@@ -6,9 +6,9 @@ import {
 } from "../sources/olx/olx-account-registration.ts";
 
 /**
- * How many distinct public addresses under one seller id count as repeated
- * unrelated inventory. Three matches the client wording "many listings".
- * Two addresses stay sendable evidence, not a likely-intermediary verdict.
+ * Kept for callers that still pass a distinct-address minimum.
+ * Address count alone is not a likely-intermediary verdict and is not a hard reject.
+ * Hard inventory exclusion is ≥5 precise real-estate properties (`seller_inventory_limit`).
  */
 export const SELLER_PROFILE_DISTINCT_ADDRESS_MIN = 3;
 
@@ -44,7 +44,7 @@ export const SELLER_INVENTORY_LIMIT_REASON = "seller_inventory_limit";
 export type SellerProfileDeliveryPolicy = "send" | "reject";
 
 export type SellerProfilePolicies = {
-  /** Default reject. Three-address inventory is likely, not confirmed intermediary proof. */
+  /** Default reject. Applies to profile_likely_intermediary from independent text families, not address count. */
   likelyPolicy: SellerProfileDeliveryPolicy;
   /** Default reject. Applies only when a source supplied accountCreatedAt. */
   newAccountPolicy: SellerProfileDeliveryPolicy;
@@ -130,8 +130,8 @@ export function verdictWhenProfileUnreadable(): SellerProfileDecision {
 
 /**
  * Classification only. Does not decide delivery.
- * Three addresses → profile_likely_intermediary. A supplied young account → profile_high_risk.
- * Neither is confirmed intermediary proof.
+ * Distinct addresses alone stay unknown, including 3 or 4.
+ * A supplied young account → profile_high_risk. That is not confirmed intermediary proof.
  */
 export function assessSellerProfile(input: {
   confirmedOwner: boolean;
@@ -148,13 +148,7 @@ export function assessSellerProfile(input: {
     };
   }
   const distinct = new Set(input.addresses.filter(Boolean));
-  const minimum = input.distinctAddressMin ?? SELLER_PROFILE_DISTINCT_ADDRESS_MIN;
-  if (distinct.size >= minimum) {
-    return {
-      verdict: "profile_likely_intermediary",
-      evidence: `distinct_addresses=${distinct.size}`,
-    };
-  }
+  void (input.distinctAddressMin ?? SELLER_PROFILE_DISTINCT_ADDRESS_MIN);
   if (input.accountCreatedAt && !Number.isNaN(input.accountCreatedAt.getTime())) {
     const maxDays = input.newAccountMaxAgeDays ?? SELLER_PROFILE_NEW_ACCOUNT_MAX_AGE_DAYS;
     const ageMs = input.now.getTime() - input.accountCreatedAt.getTime();
