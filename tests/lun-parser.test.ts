@@ -99,7 +99,7 @@ describe("LUN parser", () => {
       sectionId: 2,
       header: "Тест",
       location: [24.0, 49.8],
-      text: "поверх 12/15]",
+      text: 'поверх 12/15] блок [A] "центр" \\',
     };
     const second = {
       id: 2,

@@ -65,16 +65,33 @@ export function extractNextFlightPayload(html: string): string | undefined {
 export type LunCardsExtraction = {
   cards: LunCard[];
   rawCardCount: number;
+  /** Every card id in the parsed array, including cards the schema rejects. */
+  rawCardIds: string[];
   /** true when cards marker existed but JSON array could not be parsed */
   cardsParseFailed: boolean;
   payloadCount: number;
 };
+
+function rawCardId(item: unknown): string | undefined {
+  if (!item || typeof item !== "object" || !("id" in item)) {
+    return undefined;
+  }
+  const id = (item as { id?: unknown }).id;
+  if (typeof id === "number" && Number.isFinite(id)) {
+    return String(id);
+  }
+  if (typeof id === "string" && id.length > 0) {
+    return id;
+  }
+  return undefined;
+}
 
 export function extractLunCardsDetailed(html: string): LunCardsExtraction {
   const payloads = extractNextFlightPayloads(html);
   const marker = '"realties":{"cards":[';
   let cardsParseFailed = false;
   let rawCardCount = 0;
+  const rawCardIds: string[] = [];
   const cards: LunCard[] = [];
 
   for (const payload of payloads) {
@@ -129,6 +146,10 @@ export function extractLunCardsDetailed(html: string): LunCardsExtraction {
       }
       rawCardCount += parsed.length;
       for (const item of parsed) {
+        const id = rawCardId(item);
+        if (id) {
+          rawCardIds.push(id);
+        }
         const safe = lunCardSchema.safeParse(item);
         if (safe.success) {
           cards.push(safe.data);
@@ -142,6 +163,7 @@ export function extractLunCardsDetailed(html: string): LunCardsExtraction {
   return {
     cards,
     rawCardCount,
+    rawCardIds,
     cardsParseFailed,
     payloadCount: payloads.length,
   };
@@ -386,6 +408,7 @@ export type LunHtmlInspection = {
   hasRscCardsMarker: boolean;
   hasJsonLdList: boolean;
   rawCardCount: number;
+  rawCardIds: string[];
   validatedCardCount: number;
   validationRatio: number;
   resultKind: "ok" | "valid_empty" | "parser_failure";
@@ -428,6 +451,7 @@ export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtml
     hasRscCardsMarker,
     hasJsonLdList,
     rawCardCount,
+    rawCardIds: extracted.rawCardIds,
     validatedCardCount,
     validationRatio,
     resultKind,

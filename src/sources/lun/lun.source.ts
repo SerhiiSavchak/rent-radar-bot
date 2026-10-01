@@ -23,8 +23,9 @@ export const LUN_HOUSES_URL = "https://lun.ua/rent/lviv/houses";
  * Live-verified 2026-09-26: `?page=2` returns novel listing ids vs page 1.
  * Path `/page/2` is 404; `?offset=24` duplicates page 1.
  * 2026-10-01: pages are not newest-first. A fixed 2-page budget misses same-day
- * cards. The walk continues until totalGroupedCount, totalPages, or an empty
- * cards page. This cap is only an emergency guard.
+ * cards. The walk continues until unique card ids reach totalGroupedCount,
+ * totalPages, or an empty cards page. Repeated ids do not advance the count.
+ * This cap is only an emergency guard.
  */
 export const LUN_PAGE_SAFETY_CAP = 80;
 
@@ -198,8 +199,8 @@ export class LunSource implements ListingSourceAdapter {
 
     for (const categoryUrl of categories) {
       const seenIds = new Set<string>();
+      const seenRawIds = new Set<string>();
       const seenPageSets = new Set<string>();
-      let rawCollected = 0;
       let declaredTotal: number | undefined;
       let declaredPages: number | undefined;
       let categoryTerminal = false;
@@ -292,10 +293,14 @@ export class LunSource implements ListingSourceAdapter {
           break;
         }
         sawStructure = true;
+        const novelRaw = inspection.rawCardIds.filter((id) => !seenRawIds.has(id));
+        for (const id of inspection.rawCardIds) {
+          seenRawIds.add(id);
+        }
         const ids = inspection.listings.map((listing) => listing.sourceId);
         const pageKey = [...ids].sort().join(",");
         const novel = ids.filter((id) => !seenIds.has(id));
-        if (ids.length > 0 && (seenPageSets.has(pageKey) || novel.length === 0)) {
+        if (ids.length > 0 && (seenPageSets.has(pageKey) || (novel.length === 0 && novelRaw.length === 0))) {
           coverageTruncated = true;
           stopReasons.push("repeated_page");
           notes.push(`${pageUrl} coverage_truncated=repeated_page`);
@@ -305,26 +310,25 @@ export class LunSource implements ListingSourceAdapter {
         for (const id of ids) {
           seenIds.add(id);
         }
-        rawCollected += inspection.rawCardCount;
         listings.push(...inspection.listings);
-        if (inspection.listings.length === 0) {
+        if (inspection.listings.length === 0 && inspection.rawCardCount === 0) {
           const premature =
-            declaredTotal !== undefined &&
-            declaredTotal > 0 &&
-            rawCollected < declaredTotal * 0.8;
+            declaredTotal !== undefined && declaredTotal > 0 && seenRawIds.size < declaredTotal;
           if (premature) {
             coverageTruncated = true;
             stopReasons.push("premature_empty");
-            notes.push(`${pageUrl} coverage_truncated=premature_empty collected=${rawCollected} total=${declaredTotal}`);
+            notes.push(
+              `${pageUrl} coverage_truncated=premature_empty uniqueRawIds=${seenRawIds.size} total=${declaredTotal}`,
+            );
           } else {
             categoryTerminal = true;
-            notes.push(`${pageUrl} terminal=empty`);
+            notes.push(`${pageUrl} terminal=empty uniqueRawIds=${seenRawIds.size}`);
           }
           break;
         }
-        if (declaredTotal !== undefined && declaredTotal > 0 && rawCollected >= declaredTotal) {
+        if (declaredTotal !== undefined && declaredTotal > 0 && seenRawIds.size >= declaredTotal) {
           categoryTerminal = true;
-          notes.push(`${categoryUrl} terminal=totalGroupedCount collected=${rawCollected}`);
+          notes.push(`${categoryUrl} terminal=totalGroupedCount uniqueRawIds=${seenRawIds.size}`);
           break;
         }
         if (declaredPages !== undefined && page >= declaredPages) {
