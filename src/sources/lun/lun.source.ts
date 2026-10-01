@@ -23,8 +23,9 @@ export const LUN_HOUSES_URL = "https://lun.ua/rent/lviv/houses";
  * Live-verified 2026-09-26: `?page=2` returns novel listing ids vs page 1.
  * Path `/page/2` is 404; `?offset=24` duplicates page 1.
  * 2026-10-01: pages are not newest-first. A fixed 2-page budget misses same-day
- * cards. The walk continues until unique card ids reach totalGroupedCount,
- * totalPages, or an empty cards page. Repeated ids do not advance the count.
+ * cards. The walk continues until unique card ids reach the highest
+ * totalGroupedCount seen, totalPages, or an empty cards page whose slots
+ * cover that highest count. A later smaller count does not lower the bar.
  * This cap is only an emergency guard.
  */
 export const LUN_PAGE_SAFETY_CAP = 80;
@@ -205,6 +206,9 @@ export class LunSource implements ListingSourceAdapter {
       const seenPageSets = new Set<string>();
       let rawRows = 0;
       let declaredTotal: number | undefined;
+      let totalFirst: number | undefined;
+      let totalMin: number | undefined;
+      let totalMax: number | undefined;
       let declaredPages: number | undefined;
       let categoryTerminal = false;
       const startedAt = now();
@@ -267,9 +271,12 @@ export class LunSource implements ListingSourceAdapter {
           `${pageUrl} integrity: rsc=${inspection.hasRscCardsMarker} jsonld=${inspection.hasJsonLdList} rawCards=${inspection.rawCardCount} validated=${inspection.validatedCardCount} kind=${inspection.resultKind} cardsParseFailed=${inspection.cardsParseFailed} payloads=${inspection.hasNextFlight}`,
         );
         const boundary = readLunWalkBoundary(response.bodyText);
-        if (boundary.totalGroupedCount !== undefined && boundary.totalGroupedCount !== declaredTotal) {
+        if (boundary.totalGroupedCount !== undefined) {
           declaredTotal = boundary.totalGroupedCount;
-          notes.push(`${categoryUrl} totalGroupedCount=${declaredTotal}`);
+          totalFirst ??= boundary.totalGroupedCount;
+          totalMin = totalMin === undefined ? boundary.totalGroupedCount : Math.min(totalMin, boundary.totalGroupedCount);
+          totalMax = totalMax === undefined ? boundary.totalGroupedCount : Math.max(totalMax, boundary.totalGroupedCount);
+          notes.push(`${pageUrl} totalGroupedCount=${boundary.totalGroupedCount}`);
         }
         if (boundary.totalPages !== undefined && boundary.totalPages !== declaredPages) {
           declaredPages = boundary.totalPages;
@@ -316,27 +323,29 @@ export class LunSource implements ListingSourceAdapter {
         rawRows += inspection.rawCardCount;
         listings.push(...inspection.listings);
         if (inspection.listings.length === 0 && inspection.rawCardCount === 0) {
-          const slotsCovered = rawRows >= (declaredTotal ?? 0);
-          const premature =
-            declaredTotal !== undefined &&
-            declaredTotal > 0 &&
-            seenRawIds.size < declaredTotal &&
-            !slotsCovered;
+          const required = totalMax ?? 0;
+          const slotsCovered = totalMax !== undefined && rawRows >= required;
+          const idsCovered = totalMax !== undefined && seenRawIds.size >= required;
+          const premature = totalMax !== undefined && required > 0 && !idsCovered && !slotsCovered;
           if (premature) {
             coverageTruncated = true;
             stopReasons.push("premature_empty");
             notes.push(
-              `${pageUrl} coverage_truncated=premature_empty uniqueRawIds=${seenRawIds.size} total=${declaredTotal}`,
+              `${pageUrl} coverage_truncated=premature_empty uniqueRawIds=${seenRawIds.size} rawRows=${rawRows} maxTotal=${required}`,
             );
           } else {
             categoryTerminal = true;
-            notes.push(`${pageUrl} terminal=empty uniqueRawIds=${seenRawIds.size}`);
+            notes.push(
+              `${pageUrl} terminal=empty uniqueRawIds=${seenRawIds.size} rawRows=${rawRows} maxTotal=${required}`,
+            );
           }
           break;
         }
-        if (declaredTotal !== undefined && declaredTotal > 0 && seenRawIds.size >= declaredTotal) {
+        if (totalMax !== undefined && totalMax > 0 && seenRawIds.size >= totalMax) {
           categoryTerminal = true;
-          notes.push(`${categoryUrl} terminal=totalGroupedCount uniqueRawIds=${seenRawIds.size}`);
+          notes.push(
+            `${categoryUrl} terminal=maxTotalGroupedCount uniqueRawIds=${seenRawIds.size} maxTotal=${totalMax}`,
+          );
           break;
         }
         if (declaredPages !== undefined && page >= declaredPages) {
@@ -350,6 +359,11 @@ export class LunSource implements ListingSourceAdapter {
           notes.push(`${categoryUrl} coverage_truncated=safety_cap`);
           break;
         }
+      }
+      if (totalFirst !== undefined) {
+        notes.push(
+          `${categoryUrl} total_first=${totalFirst} total_last=${declaredTotal} total_min=${totalMin} total_max=${totalMax}`,
+        );
       }
       if (!categoryTerminal) {
         boundaryReached = false;

@@ -146,7 +146,7 @@ describe("LUN catalog walk", () => {
     expect(calls).toEqual([flatsUrl(1), flatsUrl(2)]);
   });
 
-  it("follows a later totalGroupedCount when the catalog shrinks during the walk", async () => {
+  it("does not stop when a later totalGroupedCount drops while unseen ids remain", async () => {
     const { source, calls } = sourceFor(
       new Map([
         [
@@ -167,10 +167,11 @@ describe("LUN catalog walk", () => {
       ]),
     );
     const result = await source.inspectLatest({ includeHouses: false });
-    expect(result.listings.map((listing) => listing.sourceId)).toEqual(["1", "2"]);
+    expect(result.listings.map((listing) => listing.sourceId)).toEqual(["1", "2", "3"]);
     expect(result.health.healthy).toBe(true);
     expect(result.coverage?.coverageTruncated).toBe(false);
-    expect(calls).toEqual([flatsUrl(1), flatsUrl(2)]);
+    expect(result.coverage?.boundaryReached).toBe(true);
+    expect(calls).toEqual([flatsUrl(1), flatsUrl(2), flatsUrl(3)]);
   });
 
   it("keeps walking when a page only repeats earlier ids and the slot count is already met", async () => {
