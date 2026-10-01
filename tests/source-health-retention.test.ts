@@ -320,7 +320,7 @@ describe("persistent source health and retention", () => {
         httpStatus: 200,
         listingCount: 0,
       }),
-    ).toBe("parser_failure");
+    ).toBe("ok");
     expect(
       normalizeSourceHealthStatus({
         source: "lun",

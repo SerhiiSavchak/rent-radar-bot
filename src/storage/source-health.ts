@@ -56,7 +56,8 @@ export function isFailureSourceStatus(status: SourceHealthStatus): boolean {
 
 /**
  * Map a poll attempt onto the durable status.
- * parser_failure is returned before any empty/ok fallback.
+ * Explicit resultKind is trusted: ok stays ok even when listingCount is 0.
+ * parser_failure is returned only for an explicit parser failure.
  * HTTP 429 is rate_limited even when the attempt was labeled transport_blocked.
  */
 export function normalizeSourceHealthStatus(input: SourceHealthWrite): SourceHealthStatus {
@@ -85,7 +86,7 @@ export function normalizeSourceHealthStatus(input: SourceHealthWrite): SourceHea
     return "valid_empty";
   }
   if (kind === "ok") {
-    return (input.listingCount ?? 0) > 0 ? "ok" : "parser_failure";
+    return "ok";
   }
   if (kind === "http_error") {
     return "http_error";
