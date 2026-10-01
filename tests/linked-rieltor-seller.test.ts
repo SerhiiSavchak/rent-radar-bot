@@ -1096,7 +1096,7 @@ describe("linked RIELTOR seller verification", () => {
     expect(holdCount()).toBe(0);
   });
 
-  it("keeps unresolved after the hold window on persistent transport failure (no auto-send)", async () => {
+  it("releases a persistent transport failure once the hold deadline passes", async () => {
     const path = dbPath();
     const store = new DurableDeliveryStore(getDb(path));
     const batch: Listing[] = [];
@@ -1124,10 +1124,10 @@ describe("linked RIELTOR seller verification", () => {
     const fourth = await cycle(new Date(now.getTime() + 30 * 60 * 1000), 5);
     expect(first.sentOk).toBe(0);
     expect(second.sentOk).toBe(0);
-    expect(third.sentOk).toBe(0);
+    expect(third.sentOk).toBe(1);
     expect(fourth.sentOk).toBe(0);
-    expect(outboxCount("hold-expire")).toBe(0);
-    expect(holdCount()).toBe(1);
+    expect(outboxCount("hold-expire")).toBe(1);
+    expect(holdCount()).toBe(0);
   });
 
   it("keeps a hold across a process restart and then resolves it", async () => {

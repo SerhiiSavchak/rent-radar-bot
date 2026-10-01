@@ -5,9 +5,10 @@ import type { LinkedSellerDecision } from "./rieltor-detail-seller.ts";
 import { deserializeListing, serializeListing } from "../storage/durable-delivery-store.ts";
 
 /**
- * Retry window between hold checks. Temporary acquisition failures are not
- * auto-sent when this elapses — the hold is extended and rechecked later.
- * Evaluated unknown is not a hold under reject_intermediaries.
+ * Absolute retry deadline measured from hold_started_at.
+ * A temporary failure is rechecked until this instant, then released.
+ * Retries must not move release_at. Evaluated unknown is not a hold
+ * under reject_intermediaries.
  */
 export const SELLER_HOLD_MAX_MS = 20 * 60 * 1000;
 
@@ -146,13 +147,11 @@ export function deleteSellerHold(db: DatabaseSync, source: string, sourceId: str
 
 export function keepSellerHold(db: DatabaseSync, source: string, sourceId: string, now: Date): void {
   const nextCheck = new Date(now.getTime() + 1000).toISOString();
-  // Refresh release_at so actively retried unresolved holds are not abandoned.
-  const releaseAt = new Date(now.getTime() + SELLER_HOLD_MAX_MS).toISOString();
   db.prepare(
     `UPDATE seller_verification_holds
-     SET attempt_count = attempt_count + 1, next_check_at = ?, release_at = ?
+     SET attempt_count = attempt_count + 1, next_check_at = ?
      WHERE source = ? AND source_id = ?`,
-  ).run(nextCheck, releaseAt, source, sourceId);
+  ).run(nextCheck, source, sourceId);
 }
 
 export function countSellerHolds(db: DatabaseSync): number {
@@ -180,6 +179,15 @@ export async function resolveDueSellerHolds(
       continue;
     }
     if (disposition === "defer") {
+      const releaseAtMs = Date.parse(hold.releaseAt);
+      if (Number.isFinite(releaseAtMs) && now.getTime() >= releaseAtMs) {
+        deleteSellerHold(db, hold.source, hold.sourceId);
+        actions.push({
+          listing: hold.listing,
+          action: policy === "owner_only" ? "drop" : "send",
+        });
+        continue;
+      }
       keepSellerHold(db, hold.source, hold.sourceId, now);
       actions.push({ listing: hold.listing, action: "keep" });
       continue;

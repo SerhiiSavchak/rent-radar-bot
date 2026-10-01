@@ -8,7 +8,6 @@ import { createCycleOlxSellerVerifier } from "../src/delivery/olx-detail-seller.
 import {
   shouldHoldSellerVerification,
   hasSellerHold,
-  SELLER_HOLD_MAX_MS,
 } from "../src/delivery/seller-verification-hold.ts";
 import { CONFIRMED_SELLER_CACHE_MS } from "../src/delivery/rieltor-detail-seller.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
@@ -585,7 +584,7 @@ describe("LUN→OLX same-cycle pipeline holds", () => {
         dedupe: reopened,
         baseline: reopened,
         outbox: reopened,
-        now: () => new Date(now.getTime() + SELLER_HOLD_MAX_MS + 60_000),
+        now: () => new Date(now.getTime() + 5 * 60_000),
         olxDetailGapMs: 0,
         fetchOlxDetail: async () => ({ status: 200, finalUrl: OLX_URL, bodyText: incompleteHtml() }),
         probeOlxProfile: async () => ({ acquired: false }),
