@@ -25,8 +25,9 @@ export type FreshnessPolicy = {
   strictNewPublications: boolean;
   now: Date;
   /**
-   * When the per-source silent baseline was established.
-   * Publications older than this are late-discovered inventory, not new publications.
+   * Effective lower bound supplied by the caller.
+   * For a baselined source this is the later of the previous complete poll
+   * and a seller-policy cutover. Publications older than it are late inventory.
    */
   monitoringStartedAt?: Date | undefined;
 };

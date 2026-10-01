@@ -270,6 +270,27 @@ function laterDate(a: Date | undefined, b: Date | undefined): Date | undefined {
   return a.getTime() >= b.getTime() ? a : b;
 }
 
+/** Previous complete poll, or the original baseline when no later success exists. */
+function monitoringBoundary(
+  baseline: SourceBaseline,
+  source: string,
+  policyCutoverAt: Date | undefined,
+): Date | undefined {
+  const previousComplete = baseline.lastSuccessAt(source) ?? baseline.establishedAt(source);
+  return laterDate(previousComplete, policyCutoverAt);
+}
+
+function deliveryRemainsOpen(
+  deps: TelegramTestPipelineDeps,
+  holdDb: DatabaseSync | undefined,
+  listing: Listing,
+): boolean {
+  if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
+    return true;
+  }
+  return deps.baseline.hasPendingDelivery?.(listing.source, listing.sourceId) === true;
+}
+
 function emptySellerStats() {
   return {
     sellerAcceptedOwner: 0,
@@ -1268,8 +1289,13 @@ export async function runTelegramTestCycle(
         return;
       }
     }
-    const established = deps.baseline.establishedAt(listing.source);
-    const monitoringStartedAt = laterDate(established, policyCutoverAt);
+    // A due hold already passed the previous-poll check when it was deferred.
+    // last_success_at has since moved to that deferring poll, so release keeps
+    // the original baseline floor plus policy cutover.
+    const monitoringStartedAt = laterDate(
+      deps.baseline.establishedAt(listing.source),
+      policyCutoverAt,
+    );
     const freshness = classifyListingFreshness(listing, {
       maxPublicationAgeMinutes,
       strictNewPublications,
@@ -1285,6 +1311,9 @@ export async function runTelegramTestCycle(
         ? freshness.kind
         : "first_noticed";
     const delivered = await handoff(listing, deliveryKind);
+    if (delivered.sentOk === 0 && delivered.sentFailed > 0) {
+      deps.baseline.notePendingDelivery?.(listing.source, listing.sourceId);
+    }
     if (crossSource) {
       crossSourcePeers.push(listing);
     }
@@ -1383,7 +1412,9 @@ export async function runTelegramTestCycle(
     }
 
     // Baseline already exists — only consider unseen + freshness.
+    // Snapshot the previous complete poll before this cycle advances it.
     // An incomplete scan must not move the last complete monitoring timestamp.
+    const monitoringStartedAt = monitoringBoundary(deps.baseline, bucket.source, policyCutoverAt);
     if (attempt?.resultKind !== "coverage_degraded") {
       deps.baseline.recordSuccess(bucket.source, now());
     }
@@ -1425,15 +1456,15 @@ export async function runTelegramTestCycle(
         }
       }
 
-      const established = deps.baseline.establishedAt(bucket.source);
-      const monitoringStartedAt = laterDate(established, policyCutoverAt);
       const freshness = classifyListingFreshness(listing, {
         maxPublicationAgeMinutes,
         strictNewPublications,
         now: now(),
         ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
       });
-      if (!freshness.deliverable) {
+      const retryOpen =
+        freshness.kind === "late_discovered" && deliveryRemainsOpen(deps, holdDb, listing);
+      if (!freshness.deliverable && !retryOpen) {
         if (freshness.kind === "old_publication") {
           suppressedOld += 1;
         } else if (freshness.kind === "refreshed_old") {
@@ -1472,9 +1503,12 @@ export async function runTelegramTestCycle(
       const deliveryKind =
         freshness.kind === "new_publication" || freshness.kind === "first_noticed"
           ? freshness.kind
-          : "first_noticed";
+          : "new_publication";
       decisionTrace.record(listing.source, listing.sourceId, "queued", deliveryKind);
       const delivered = await handoff(listing, deliveryKind);
+      if (delivered.sentOk === 0 && delivered.sentFailed > 0) {
+        deps.baseline.notePendingDelivery?.(listing.source, listing.sourceId);
+      }
       decisionTrace.record(
         listing.source,
         listing.sourceId,

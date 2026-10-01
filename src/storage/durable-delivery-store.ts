@@ -214,6 +214,17 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
     return row ? new Date(row.establishedAt) : undefined;
   }
 
+  lastSuccessAt(source: string): Date | undefined {
+    const row = this.db
+      .prepare("SELECT last_success_at AS lastSuccessAt FROM source_baselines WHERE source = ?")
+      .get(source) as { lastSuccessAt: string | null } | undefined;
+    if (!row?.lastSuccessAt) {
+      return undefined;
+    }
+    const parsed = new Date(row.lastSuccessAt);
+    return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+  }
+
   establishSilent(
     source: string,
     listings: Listing[],
@@ -236,6 +247,16 @@ export class DurableDeliveryStore implements ListingDedupe, SourceBaseline, Tele
 
   recordSuccess(source: string, at = new Date()): void {
     this.recordSourceSuccess(source, at);
+  }
+
+  hasPendingDelivery(source: string, sourceId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM telegram_outbox
+         WHERE source = ? AND source_id = ? AND status != 'sent' LIMIT 1`,
+      )
+      .get(source, sourceId);
+    return Boolean(row);
   }
 
   recordSourceSuccess(source: string, at = new Date()): void {

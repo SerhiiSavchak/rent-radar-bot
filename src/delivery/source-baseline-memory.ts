@@ -11,6 +11,8 @@ import type { ListingDedupe, SourceBaseline } from "./delivery-ports.ts";
  */
 export class InMemorySourceBaseline implements SourceBaseline {
   private readonly ready = new Map<string, Date>();
+  private readonly lastSuccess = new Map<string, Date>();
+  private readonly pendingDelivery = new Set<string>();
 
   hasBaseline(source: ListingSource | string): boolean {
     return this.ready.has(source);
@@ -18,6 +20,10 @@ export class InMemorySourceBaseline implements SourceBaseline {
 
   establishedAt(source: ListingSource | string): Date | undefined {
     return this.ready.get(source);
+  }
+
+  lastSuccessAt(source: ListingSource | string): Date | undefined {
+    return this.lastSuccess.get(source);
   }
 
   /**
@@ -34,11 +40,23 @@ export class InMemorySourceBaseline implements SourceBaseline {
       dedupe.markSeen(listing);
     }
     this.ready.set(source, at);
+    this.lastSuccess.set(source, at);
     return listings.length;
   }
 
-  recordSuccess(): void {
-    // Process-local baseline has no last_success_at column.
+  recordSuccess(source: ListingSource | string, at = new Date()): void {
+    if (!this.ready.has(source)) {
+      return;
+    }
+    this.lastSuccess.set(source, at);
+  }
+
+  notePendingDelivery(source: ListingSource | string, sourceId: string): void {
+    this.pendingDelivery.add(`${source}:${sourceId}`);
+  }
+
+  hasPendingDelivery(source: ListingSource | string, sourceId: string): boolean {
+    return this.pendingDelivery.has(`${source}:${sourceId}`);
   }
 
   /** Sources that already completed a successful baseline this process. */

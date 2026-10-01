@@ -728,7 +728,9 @@ describe("linked RIELTOR seller verification", () => {
     const batch: Listing[] = [];
     const adapters = [adapter("lun", () => batch)];
     await seed(store, adapters);
-    batch.push(lunLinked("owner-1", "https://rieltor.ua/lvov/flats-rent/view/777/"));
+    const owner = lunLinked("owner-1", "https://rieltor.ua/lvov/flats-rent/view/777/");
+    owner.publishedAt = now;
+    batch.push(owner);
     let calls = 0;
     await runTelegramTestCycle(
       {
@@ -778,7 +780,9 @@ describe("linked RIELTOR seller verification", () => {
     const batch: Listing[] = [];
     const adapters = [adapter("lun", () => batch)];
     await seed(store, adapters);
-    batch.push(lunLinked("exp", "https://rieltor.ua/lvov/flats-rent/view/888/"));
+    const expired = lunLinked("exp", "https://rieltor.ua/lvov/flats-rent/view/888/");
+    expired.publishedAt = now;
+    batch.push(expired);
     let calls = 0;
     const fetchRieltorDetail = async (url: string) => {
       calls += 1;

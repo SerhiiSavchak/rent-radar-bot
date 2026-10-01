@@ -691,7 +691,7 @@ describe("cross-source delivery", () => {
       source: "rieltor",
       sourceId: "555",
       url: "https://rieltor.ua/lvov/flats-rent/view/555/",
-      publishedAt: published,
+      publishedAt: now,
       sellerType: "unknown",
     });
     const staleLun: Listing = {

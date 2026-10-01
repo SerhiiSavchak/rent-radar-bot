@@ -24,9 +24,20 @@ export type SourceHealthWrite = {
 export type SourceBaseline = {
   hasBaseline(source: string): boolean;
   establishedAt(source: string): Date | undefined;
+  /**
+   * Previous successful complete poll. Undefined until a baseline exists.
+   * Callers that advance the boundary must read this before recordSuccess.
+   */
+  lastSuccessAt(source: string): Date | undefined;
   establishSilent(source: string, listings: Listing[], dedupe: ListingDedupe, at?: Date): number;
   /** Touch last successful fetch without rewriting established_at. */
   recordSuccess(source: string, at?: Date): void;
+  /**
+   * A deliverable listing whose Telegram send failed and was not marked seen.
+   * The next poll must not treat that retry as late inventory.
+   */
+  notePendingDelivery?(source: string, sourceId: string): void;
+  hasPendingDelivery?(source: string, sourceId: string): boolean;
   readonly survivesRestart: boolean;
   ensureSellerPolicy?(policy: string, at?: Date): Date | undefined;
   sellerPolicyCutoverAt?(): Date | undefined;
