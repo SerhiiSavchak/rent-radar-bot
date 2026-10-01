@@ -89,8 +89,24 @@ export function extractLunCardsDetailed(html: string): LunCardsExtraction {
     }
     let depth = 0;
     let end = -1;
+    let inString = false;
+    let escaped = false;
     for (let i = arrStart; i < payload.length; i += 1) {
       const char = payload[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
       if (char === "[") {
         depth += 1;
       } else if (char === "]") {

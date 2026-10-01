@@ -90,6 +90,35 @@ describe("LUN parser", () => {
     expect(inspection.listings[0]?.sourceId).toBe("99");
   });
 
+  it("parses every card when a string contains a closing bracket", () => {
+    const first = {
+      id: 1,
+      price: 10000,
+      currency: "uah",
+      isOwner: true,
+      sectionId: 2,
+      header: "Тест",
+      location: [24.0, 49.8],
+      text: "поверх 12/15]",
+    };
+    const second = {
+      id: 2,
+      price: 11000,
+      currency: "uah",
+      isOwner: false,
+      sectionId: 2,
+      header: "Друга",
+      location: [24.1, 49.9],
+    };
+    const inner = `{"realties":{"cards":[${JSON.stringify(first)},${JSON.stringify(second)}]}}`;
+    const html = `<html><script>self.__next_f.push([1,"${encodeFlightString(inner)}"])</script></html>`;
+    const inspection = inspectLunHtml(html);
+    expect(inspection.cardsParseFailed).toBe(false);
+    expect(inspection.resultKind).toBe("ok");
+    expect(inspection.rawCardCount).toBe(2);
+    expect(inspection.listings.map((listing) => listing.sourceId)).toEqual(["1", "2"]);
+  });
+
   it("marks truncated/malformed cards array as parser_failure, not healthy empty", () => {
     // Marker present but array never closes — must not become valid_empty.
     const truncated = '{"realties":{"cards":[{"id":1,"price":1';

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   LUN_FLATS_URL,
   LUN_HOUSES_URL,
-  LUN_POLL_PAGE_BUDGET,
+  LUN_PAGE_SAFETY_CAP,
   buildLunCategoryPageUrl,
 } from "../src/sources/lun/lun.source.ts";
 
@@ -19,6 +19,6 @@ describe("LUN pagination URL contract", () => {
     expect(buildLunCategoryPageUrl(LUN_HOUSES_URL, 3)).toBe(
       "https://lun.ua/rent/lviv/houses?page=3",
     );
-    expect(LUN_POLL_PAGE_BUDGET).toBe(2);
+    expect(LUN_PAGE_SAFETY_CAP).toBeGreaterThan(2);
   });
 });
