@@ -111,7 +111,7 @@ describe("OLX seller-filter fail-open regressions (classifier)", () => {
 });
 
 describe("OLX seller-filter fail-open regressions (verifier outcomes)", () => {
-  it("direct OLX unknown/incomplete is holdable, not not_required", async () => {
+  it("direct OLX unknown/incomplete is deliverable under reject_intermediaries", async () => {
     const verify = createCycleOlxSellerVerifier({
       peers: [],
       now: () => now,
@@ -130,9 +130,10 @@ describe("OLX seller-filter fail-open regressions (verifier outcomes)", () => {
       }),
     });
     const decision = await verify(olxListing());
-    expect(decision.outcome).not.toBe("not_required");
+    expect(decision.outcome).toBe("detail_unknown");
     expect(decision.drop).toBe(false);
-    expect(shouldHoldSellerVerification(decision)).toBe(true);
+    expect(shouldHoldSellerVerification(decision, "reject_intermediaries")).toBe(false);
+    expect(shouldHoldSellerVerification(decision, "owner_only")).toBe(true);
   });
 
   it("direct OLX registration year 2026 is a terminal reject", async () => {
@@ -212,7 +213,7 @@ describe("OLX seller-filter fail-open regressions (verifier outcomes)", () => {
     expect(decision.outcome).toBe("detail_inventory_limit");
   });
 
-  it("cached unknown remains holdable and is not an allow decision", async () => {
+  it("cached unknown is deliverable under reject_intermediaries and held under owner_only", async () => {
     const db = getDb(join(mkdtempSync(join(tmpdir(), "rr-fp-cache-")), "c.sqlite"));
     applyMigrations(db);
     const checkedAt = now.toISOString();
@@ -237,7 +238,8 @@ describe("OLX seller-filter fail-open regressions (verifier outcomes)", () => {
     const decision = await verify(olxListing());
     expect(decision.outcome).toBe("cache_unknown");
     expect(decision.drop).toBe(false);
-    expect(shouldHoldSellerVerification(decision)).toBe(true);
+    expect(shouldHoldSellerVerification(decision, "reject_intermediaries")).toBe(false);
+    expect(shouldHoldSellerVerification(decision, "owner_only")).toBe(true);
   });
 
   it("confirmed owner with complete non-reject evidence is eligible (not held)", async () => {
@@ -266,22 +268,23 @@ describe("OLX seller-filter fail-open regressions (verifier outcomes)", () => {
 });
 
 describe("OLX seller-filter hold semantics", () => {
-  it("does not auto-send when hold window elapses while still unresolved", async () => {
+  it("does not auto-send when a temporary failure is still unresolved after the hold window", async () => {
     const db = getDb(join(mkdtempSync(join(tmpdir(), "rr-fp-hold-")), "h.sqlite"));
     applyMigrations(db);
     const listing = olxListing();
     upsertSellerHold(db, listing, TOKEN, now, "olx");
     const past = new Date(now.getTime() + SELLER_HOLD_MAX_MS + 60_000);
     const actions = await resolveDueSellerHolds(db, past, async () => ({
-      outcome: "detail_unknown",
+      outcome: "detail_transport_failure",
       drop: false,
       requested: false,
       externalId: TOKEN,
-      evidence: "still unknown",
+      evidence: "still unreachable",
     }));
     expect(actions).toEqual([{ listing, action: "keep" }]);
     expect(hasSellerHold(db, "olx", TOKEN)).toBe(true);
     expect(countSellerHolds(db)).toBe(1);
+    closeDb();
   });
 });
 
@@ -368,7 +371,7 @@ describe("OLX seller-filter pipeline (direct listings)", () => {
     );
   }
 
-  it("direct OLX unknown does not send, holds, and is not terminally seen", async () => {
+  it("direct OLX unknown sends once and is not held", async () => {
     fileIndex += 1;
     const path = join(dir, `u-${fileIndex}.sqlite`);
     resetConfigCache();
@@ -401,9 +404,10 @@ describe("OLX seller-filter pipeline (direct listings)", () => {
       2,
     );
 
-    expect(report.sentOk).toBe(0);
-    expect(store.hasSeen(olxListing())).toBe(false);
-    expect(hasSellerHold(getDb(path), "olx", TOKEN)).toBe(true);
+    expect(report.linkedSellerVerification.detailUnknown).toBe(1);
+    expect(report.sentOk).toBe(1);
+    expect(store.hasSeen(olxListing())).toBe(true);
+    expect(hasSellerHold(getDb(path), "olx", TOKEN)).toBe(false);
   });
 
   it("dry-run does not mutate hold/seen/outbox for unresolved direct OLX", async () => {
@@ -444,19 +448,10 @@ describe("OLX seller-filter pipeline (direct listings)", () => {
     await seed(store, adapters);
     batch.push(olxListing());
 
-    let phase: "unknown" | "owner" = "unknown";
+    let phase: "blocked" | "owner" = "blocked";
     const probe = async (): Promise<OlxProfileSnapshot> => {
-      if (phase === "unknown") {
-        return {
-          acquired: true,
-          listingHtml: listingHtml({ year: 2018 }),
-          totalPages: 2,
-          pagesFetched: 1,
-          precisePropertyKeys: ["львів вул а 1"],
-          totalElements: 10,
-          visibleAds: 5,
-          realEstateAds: 5,
-        };
+      if (phase === "blocked") {
+        throw new Error("page.goto: Timeout 45000ms exceeded.");
       }
       return {
         acquired: true,

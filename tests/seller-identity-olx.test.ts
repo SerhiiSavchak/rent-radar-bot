@@ -251,6 +251,11 @@ describe("LUN→OLX exact linked seller verification", () => {
     });
     const decision = await verify(lun);
     expect(decision.drop).toBe(false);
-    expect(["detail_unknown", "detail_confirmed_owner"]).toContain(decision.outcome);
+    expect([
+      "detail_unknown",
+      "detail_confirmed_owner",
+      "detail_parser_failure",
+      "detail_transport_failure",
+    ]).toContain(decision.outcome);
   });
 });

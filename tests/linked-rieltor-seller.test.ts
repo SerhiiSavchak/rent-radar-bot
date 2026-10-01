@@ -301,10 +301,10 @@ describe("linked RIELTOR seller verification", () => {
       },
       2,
     );
-    expect(unknownReport.sentOk).toBe(0);
+    expect(unknownReport.sentOk).toBe(1);
     expect(unknownReport.linkedSellerVerification.detailUnknown).toBe(1);
-    expect(outboxCount("881")).toBe(0);
-    expect(holdCount()).toBe(1);
+    expect(outboxCount("881")).toBe(1);
+    expect(holdCount()).toBe(0);
   });
 
   it("does not invent an agent on 429, and does not request the remaining detail URLs", async () => {
@@ -501,9 +501,9 @@ describe("linked RIELTOR seller verification", () => {
       {
         name: "ambiguous",
         html: ambiguousHtml,
-        sentOk: 0,
-        outbox: 0,
-        hold: 1,
+        sentOk: 1,
+        outbox: 1,
+        hold: 0,
         counter: "detailUnknown" as const,
       },
     ];

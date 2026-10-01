@@ -452,7 +452,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
     expect(decision.outcome).toBe("detail_unknown");
   });
 
-  it("treats a blocked profile as UNKNOWN and does not drop", async () => {
+  it("treats a blocked profile as a temporary read failure and does not drop", async () => {
     const original = "https://www.olx.ua/d/uk/obyavlenie/orenda-kvartyry-ID11block.html";
     const html = withProfileLink(
       derivedOracleOfferDetailHtml({
@@ -475,7 +475,7 @@ describe("LUN → exact OLX linked seller + shop as inventory probe", () => {
     });
     const decision = await verify(lunLinked(original, "100"));
     expect(decision.drop).toBe(false);
-    expect(decision.outcome).toBe("detail_unknown");
+    expect(decision.outcome).toBe("detail_parser_failure");
     expect(decision.evidence).toContain("olx_profile_unreadable");
   });
 

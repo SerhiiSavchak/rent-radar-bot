@@ -1,11 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Listing } from "../domain/listing.ts";
+import type { SellerPolicy } from "../filters/owner-filter.ts";
 import type { LinkedSellerDecision } from "./rieltor-detail-seller.ts";
 import { deserializeListing, serializeListing } from "../storage/durable-delivery-store.ts";
 
 /**
- * Retry window between hold checks. Unresolved sellers are never auto-sent when
- * this elapses — the hold is extended and rechecked on later cycles.
+ * Retry window between hold checks. Temporary acquisition failures are not
+ * auto-sent when this elapses — the hold is extended and rechecked later.
+ * Evaluated unknown is not a hold under reject_intermediaries.
  */
 export const SELLER_HOLD_MAX_MS = 20 * 60 * 1000;
 
@@ -21,16 +23,48 @@ export type SellerHoldRow = {
   releaseAt: string;
 };
 
-/** Outcomes that mean seller verification is unresolved — hold, do not SEND. */
-export function shouldHoldSellerVerification(decision: LinkedSellerDecision): boolean {
-  return (
-    decision.outcome === "detail_transport_failure" ||
-    decision.outcome === "detail_rate_limited" ||
-    decision.outcome === "detail_parser_failure" ||
-    decision.outcome === "skipped_after_rate_limit" ||
-    decision.outcome === "detail_unknown" ||
-    decision.outcome === "cache_unknown"
-  );
+export type SellerVerificationDisposition = "allow" | "defer" | "reject";
+
+const TEMPORARY_SELLER_VERIFICATION_OUTCOMES = new Set<LinkedSellerDecision["outcome"]>([
+  "detail_transport_failure",
+  "detail_rate_limited",
+  "detail_parser_failure",
+  "skipped_after_rate_limit",
+]);
+
+const EVALUATED_UNKNOWN_OUTCOMES = new Set<LinkedSellerDecision["outcome"]>([
+  "detail_unknown",
+  "cache_unknown",
+]);
+
+/**
+ * One policy decision for a finished linked-seller check.
+ * Terminal drops reject. Transport, rate-limit, and parser failures defer.
+ * Evaluated unknown is deliverable under reject_intermediaries and stays
+ * deferred under owner_only. Unknown is not promoted to confirmed owner.
+ */
+export function sellerVerificationDisposition(
+  decision: LinkedSellerDecision,
+  policy: SellerPolicy = "reject_intermediaries",
+): SellerVerificationDisposition {
+  if (decision.drop) {
+    return "reject";
+  }
+  if (TEMPORARY_SELLER_VERIFICATION_OUTCOMES.has(decision.outcome)) {
+    return "defer";
+  }
+  if (EVALUATED_UNKNOWN_OUTCOMES.has(decision.outcome)) {
+    return policy === "owner_only" ? "defer" : "allow";
+  }
+  return "allow";
+}
+
+/** True only for a temporary defer. Evaluated unknown is not a hold under reject_intermediaries. */
+export function shouldHoldSellerVerification(
+  decision: LinkedSellerDecision,
+  policy: SellerPolicy = "reject_intermediaries",
+): boolean {
+  return sellerVerificationDisposition(decision, policy) === "defer";
 }
 
 export function hasSellerHold(db: DatabaseSync, source: string, sourceId: string): boolean {
@@ -134,17 +168,18 @@ export async function resolveDueSellerHolds(
   db: DatabaseSync,
   now: Date,
   verify: (listing: Listing) => Promise<LinkedSellerDecision>,
+  policy: SellerPolicy = "reject_intermediaries",
 ): Promise<Array<{ listing: Listing; action: SellerHoldAction }>> {
   const actions: Array<{ listing: Listing; action: SellerHoldAction }> = [];
   for (const hold of listDueSellerHolds(db, now)) {
     const decision = await verify(hold.listing);
-    if (decision.drop) {
+    const disposition = sellerVerificationDisposition(decision, policy);
+    if (disposition === "reject") {
       deleteSellerHold(db, hold.source, hold.sourceId);
       actions.push({ listing: hold.listing, action: "drop" });
       continue;
     }
-    if (shouldHoldSellerVerification(decision)) {
-      // Unresolved must never auto-send after the hold window — keep retrying.
+    if (disposition === "defer") {
       keepSellerHold(db, hold.source, hold.sourceId, now);
       actions.push({ listing: hold.listing, action: "keep" });
       continue;

@@ -880,7 +880,7 @@ describe("cross-source delivery", () => {
     expect(reverse.lunRejected).toBe(1);
   });
 
-  it("keeps a LUN copy linked to a RIELTOR owner; unknown RIELTOR detail stays held", async () => {
+  it("keeps a LUN copy for a RIELTOR owner and for an unresolved RIELTOR detail", async () => {
     const ownerLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/555/", "880");
     const unknownLun = lunPointingAt("https://rieltor.ua/lvov/flats-rent/view/556/", "881");
     expect(confirmedIntermediaryRelation(ownerLun, [rieltorCopy("555", "owner")])).toBeUndefined();
@@ -889,8 +889,7 @@ describe("cross-source delivery", () => {
     const unknownDelivery = await deliverPair(unknownLun, rieltorCopy("556", "unknown"), ["lun", "rieltor"]);
     expect(ownerDelivery.sentSources).toContain("lun");
     expect(ownerDelivery.lunRejected).toBe(0);
-    // Unresolved linked detail must not SEND the LUN copy.
-    expect(unknownDelivery.sentSources).not.toContain("lun");
+    expect(unknownDelivery.sentSources).toContain("lun");
     expect(unknownDelivery.lunRejected).toBe(0);
   });
 

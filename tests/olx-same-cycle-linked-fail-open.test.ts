@@ -86,7 +86,7 @@ function ownerHtml(): string {
 }
 
 describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
-  it("incomplete peer is not same_cycle_resolved", async () => {
+  it("incomplete peer is detail_unknown and is not held under reject_intermediaries", async () => {
     const verify = createCycleOlxSellerVerifier({
       peers: [lunLinked(), olxPeer()],
       now: () => now,
@@ -103,8 +103,9 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
       }),
     });
     const decision = await verify(lunLinked());
-    expect(decision.outcome).not.toBe("same_cycle_resolved");
-    expect(shouldHoldSellerVerification(decision)).toBe(true);
+    expect(decision.outcome).toBe("detail_unknown");
+    expect(shouldHoldSellerVerification(decision, "reject_intermediaries")).toBe(false);
+    expect(shouldHoldSellerVerification(decision, "owner_only")).toBe(true);
   });
 
   it("same-cycle confirmed intermediary rejects without detail", async () => {
@@ -177,7 +178,7 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
     expect(decision.outcome).toBe("cache_confirmed_owner");
   });
 
-  it("incomplete peer + cached unknown stays unresolved", async () => {
+  it("incomplete peer + cached unknown is cache_unknown and not held under reject_intermediaries", async () => {
     const db = new DatabaseSync(":memory:");
     applyMigrations(db);
     const checkedAt = now.toISOString();
@@ -200,7 +201,8 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
     });
     const decision = await verify(lunLinked());
     expect(decision.outcome).toBe("cache_unknown");
-    expect(shouldHoldSellerVerification(decision)).toBe(true);
+    expect(shouldHoldSellerVerification(decision, "reject_intermediaries")).toBe(false);
+    expect(shouldHoldSellerVerification(decision, "owner_only")).toBe(true);
   });
 
   it("verification timeout holds", async () => {
@@ -335,7 +337,7 @@ describe("LUN→OLX same-cycle pipeline holds", () => {
     );
   }
 
-  it("incomplete same-cycle peer holds LUN and does not send", async () => {
+  it("incomplete same-cycle peer delivers the LUN listing under reject_intermediaries", async () => {
     fileIndex += 1;
     const path = join(dir, `h-${fileIndex}.sqlite`);
     const store = new DurableDeliveryStore(getDb(path));
@@ -369,9 +371,9 @@ describe("LUN→OLX same-cycle pipeline holds", () => {
       },
       2,
     );
-    expect(report.sentOk).toBe(0);
-    expect(store.hasSeen(lunLinked())).toBe(false);
-    expect(hasSellerHold(getDb(path), "lun", "lun-sc-1")).toBe(true);
+    expect(report.sentOk).toBe(1);
+    expect(store.hasSeen(lunLinked())).toBe(true);
+    expect(hasSellerHold(getDb(path), "lun", "lun-sc-1")).toBe(false);
   });
 
   it("retry recovery: hold then confirmed owner sends once", async () => {

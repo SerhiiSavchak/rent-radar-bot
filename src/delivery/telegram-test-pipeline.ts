@@ -1200,7 +1200,7 @@ export async function runTelegramTestCycle(
       : olxTarget
         ? { id: olxTarget.token, source: "olx" as const }
         : undefined;
-    if (shouldHoldSellerVerification(decision)) {
+    if (shouldHoldSellerVerification(decision, deps.config.sellerPolicy)) {
       // Dry-run must defer without writing hold/seen/outbox.
       if (holdDb && deps.sink.dryRun !== true && holdTarget) {
         upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
@@ -1294,7 +1294,12 @@ export async function runTelegramTestCycle(
   };
 
   if (holdDb && deps.sink.dryRun !== true) {
-    const released = await resolveDueSellerHolds(holdDb, now(), verifyLinkedSeller);
+    const released = await resolveDueSellerHolds(
+      holdDb,
+      now(),
+      verifyLinkedSeller,
+      deps.config.sellerPolicy,
+    );
     for (const item of released) {
       if (item.action === "send") {
         await releaseHeldListing(item.listing);

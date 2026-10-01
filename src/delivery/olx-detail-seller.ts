@@ -725,6 +725,34 @@ export function createCycleOlxSellerVerifier(options: {
     ...(options.profileLikelyPolicy ? { likelyPolicy: options.profileLikelyPolicy } : {}),
   };
 
+  const profileReadFailure = (
+    target: { token: string; url: string },
+    at: Date,
+    kind: "transport" | "parser",
+    httpStatus?: number,
+    requested = false,
+  ): LinkedSellerDecision => {
+    const evidence = kind === "transport" ? "olx_profile_probe_threw" : "olx_profile_unreadable";
+    rememberVerdict(
+      options.db,
+      target,
+      {
+        verdict: kind === "transport" ? "transport_failure" : "parser_failure",
+        evidence,
+      },
+      httpStatus,
+      at,
+    );
+    return {
+      outcome: kind === "transport" ? "detail_transport_failure" : "detail_parser_failure",
+      drop: false,
+      requested,
+      externalId: target.token,
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+      evidence,
+    };
+  };
+
   const applyProfileInventory = async (
     target: { token: string; url: string },
     classified: { verdict: StoredSellerVerdict; evidence: string },
@@ -782,7 +810,10 @@ export function createCycleOlxSellerVerifier(options: {
         timeoutMs: options.timeoutMs,
       });
     } catch {
-      snapshot = { acquired: false };
+      return profileReadFailure(target, now, "transport", httpStatus, requested);
+    }
+    if (!snapshot.acquired) {
+      return profileReadFailure(target, now, "parser", httpStatus, requested);
     }
     const profileDecision = classifyOlxProfileInventory(snapshot, now);
     if (
@@ -1004,7 +1035,7 @@ export function createCycleOlxSellerVerifier(options: {
           timeoutMs: options.timeoutMs,
         });
       } catch {
-        snapshot = { acquired: false };
+        return profileReadFailure(target, nowDirect, "transport");
       }
 
       let listingClassified: { verdict: StoredSellerVerdict; evidence: string } | undefined;
@@ -1025,6 +1056,9 @@ export function createCycleOlxSellerVerifier(options: {
             profilePolicies,
           );
         }
+      }
+      if (!snapshot.acquired) {
+        return profileReadFailure(target, nowDirect, "parser");
       }
 
       const profileDecision = classifyOlxProfileInventory(snapshot, nowDirect);
@@ -1183,7 +1217,7 @@ export function createCycleOlxSellerVerifier(options: {
               timeoutMs: options.timeoutMs,
             });
           } catch {
-            snapshot = { acquired: false };
+            return profileReadFailure(target, now, "transport", cached.lastHttpStatus ?? undefined);
           }
           let listingClassified: { verdict: StoredSellerVerdict; evidence: string } | undefined;
           if (snapshot.listingHtml) {
@@ -1209,6 +1243,9 @@ export function createCycleOlxSellerVerifier(options: {
                 profilePolicies,
               );
             }
+          }
+          if (!snapshot.acquired) {
+            return profileReadFailure(target, now, "parser", cached.lastHttpStatus ?? undefined);
           }
           const profileDecision = classifyOlxProfileInventory(snapshot, now);
           if (
