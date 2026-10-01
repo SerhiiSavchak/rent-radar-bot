@@ -943,6 +943,23 @@ export function createCycleOlxSellerVerifier(options: {
       if (!target) {
         return { outcome: "not_required", drop: false, requested: false };
       }
+      // A persisted hold stores the previous card. The fresh same-cycle card can
+      // already be an explicit intermediary, and that must win before any probe.
+      const sameCycleAgent = options.peers.find(
+        (item) =>
+          item.source === "olx" &&
+          peerToken(item)?.toLowerCase() === target.token.toLowerCase() &&
+          sellerRejectionReason(item) !== undefined,
+      );
+      if (sameCycleAgent) {
+        return {
+          outcome: "same_cycle_confirmed_agent",
+          drop: true,
+          requested: false,
+          externalId: target.token,
+          evidence: "same-cycle OLX listing is a confirmed intermediary",
+        };
+      }
       const nowDirect = options.now();
       const yearMetaRaw = listing.metadata?.accountRegistrationYear;
       const yearMeta =

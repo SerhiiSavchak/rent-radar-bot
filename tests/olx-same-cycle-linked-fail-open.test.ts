@@ -508,13 +508,16 @@ describe("LUN→OLX same-cycle pipeline holds", () => {
     );
     expect(hasSellerHold(getDb(path), "lun", "lun-sc-1")).toBe(true);
 
-    // Strong reject via same-cycle peer on the retry cycle.
+    // Fresh card is an explicit intermediary. Neither the LUN hold nor the
+    // persisted direct-OLX hold may open a detail page or a profile probe.
     olxBatch.length = 0;
     olxBatch.push({
       ...olxPeer(),
       sellerType: "agent",
       metadata: { urlToken: TOKEN, ownerEvidenceLevel: "intermediary" },
     });
+    let cycle2Fetch = 0;
+    let cycle2Probe = 0;
     const second = await runTelegramTestCycle(
       {
         adapters,
@@ -526,13 +529,21 @@ describe("LUN→OLX same-cycle pipeline holds", () => {
         now: () => new Date(now.getTime() + 10 * 60 * 1000),
         olxDetailGapMs: 0,
         fetchOlxDetail: async () => {
+          cycle2Fetch += 1;
           throw new Error("same-cycle agent must not detail-fetch");
+        },
+        probeOlxProfile: async () => {
+          cycle2Probe += 1;
+          throw new Error("same-cycle agent must not probe");
         },
       },
       3,
     );
+    expect(cycle2Fetch).toBe(0);
+    expect(cycle2Probe).toBe(0);
     expect(second.sentOk).toBe(0);
     expect(hasSellerHold(getDb(path), "lun", "lun-sc-1")).toBe(false);
+    expect(hasSellerHold(getDb(path), "olx", TOKEN)).toBe(false);
     expect(store.hasSeen(lunLinked())).toBe(true);
   });
 
