@@ -179,6 +179,8 @@ export class LunSource implements ListingSourceAdapter {
     let hasRscCards = false;
     let pagesFetched = 0;
     let coverageTruncated = false;
+    let schemaRejects = 0;
+    let locationNulls = 0;
     let boundaryReached = categories.length > 0;
     const stopReasons: string[] = [];
 
@@ -201,6 +203,7 @@ export class LunSource implements ListingSourceAdapter {
       const seenIds = new Set<string>();
       const seenRawIds = new Set<string>();
       const seenPageSets = new Set<string>();
+      let rawRows = 0;
       let declaredTotal: number | undefined;
       let declaredPages: number | undefined;
       let categoryTerminal = false;
@@ -263,16 +266,18 @@ export class LunSource implements ListingSourceAdapter {
         notes.push(
           `${pageUrl} integrity: rsc=${inspection.hasRscCardsMarker} jsonld=${inspection.hasJsonLdList} rawCards=${inspection.rawCardCount} validated=${inspection.validatedCardCount} kind=${inspection.resultKind} cardsParseFailed=${inspection.cardsParseFailed} payloads=${inspection.hasNextFlight}`,
         );
-        if (page === 1) {
-          const boundary = readLunWalkBoundary(response.bodyText);
+        const boundary = readLunWalkBoundary(response.bodyText);
+        if (boundary.totalGroupedCount !== undefined && boundary.totalGroupedCount !== declaredTotal) {
           declaredTotal = boundary.totalGroupedCount;
+          notes.push(`${categoryUrl} totalGroupedCount=${declaredTotal}`);
+        }
+        if (boundary.totalPages !== undefined && boundary.totalPages !== declaredPages) {
           declaredPages = boundary.totalPages;
-          if (declaredTotal !== undefined) {
-            notes.push(`${categoryUrl} totalGroupedCount=${declaredTotal}`);
-          }
-          if (declaredPages !== undefined) {
-            notes.push(`${categoryUrl} totalPages=${declaredPages}`);
-          }
+          notes.push(`${categoryUrl} totalPages=${declaredPages}`);
+        }
+        if (inspection.resultKind !== "parser_failure") {
+          schemaRejects += inspection.schemaRejectCount;
+          locationNulls += inspection.locationNullCount;
         }
         if (inspection.resultKind === "parser_failure") {
           parserFailure = true;
@@ -293,14 +298,12 @@ export class LunSource implements ListingSourceAdapter {
           break;
         }
         sawStructure = true;
-        const novelRaw = inspection.rawCardIds.filter((id) => !seenRawIds.has(id));
         for (const id of inspection.rawCardIds) {
           seenRawIds.add(id);
         }
         const ids = inspection.listings.map((listing) => listing.sourceId);
         const pageKey = [...ids].sort().join(",");
-        const novel = ids.filter((id) => !seenIds.has(id));
-        if (ids.length > 0 && (seenPageSets.has(pageKey) || (novel.length === 0 && novelRaw.length === 0))) {
+        if (ids.length > 0 && seenPageSets.has(pageKey)) {
           coverageTruncated = true;
           stopReasons.push("repeated_page");
           notes.push(`${pageUrl} coverage_truncated=repeated_page`);
@@ -310,10 +313,15 @@ export class LunSource implements ListingSourceAdapter {
         for (const id of ids) {
           seenIds.add(id);
         }
+        rawRows += inspection.rawCardCount;
         listings.push(...inspection.listings);
         if (inspection.listings.length === 0 && inspection.rawCardCount === 0) {
+          const slotsCovered = rawRows >= (declaredTotal ?? 0);
           const premature =
-            declaredTotal !== undefined && declaredTotal > 0 && seenRawIds.size < declaredTotal;
+            declaredTotal !== undefined &&
+            declaredTotal > 0 &&
+            seenRawIds.size < declaredTotal &&
+            !slotsCovered;
           if (premature) {
             coverageTruncated = true;
             stopReasons.push("premature_empty");
@@ -354,6 +362,13 @@ export class LunSource implements ListingSourceAdapter {
       }
     }
     notes.push(`lun_pages_fetched=${pagesFetched}`);
+    notes.push(`lun_schema_rejects=${schemaRejects}`);
+    notes.push(`lun_location_null=${locationNulls}`);
+    if (schemaRejects > 0) {
+      coverageTruncated = true;
+      boundaryReached = false;
+      stopReasons.push("schema_reject");
+    }
     if (!boundaryReached && listings.length > 0) {
       coverageTruncated = true;
       if (stopReasons.length === 0) {

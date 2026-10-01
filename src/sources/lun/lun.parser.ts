@@ -67,6 +67,8 @@ export type LunCardsExtraction = {
   rawCardCount: number;
   /** Every card id in the parsed array, including cards the schema rejects. */
   rawCardIds: string[];
+  schemaRejectCount: number;
+  locationNullCount: number;
   /** true when cards marker existed but JSON array could not be parsed */
   cardsParseFailed: boolean;
   payloadCount: number;
@@ -93,6 +95,8 @@ export function extractLunCardsDetailed(html: string): LunCardsExtraction {
   let rawCardCount = 0;
   const rawCardIds: string[] = [];
   const cards: LunCard[] = [];
+  let schemaRejectCount = 0;
+  let locationNullCount = 0;
 
   for (const payload of payloads) {
     const index = payload.indexOf(marker);
@@ -153,6 +157,11 @@ export function extractLunCardsDetailed(html: string): LunCardsExtraction {
         const safe = lunCardSchema.safeParse(item);
         if (safe.success) {
           cards.push(safe.data);
+          if (safe.data.location == null) {
+            locationNullCount += 1;
+          }
+        } else {
+          schemaRejectCount += 1;
         }
       }
     } catch {
@@ -164,6 +173,8 @@ export function extractLunCardsDetailed(html: string): LunCardsExtraction {
     cards,
     rawCardCount,
     rawCardIds,
+    schemaRejectCount,
+    locationNullCount,
     cardsParseFailed,
     payloadCount: payloads.length,
   };
@@ -199,6 +210,28 @@ export function parseLunJsonLdItems(html: string): Array<Record<string, unknown>
     }
   }
   return [];
+}
+
+function textGeo(card: LunCard): string | undefined {
+  const geo = (card as { geo?: unknown }).geo;
+  return typeof geo === "string" && geo.trim() ? geo.trim() : undefined;
+}
+
+function cityFromGeo(card: LunCard): string | undefined {
+  const entities = (card as { geoEntities?: unknown }).geoEntities;
+  if (!Array.isArray(entities)) {
+    return undefined;
+  }
+  for (const entity of entities) {
+    if (!entity || typeof entity !== "object") {
+      continue;
+    }
+    const record = entity as { type?: unknown; name?: unknown };
+    if (record.type === "city" && typeof record.name === "string" && record.name.trim()) {
+      return record.name.trim();
+    }
+  }
+  return undefined;
 }
 
 function geoFromCard(card: LunCard): { latitude?: number; longitude?: number } {
@@ -305,6 +338,8 @@ export function parseLunCard(
       ? (jsonLd.address as { addressLocality?: string; streetAddress?: string })
       : undefined;
   const title = locationLabel(card, jsonLd);
+  const geoLabel = textGeo(card);
+  const city = address?.addressLocality ?? cityFromGeo(card);
   const rentalDetail = [card.text, jsonDescription].filter((part): part is string => Boolean(part)).join("\n");
   const listing: Listing = {
     source: "lun",
@@ -312,8 +347,8 @@ export function parseLunCard(
     url,
     title,
     location: {
-      raw: [address?.streetAddress, address?.addressLocality, title].filter(Boolean).join(", "),
-      ...(address?.addressLocality ? { city: address.addressLocality } : {}),
+      raw: [address?.streetAddress, address?.addressLocality, geoLabel, title].filter(Boolean).join(", "),
+      ...(city ? { city } : {}),
       ...coords,
     },
     propertyType: detectPropertyType({
@@ -333,6 +368,7 @@ export function parseLunCard(
       originalHost: originalListingHost(card.urlRaw),
       withoutCommission: card.withoutCommission,
       isOwner: card.isOwner,
+      ...(card.location == null ? { lunLocation: "absent" } : {}),
       ...(address?.streetAddress ? { streetAddress: address.streetAddress } : {}),
       ...sellerAnnotation(owner),
       ...lunProvenanceMetadata(card),
@@ -411,6 +447,8 @@ export type LunHtmlInspection = {
   rawCardIds: string[];
   validatedCardCount: number;
   validationRatio: number;
+  schemaRejectCount: number;
+  locationNullCount: number;
   resultKind: "ok" | "valid_empty" | "parser_failure";
   cardsParseFailed: boolean;
 };
@@ -454,6 +492,8 @@ export function inspectLunHtml(html: string, discoveredAt = new Date()): LunHtml
     rawCardIds: extracted.rawCardIds,
     validatedCardCount,
     validationRatio,
+    schemaRejectCount: extracted.schemaRejectCount,
+    locationNullCount: extracted.locationNullCount,
     resultKind,
     cardsParseFailed: extracted.cardsParseFailed,
   };

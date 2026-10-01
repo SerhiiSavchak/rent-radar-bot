@@ -165,6 +165,60 @@ describe("LUN parser", () => {
     expect(listing?.sellerType).toBe("unknown");
   });
 
+  it("keeps a long-term listing when LUN sends location null and no coordinates", () => {
+    const listing = parseLunCard(
+      {
+        id: 4727689345,
+        urlRaw: "https://www.olx.ua/d/uk/obyavlenie/orenda-ID11nqYr.html",
+        insertTime: "2026-10-01T16:36:44",
+        price: 699,
+        currency: "usd",
+        isOwner: true,
+        roomCount: 1,
+        areaTotal: 42,
+        sectionId: 2,
+        header: "Оренда 1 кім квартири, від власника",
+        text: "Здам в оренду 1 кім. квартира 42м²",
+        location: null,
+        geo: "Сихівський, Львів, Львівська область",
+        geoEntities: [{ type: "city", name: "Львів" }],
+      },
+      undefined,
+    );
+    expect(listing?.sourceId).toBe("4727689345");
+    expect(listing?.sellerType).toBe("owner");
+    expect(listing?.propertyType).toBe("apartment");
+    expect(listing?.rooms).toBe(1);
+    expect(listing?.areaM2).toBe(42);
+    expect(listing?.price?.amount).toBe(699);
+    expect(listing?.location.latitude).toBeUndefined();
+    expect(listing?.location.longitude).toBeUndefined();
+    expect(listing?.location.city).toBe("Львів");
+    expect(listing?.location.raw).toContain("Сихівський");
+    expect(listing?.metadata?.lunLocation).toBe("absent");
+  });
+
+  it("counts a malformed location as a schema reject and still keeps the valid sibling", () => {
+    const valid = {
+      id: 1,
+      price: 15000,
+      currency: "uah",
+      isOwner: true,
+      sectionId: 2,
+      header: "Тест",
+      location: [24.03, 49.84],
+    };
+    const inner = JSON.stringify({
+      realties: { cards: [valid, { price: 1, location: "missing-shape" }] },
+    });
+    const html = `<html><script>self.__next_f.push([1,"${encodeFlightString(inner)}"])</script></html>`;
+    const inspection = inspectLunHtml(html);
+    expect(inspection.resultKind).toBe("ok");
+    expect(inspection.listings.map((listing) => listing.sourceId)).toEqual(["1"]);
+    expect(inspection.schemaRejectCount).toBe(1);
+    expect(inspection.locationNullCount).toBe(0);
+  });
+
   it("treats schema-rejected cards as parser_failure, not a valid empty market", () => {
     const inner = '{"realties":{"cards":[{"price":1}]}}';
     const html = `<html><script>self.__next_f.push([1,"${encodeFlightString(inner)}"])</script></html>`;

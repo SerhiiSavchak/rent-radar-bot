@@ -146,6 +146,58 @@ describe("LUN catalog walk", () => {
     expect(calls).toEqual([flatsUrl(1), flatsUrl(2)]);
   });
 
+  it("follows a later totalGroupedCount when the catalog shrinks during the walk", async () => {
+    const { source, calls } = sourceFor(
+      new Map([
+        [
+          flatsUrl(1),
+          {
+            status: 200,
+            bodyText: pageHtml([card(1, "2026-10-01T10:00:00")], { totalGroupedCount: 3 }),
+          },
+        ],
+        [
+          flatsUrl(2),
+          {
+            status: 200,
+            bodyText: pageHtml([card(2, "2026-10-01T09:00:00")], { totalGroupedCount: 2 }),
+          },
+        ],
+        [flatsUrl(3), { status: 200, bodyText: pageHtml([card(3, "2026-10-01T08:00:00")]) }],
+      ]),
+    );
+    const result = await source.inspectLatest({ includeHouses: false });
+    expect(result.listings.map((listing) => listing.sourceId)).toEqual(["1", "2"]);
+    expect(result.health.healthy).toBe(true);
+    expect(result.coverage?.coverageTruncated).toBe(false);
+    expect(calls).toEqual([flatsUrl(1), flatsUrl(2)]);
+  });
+
+  it("keeps walking when a page only repeats earlier ids and the slot count is already met", async () => {
+    const { source, calls } = sourceFor(
+      new Map([
+        [
+          flatsUrl(1),
+          {
+            status: 200,
+            bodyText: pageHtml(
+              [card(1, "2026-10-01T10:00:00"), card(2, "2026-10-01T09:00:00")],
+              { totalGroupedCount: 3 },
+            ),
+          },
+        ],
+        [flatsUrl(2), { status: 200, bodyText: pageHtml([card(1, "2026-10-01T10:00:00")]) }],
+        [flatsUrl(3), { status: 200, bodyText: pageHtml([]) }],
+      ]),
+    );
+    const result = await source.inspectLatest({ includeHouses: false });
+    expect(result.listings.map((listing) => listing.sourceId)).toEqual(["1", "2"]);
+    expect(result.health.healthy).toBe(true);
+    expect(result.coverage?.coverageTruncated).toBe(false);
+    expect(result.coverage?.boundaryReached).toBe(true);
+    expect(calls).toEqual([flatsUrl(1), flatsUrl(2), flatsUrl(3)]);
+  });
+
   it("does not let a repeated card id satisfy totalGroupedCount early", async () => {
     const { source, calls } = sourceFor(
       new Map([
@@ -176,6 +228,63 @@ describe("LUN catalog walk", () => {
     expect(result.coverage?.coverageTruncated).toBe(false);
     expect(result.coverage?.boundaryReached).toBe(true);
     expect(calls).toEqual([flatsUrl(1), flatsUrl(2), flatsUrl(3)]);
+  });
+
+  it("normalizes location null without marking the catalog unhealthy", async () => {
+    const { source } = sourceFor(
+      new Map([
+        [
+          flatsUrl(1),
+          {
+            status: 200,
+            bodyText: pageHtml([
+              {
+                ...card(1, "2026-10-01T10:00:00"),
+                location: null,
+                geo: "Сихівський, Львів, Львівська область",
+              },
+            ]),
+          },
+        ],
+        [flatsUrl(2), { status: 200, bodyText: pageHtml([]) }],
+      ]),
+    );
+    const result = await source.inspectLatest({ includeHouses: false });
+    expect(result.listings).toHaveLength(1);
+    expect(result.listings[0]?.location.latitude).toBeUndefined();
+    expect(result.listings[0]?.metadata?.lunLocation).toBe("absent");
+    expect(result.health.healthy).toBe(true);
+    expect(result.coverage?.coverageTruncated).toBe(false);
+    const notes = result.rawNotes?.join("\n") ?? "";
+    expect(notes).toContain("lun_location_null=1");
+    expect(notes).toContain("lun_schema_rejects=0");
+  });
+
+  it("marks an unexpected schema reject as coverage_degraded and keeps the valid card", async () => {
+    const { source, calls } = sourceFor(
+      new Map([
+        [
+          flatsUrl(1),
+          {
+            status: 200,
+            bodyText: pageHtml([
+              card(1, "2026-10-01T10:00:00"),
+              { price: 1, header: "bad", location: "missing-shape" },
+            ]),
+          },
+        ],
+        [flatsUrl(2), { status: 200, bodyText: pageHtml([]) }],
+      ]),
+    );
+    const result = await source.inspectLatest({ includeHouses: false });
+    expect(result.listings.map((listing) => listing.sourceId)).toEqual(["1"]);
+    expect(calls).toEqual([flatsUrl(1), flatsUrl(2)]);
+    expect(result.resultKind).toBe("ok");
+    expect(result.health.healthy).toBe(false);
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.coverage?.boundaryReached).toBe(false);
+    expect(result.health.message).toContain("coverage_degraded");
+    expect(result.health.message).toContain("schema_reject");
   });
 
   it("keeps a legitimate empty catalog as valid_empty, not parser_failure", async () => {
