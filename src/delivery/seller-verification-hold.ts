@@ -81,7 +81,7 @@ export function upsertSellerHold(
   listing: Listing,
   externalListingId: string,
   now: Date,
-  externalSource: "rieltor" | "olx" = "rieltor",
+  externalSource: "rieltor" | "olx" | "domria" = "rieltor",
 ): void {
   const started = now.toISOString();
   const releaseAt = new Date(now.getTime() + SELLER_HOLD_MAX_MS).toISOString();

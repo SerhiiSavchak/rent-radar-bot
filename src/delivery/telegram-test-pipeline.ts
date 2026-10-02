@@ -70,6 +70,11 @@ import {
   canonicalOlxDetailTarget,
   createCycleOlxSellerVerifier,
 } from "./olx-detail-seller.ts";
+import {
+  canonicalDomriaDetailTarget,
+  createCycleDomriaSellerVerifier,
+} from "./domria-detail-seller.ts";
+import type { DomriaFetchResponse } from "../sources/domria/domria-newest.ts";
 import { dispatchSourceAdminAlerts } from "./source-admin-alerts.ts";
 import { DurableDeliveryStore } from "../storage/durable-delivery-store.ts";
 import { type TelegramSendResult, type TelegramTestSink } from "../outputs/telegram-test.sink.ts";
@@ -213,6 +218,9 @@ export type TelegramTestPipelineDeps = {
   /** Test double for exact LUN→OLX original-source seller checks. */
   fetchOlxDetail?: (url: string, timeoutMs: number) => Promise<RieltorDetailPage>;
   olxDetailGapMs?: number;
+  /** Test double for exact LUN→DOM.RIA original-source seller checks. */
+  fetchDomriaDetail?: (url: string, timeoutMs: number) => Promise<DomriaFetchResponse>;
+  domriaDetailGapMs?: number;
   /** Test double for bounded public OLX seller profile inventory after linked unknown. */
   probeOlxProfile?: (input: {
     listingUrl: string;
@@ -1159,12 +1167,27 @@ export async function runTelegramTestCycle(
     ...(deps.fetchOlxDetail ? { fetchPage: deps.fetchOlxDetail } : {}),
     ...(deps.probeOlxProfile ? { probeProfile: deps.probeOlxProfile } : {}),
   });
+  const verifyLinkedDomria = createCycleDomriaSellerVerifier({
+    db:
+      deps.baseline instanceof DurableDeliveryStore
+        ? deps.baseline.verificationDatabase()
+        : undefined,
+    peers: fetchedListings,
+    now,
+    timeoutMs: deps.config.sourceTimeoutMs,
+    ...(deps.domriaDetailGapMs !== undefined ? { gapMs: deps.domriaDetailGapMs } : {}),
+    ...(deps.fetchDomriaDetail ? { fetchPage: deps.fetchDomriaDetail } : {}),
+  });
   const verifyLinkedSeller = async (listing: Listing): Promise<LinkedSellerDecision> => {
     const rieltor = await verifyLinkedRieltor(listing);
     if (rieltor.outcome !== "not_required") {
       return rieltor;
     }
-    return verifyLinkedOlx(listing);
+    const olx = await verifyLinkedOlx(listing);
+    if (olx.outcome !== "not_required") {
+      return olx;
+    }
+    return verifyLinkedDomria(listing);
   };
   /**
    * Linked-seller gate.
@@ -1213,19 +1236,20 @@ export async function runTelegramTestCycle(
       });
       return { status: "reject", reasonCode: decision.outcome };
     }
-    const rieltorTarget = canonicalRieltorDetailTarget(
-      typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
-    );
+    const originalUrl =
+      typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined;
+    const rieltorTarget = canonicalRieltorDetailTarget(originalUrl);
     const olxTarget =
-      canonicalOlxDetailTarget(
-        typeof listing.metadata?.originalUrl === "string" ? listing.metadata.originalUrl : undefined,
-      ) ??
+      canonicalOlxDetailTarget(originalUrl) ??
       (listing.source === "olx" ? canonicalOlxDetailTarget(listing.url) : undefined);
+    const domriaTarget = canonicalDomriaDetailTarget(originalUrl);
     const holdTarget = rieltorTarget
       ? { id: rieltorTarget.id, source: "rieltor" as const }
       : olxTarget
         ? { id: olxTarget.token, source: "olx" as const }
-        : undefined;
+        : domriaTarget
+          ? { id: domriaTarget.id, source: "domria" as const }
+          : undefined;
     if (shouldHoldSellerVerification(decision, deps.config.sellerPolicy)) {
       // Dry-run must defer without writing hold/seen/outbox.
       if (holdDb && deps.sink.dryRun !== true && holdTarget) {

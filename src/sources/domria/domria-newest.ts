@@ -415,17 +415,21 @@ export async function acquireDomriaNewest(input: {
   };
 }
 
-async function loadDomriaCandidate(
+export type DomriaExactListingResult =
+  | { ok: true; listing: Listing }
+  | { ok: false; httpError?: boolean; parserFailure?: boolean; status?: number };
+
+/**
+ * One exact DOM.RIA listing: realty/data JSON plus the listing HTML that carries
+ * characteristic 1437. Seller role is parsed only by parseDomriaInfo().
+ */
+export async function loadDomriaExactListing(
   id: string,
-  category: DomriaNewestCategory,
   get: (url: string) => Promise<DomriaFetchResponse>,
   extractState: (html: string) => unknown,
   discoveredAt: Date,
-  notes: string[],
-): Promise<
-  | { ok: true; listing: Listing }
-  | { ok: false; httpError?: boolean; parserFailure?: boolean }
-> {
+  notes: string[] = [],
+): Promise<DomriaExactListingResult> {
   let data: DomriaFetchResponse;
   try {
     data = await get(buildDomriaRealtyDataUrl(id));
@@ -437,20 +441,20 @@ async function loadDomriaCandidate(
   }
   notes.push(`realty/data ${id} -> ${data.status}`);
   if (data.status !== 200) {
-    return { ok: false, httpError: true };
+    return { ok: false, httpError: true, status: data.status };
   }
   let info: unknown;
   try {
     info = JSON.parse(data.bodyText) as unknown;
   } catch {
     notes.push(`realty/data ${id} parser_failure`);
-    return { ok: false, parserFailure: true };
+    return { ok: false, parserFailure: true, status: data.status };
   }
   const record = asRecord(info);
   const beautiful = record?.beautiful_url ?? record?.beautifulUrl;
   if (!record || typeof beautiful !== "string" || beautiful === "") {
     notes.push(`realty/data ${id} parser_failure: beautiful_url missing`);
-    return { ok: false, parserFailure: true };
+    return { ok: false, parserFailure: true, status: data.status };
   }
   let page: DomriaFetchResponse;
   try {
@@ -463,7 +467,7 @@ async function loadDomriaCandidate(
   }
   notes.push(`listing ${id} -> ${page.status}`);
   if (page.status !== 200) {
-    return { ok: false, httpError: true };
+    return { ok: false, httpError: true, status: page.status };
   }
   let roleState: Record<string, unknown> | undefined;
   try {
@@ -472,7 +476,7 @@ async function loadDomriaCandidate(
     notes.push(
       `listing ${id} state parse failed: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return { ok: false, parserFailure: true };
+    return { ok: false, parserFailure: true, status: page.status };
   }
   const roleValues = asRecord(roleState?.characteristics_values);
   const merged = {
@@ -491,9 +495,30 @@ async function loadDomriaCandidate(
   const listing = parseDomriaInfo(merged, discoveredAt);
   if (!listing) {
     notes.push(`listing ${id} parser_failure: card rejected`);
-    return { ok: false, parserFailure: true };
+    return { ok: false, parserFailure: true, status: page.status };
   }
-  return { ok: true, listing: applyCategoryPropertyType(listing, category, id, notes) };
+  return { ok: true, listing };
+}
+
+async function loadDomriaCandidate(
+  id: string,
+  category: DomriaNewestCategory,
+  get: (url: string) => Promise<DomriaFetchResponse>,
+  extractState: (html: string) => unknown,
+  discoveredAt: Date,
+  notes: string[],
+): Promise<
+  { ok: true; listing: Listing } | { ok: false; httpError?: boolean; parserFailure?: boolean }
+> {
+  const loaded = await loadDomriaExactListing(id, get, extractState, discoveredAt, notes);
+  if (!loaded.ok) {
+    return {
+      ok: false,
+      ...(loaded.httpError ? { httpError: true } : {}),
+      ...(loaded.parserFailure ? { parserFailure: true } : {}),
+    };
+  }
+  return { ok: true, listing: applyCategoryPropertyType(loaded.listing, category, id, notes) };
 }
 
 /**

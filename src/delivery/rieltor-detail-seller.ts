@@ -229,6 +229,7 @@ export function readSellerVerification(
   db: DatabaseSync,
   externalId: string,
   now: Date,
+  source: "rieltor" | "olx" | "domria" = "rieltor",
 ): CacheRow | undefined {
   const row = db
     .prepare(
@@ -237,9 +238,9 @@ export function readSellerVerification(
               expires_at AS expiresAt,
               last_http_status AS lastHttpStatus
        FROM external_seller_verifications
-       WHERE source = 'rieltor' AND external_listing_id = ?`,
+       WHERE source = ? AND external_listing_id = ?`,
     )
-    .get(externalId) as CacheRow | undefined;
+    .get(source, externalId) as CacheRow | undefined;
   if (!row) {
     return undefined;
   }
@@ -259,6 +260,7 @@ export function writeSellerVerification(
     httpStatus?: number;
     now: Date;
     ttlMs: number;
+    source?: "rieltor" | "olx" | "domria";
   },
 ): void {
   const checkedAt = input.now.toISOString();
@@ -267,7 +269,7 @@ export function writeSellerVerification(
     `INSERT INTO external_seller_verifications (
        source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
        checked_at, expires_at, last_http_status, last_error_safe
-     ) VALUES ('rieltor', ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source, external_listing_id) DO UPDATE SET
        canonical_url = excluded.canonical_url,
        seller_verdict = excluded.seller_verdict,
@@ -277,6 +279,7 @@ export function writeSellerVerification(
        last_http_status = excluded.last_http_status,
        last_error_safe = excluded.last_error_safe`,
   ).run(
+    input.source ?? "rieltor",
     input.externalId,
     input.canonicalUrl,
     input.verdict,
@@ -523,7 +526,7 @@ export function createCycleRieltorSellerVerifier(options: {
   };
 }
 
-function decisionFromStored(row: CacheRow, externalId: string): LinkedSellerDecision {
+export function decisionFromStored(row: CacheRow, externalId: string): LinkedSellerDecision {
   if (row.sellerVerdict === "confirmed_intermediary") {
     return {
       outcome: "cache_confirmed_agent",
