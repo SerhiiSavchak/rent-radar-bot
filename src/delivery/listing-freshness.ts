@@ -34,6 +34,29 @@ export type FreshnessPolicy = {
 
 const DEFAULT_MAX_PUBLICATION_AGE_MINUTES = 7 * 24 * 60; // 7 days
 
+/** Written into a seller hold only after the listing passed this freshness rule. */
+export const FRESHNESS_GATE_VERSION = 2;
+
+export function markFreshnessApproved(
+  listing: Listing,
+  monitoringStartedAt: Date | undefined,
+): Listing {
+  return {
+    ...listing,
+    metadata: {
+      ...listing.metadata,
+      freshnessGateVersion: FRESHNESS_GATE_VERSION,
+      ...(monitoringStartedAt
+        ? { freshnessMonitoringBoundary: monitoringStartedAt.toISOString() }
+        : {}),
+    },
+  };
+}
+
+export function hasFreshnessGateApproval(listing: Pick<Listing, "metadata">): boolean {
+  return listing.metadata?.freshnessGateVersion === FRESHNESS_GATE_VERSION;
+}
+
 export function defaultMaxPublicationAgeMinutes(
   configMaxListingAgeMinutes: number | undefined,
 ): number {

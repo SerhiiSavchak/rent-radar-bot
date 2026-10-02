@@ -6,6 +6,8 @@ import { sellerDecisionBucket } from "../filters/owner-filter.ts";
 import {
   classifyListingFreshness,
   defaultMaxPublicationAgeMinutes,
+  hasFreshnessGateApproval,
+  markFreshnessApproved,
   withFirstSeenAt,
 } from "./listing-freshness.ts";
 import {
@@ -1175,7 +1177,10 @@ export async function runTelegramTestCycle(
     | { status: "allow" }
     | { status: "reject"; reasonCode: string }
     | { status: "defer"; reasonCode: string };
-  const allowLinkedSeller = async (listing: Listing): Promise<LinkedSellerGate> => {
+  const allowLinkedSeller = async (
+    listing: Listing,
+    freshnessApproval?: { boundary: Date | undefined },
+  ): Promise<LinkedSellerGate> => {
     if (holdDb && hasSellerHold(holdDb, listing.source, listing.sourceId)) {
       return { status: "defer", reasonCode: "linked_seller_hold" };
     }
@@ -1224,7 +1229,10 @@ export async function runTelegramTestCycle(
     if (shouldHoldSellerVerification(decision, deps.config.sellerPolicy)) {
       // Dry-run must defer without writing hold/seen/outbox.
       if (holdDb && deps.sink.dryRun !== true && holdTarget) {
-        upsertSellerHold(holdDb, listing, holdTarget.id, now(), holdTarget.source);
+        const held = freshnessApproval
+          ? markFreshnessApproved(listing, freshnessApproval.boundary)
+          : listing;
+        upsertSellerHold(holdDb, held, holdTarget.id, now(), holdTarget.source);
       }
       return { status: "defer", reasonCode: decision.outcome };
     }
@@ -1289,13 +1297,12 @@ export async function runTelegramTestCycle(
         return;
       }
     }
-    // A due hold already passed the previous-poll check when it was deferred.
-    // last_success_at has since moved to that deferring poll, so release keeps
-    // the original baseline floor plus policy cutover.
-    const monitoringStartedAt = laterDate(
-      deps.baseline.establishedAt(listing.source),
-      policyCutoverAt,
-    );
+    // A marked hold already passed the previous-poll gate. Re-reading
+    // last_success_at would use the poll that created the hold.
+    // An unmarked legacy hold has no such proof and must be judged again.
+    const monitoringStartedAt = hasFreshnessGateApproval(listing)
+      ? laterDate(deps.baseline.establishedAt(listing.source), policyCutoverAt)
+      : monitoringBoundary(deps.baseline, listing.source, policyCutoverAt);
     const freshness = classifyListingFreshness(listing, {
       maxPublicationAgeMinutes,
       strictNewPublications,
@@ -1303,7 +1310,22 @@ export async function runTelegramTestCycle(
       ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
     });
     if (!freshness.deliverable) {
+      if (freshness.kind === "old_publication") {
+        suppressedOld += 1;
+      } else if (freshness.kind === "refreshed_old") {
+        suppressedRefreshedOld += 1;
+      } else if (freshness.kind === "first_noticed") {
+        suppressedUnknownStrict += 1;
+      } else if (freshness.kind === "late_discovered") {
+        suppressedLateDiscovered += 1;
+      }
       deps.dedupe.markSeen(listing);
+      decisionTrace.record(
+        listing.source,
+        listing.sourceId,
+        "suppressed_freshness",
+        freshness.kind,
+      );
       return;
     }
     const deliveryKind =
@@ -1485,7 +1507,7 @@ export async function runTelegramTestCycle(
         continue;
       }
 
-      const linkedGate = await allowLinkedSeller(listing);
+      const linkedGate = await allowLinkedSeller(listing, { boundary: monitoringStartedAt });
       if (linkedGate.status === "reject") {
         decisionTrace.record(
           listing.source,
