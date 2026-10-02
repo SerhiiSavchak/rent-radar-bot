@@ -6,7 +6,8 @@ import { deserializeListing, serializeListing } from "../storage/durable-deliver
 
 /**
  * Absolute retry deadline measured from hold_started_at.
- * A temporary failure is rechecked until this instant, then released.
+ * A temporary failure is rechecked until this instant, then dropped.
+ * Timeout means verification could not prove seller safety.
  * Retries must not move release_at. Evaluated unknown is not a hold
  * under reject_intermediaries.
  */
@@ -31,6 +32,7 @@ const TEMPORARY_SELLER_VERIFICATION_OUTCOMES = new Set<LinkedSellerDecision["out
   "detail_rate_limited",
   "detail_parser_failure",
   "skipped_after_rate_limit",
+  "detail_capacity_deferred",
 ]);
 
 const EVALUATED_UNKNOWN_OUTCOMES = new Set<LinkedSellerDecision["outcome"]>([
@@ -40,7 +42,7 @@ const EVALUATED_UNKNOWN_OUTCOMES = new Set<LinkedSellerDecision["outcome"]>([
 
 /**
  * One policy decision for a finished linked-seller check.
- * Terminal drops reject. Transport, rate-limit, and parser failures defer.
+ * Terminal drops reject. Transport, rate-limit, parser, and local capacity failures defer.
  * Evaluated unknown is deliverable under reject_intermediaries and stays
  * deferred under owner_only. Unknown is not promoted to confirmed owner.
  */
@@ -182,10 +184,7 @@ export async function resolveDueSellerHolds(
       const releaseAtMs = Date.parse(hold.releaseAt);
       if (Number.isFinite(releaseAtMs) && now.getTime() >= releaseAtMs) {
         deleteSellerHold(db, hold.source, hold.sourceId);
-        actions.push({
-          listing: hold.listing,
-          action: policy === "owner_only" ? "drop" : "send",
-        });
+        actions.push({ listing: hold.listing, action: "drop" });
         continue;
       }
       keepSellerHold(db, hold.source, hold.sourceId, now);

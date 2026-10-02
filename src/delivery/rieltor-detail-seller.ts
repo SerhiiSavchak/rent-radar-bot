@@ -47,6 +47,7 @@ export type LinkedSellerOutcome =
   | "detail_rate_limited"
   | "detail_transport_failure"
   | "detail_parser_failure"
+  | "detail_capacity_deferred"
   | "skipped_after_rate_limit"
   | "not_required";
 
@@ -85,6 +86,7 @@ export type LinkedSellerVerificationCounts = {
   detailRateLimited: number;
   detailTransportFailure: number;
   detailParserFailure: number;
+  detailCapacityDeferred: number;
   skippedAfterRateLimit: number;
   notRequired: number;
   detailRequests: number;
@@ -110,6 +112,7 @@ export function emptyLinkedSellerVerification(): LinkedSellerVerificationCounts 
     detailRateLimited: 0,
     detailTransportFailure: 0,
     detailParserFailure: 0,
+    detailCapacityDeferred: 0,
     skippedAfterRateLimit: 0,
     notRequired: 0,
     detailRequests: 0,

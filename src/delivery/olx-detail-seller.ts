@@ -883,12 +883,14 @@ export function createCycleOlxSellerVerifier(options: {
     rawEvidence: string,
   ): Promise<LinkedSellerDecision> => {
     if (browserFallbacks >= maxBrowserFallbacks) {
-      return rememberTransport(
-        target,
-        `${rawEvidence}; browser fallback cap ${maxBrowserFallbacks} reached`,
-        rawStatus,
-        now,
-      );
+      return {
+        outcome: "detail_capacity_deferred",
+        drop: false,
+        requested: true,
+        externalId: target.token,
+        evidence: `${rawEvidence}; browser fallback cap ${maxBrowserFallbacks} reached`,
+        ...(rawStatus !== undefined ? { httpStatus: rawStatus } : {}),
+      };
     }
     browserFallbacks += 1;
     let browserPage: OlxLinkedBrowserDetailPage;
@@ -1344,7 +1346,7 @@ export function createCycleOlxSellerVerifier(options: {
     }
     if (requests >= maxRequests) {
       return {
-        outcome: "detail_transport_failure",
+        outcome: "detail_capacity_deferred",
         drop: false,
         requested: false,
         externalId: target.token,

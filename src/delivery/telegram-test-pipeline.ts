@@ -482,6 +482,9 @@ function noteLinkedSeller(
     case "detail_parser_failure":
       linked.detailParserFailure += 1;
       break;
+    case "detail_capacity_deferred":
+      linked.detailCapacityDeferred += 1;
+      break;
     case "skipped_after_rate_limit":
       linked.skippedAfterRateLimit += 1;
       break;
@@ -1379,7 +1382,7 @@ export async function runTelegramTestCycle(
       if (item.action === "send") {
         await releaseHeldListing(item.listing);
       } else if (item.action === "drop") {
-        // Hold resolved to a terminal intermediary/owner-policy drop — persist like allowLinkedSeller reject.
+        // Terminal hold outcome: confirmed reject, or unresolved verification past release_at.
         persistTerminalLinkedSellerReject(item.listing, {
           dryRun: false,
           dedupe: deps.dedupe,

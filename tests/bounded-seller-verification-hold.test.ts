@@ -15,11 +15,6 @@ import {
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
-import {
-  OWNER_SEARCH_TAG_CONFIRMED,
-  OWNER_SEARCH_TAG_UNVERIFIED,
-  formatListingTelegramHtml,
-} from "../src/outputs/telegram-test.sink.ts";
 import type { TelegramTestSink } from "../src/outputs/telegram-test.sink.ts";
 import { applyMigrations } from "../src/storage/migrations.ts";
 import { closeDb, getDb } from "../src/storage/db.ts";
@@ -137,7 +132,7 @@ describe("seller hold deadline is absolute", () => {
     expect(attemptCountOf(db)).toBe(3);
   });
 
-  it("releases a parser or transport failure at the deadline under reject_intermediaries", async () => {
+  it("drops a parser or transport failure at the deadline under reject_intermediaries", async () => {
     for (const outcome of ["detail_parser_failure", "detail_transport_failure"] as const) {
       const db = memoryDb();
       const item = listing();
@@ -148,7 +143,7 @@ describe("seller hold deadline is absolute", () => {
         async () => decision(outcome),
         "reject_intermediaries",
       );
-      expect(actions, outcome).toEqual([{ listing: item, action: "send" }]);
+      expect(actions, outcome).toEqual([{ listing: item, action: "drop" }]);
       expect(hasSellerHold(db, "olx", SOURCE_ID), outcome).toBe(false);
     }
   });
@@ -213,7 +208,7 @@ describe("seller hold deadline is absolute", () => {
   });
 });
 
-describe("pipeline releases a temporary OLX failure once the deadline passes", () => {
+describe("pipeline drops a temporary OLX failure once the deadline passes", () => {
   const dir = mkdtempSync(join(tmpdir(), "rent-radar-hold-pipe-"));
 
   afterEach(() => {
@@ -275,7 +270,7 @@ describe("pipeline releases a temporary OLX failure once the deadline passes", (
     } as unknown as TelegramTestSink;
   }
 
-  it("holds a parser failure, then delivers the fresh listing once after the deadline", async () => {
+  it("holds a parser failure, then drops the listing once after the deadline", async () => {
     const path = join(dir, "pipe.sqlite");
     const store = new DurableDeliveryStore(getDb(path));
     const batch: Listing[] = [];
@@ -346,13 +341,10 @@ describe("pipeline releases a temporary OLX failure once the deadline passes", (
       },
       4,
     );
-    expect(released.sentOk).toBe(1);
+    expect(released.sentOk).toBe(0);
+    expect(releasedSent).toHaveLength(0);
     expect(hasSellerHold(getDb(path), "olx", SOURCE_ID)).toBe(false);
     expect(store.hasSeen(item)).toBe(true);
-    expect(releasedSent[0]?.metadata?.ownerEvidenceLevel).toBe("private_unknown");
-    const html = formatListingTelegramHtml(releasedSent[0]!);
-    expect(html).toContain(OWNER_SEARCH_TAG_UNVERIFIED);
-    expect(html).not.toContain(OWNER_SEARCH_TAG_CONFIRMED);
 
     const again = await runTelegramTestCycle(
       {
@@ -371,6 +363,6 @@ describe("pipeline releases a temporary OLX failure once the deadline passes", (
     const outbox = getDb(path)
       .prepare("SELECT COUNT(*) AS n FROM telegram_outbox WHERE source = 'olx' AND source_id = ?")
       .get(SOURCE_ID) as { n: number };
-    expect(Number(outbox.n)).toBe(1);
+    expect(Number(outbox.n)).toBe(0);
   });
 });

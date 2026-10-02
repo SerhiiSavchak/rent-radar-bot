@@ -268,7 +268,7 @@ describe("OLX seller-filter fail-open regressions (verifier outcomes)", () => {
 });
 
 describe("OLX seller-filter hold semantics", () => {
-  it("releases a temporary failure once the original hold deadline is reached", async () => {
+  it("drops a temporary failure once the original hold deadline is reached", async () => {
     const db = getDb(join(mkdtempSync(join(tmpdir(), "rr-fp-hold-")), "h.sqlite"));
     applyMigrations(db);
     const listing = olxListing();
@@ -281,7 +281,7 @@ describe("OLX seller-filter hold semantics", () => {
       externalId: TOKEN,
       evidence: "still unreachable",
     }));
-    expect(actions).toEqual([{ listing, action: "send" }]);
+    expect(actions).toEqual([{ listing, action: "drop" }]);
     expect(hasSellerHold(db, "olx", TOKEN)).toBe(false);
     expect(countSellerHolds(db)).toBe(0);
     closeDb();
