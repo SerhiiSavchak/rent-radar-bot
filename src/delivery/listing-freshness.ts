@@ -27,12 +27,26 @@ export type FreshnessPolicy = {
   /**
    * Effective lower bound supplied by the caller.
    * For a baselined source this is the later of the previous complete poll
-   * and a seller-policy cutover. Publications older than it are late inventory.
+   * and a seller-policy cutover. Publications older than it are late inventory
+   * unless publishedAt is still inside lateDiscoveryGraceMinutes.
    */
   monitoringStartedAt?: Date | undefined;
+  /**
+   * Listings first seen after the monitoring boundary stay deliverable when
+   * publishedAt is at most this many minutes old. Independent of
+   * maxPublicationAgeMinutes. Omitted means LATE_DISCOVERY_GRACE_MINUTES.
+   */
+  lateDiscoveryGraceMinutes?: number | undefined;
 };
 
 const DEFAULT_MAX_PUBLICATION_AGE_MINUTES = 7 * 24 * 60; // 7 days
+
+/**
+ * Delayed catalog visibility. A listing can be published before the previous
+ * successful poll and still be new. 60 minutes covers the observed 15–46
+ * minute OLX delays and does not reopen multi-hour inventory.
+ */
+export const LATE_DISCOVERY_GRACE_MINUTES = 60;
 
 /** Written into a seller hold only after the listing passed this freshness rule. */
 export const FRESHNESS_GATE_VERSION = 2;
@@ -91,6 +105,7 @@ export function classifyListingFreshness(
   const ageMs = nowMs - published.getTime();
   const withinAgeWindow = ageMs <= maxMs;
   const monitoringStartedAt = policy.monitoringStartedAt;
+  const graceMinutes = policy.lateDiscoveryGraceMinutes ?? LATE_DISCOVERY_GRACE_MINUTES;
 
   if (ageMs > maxMs) {
     if (refreshed && nowMs - refreshed.getTime() <= maxMs) {
@@ -110,6 +125,14 @@ export function classifyListingFreshness(
   }
 
   if (monitoringStartedAt && published.getTime() < monitoringStartedAt.getTime()) {
+    if (ageMs <= graceMinutes * 60_000) {
+      return {
+        kind: "new_publication",
+        deliverable: true,
+        withinAgeWindow: true,
+        reason: `publishedAt (${published.toISOString()}) is before monitoring started (${monitoringStartedAt.toISOString()}) but within ${graceMinutes}-minute late-discovery grace`,
+      };
+    }
     return {
       kind: "late_discovered",
       deliverable: false,

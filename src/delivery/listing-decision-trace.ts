@@ -22,18 +22,21 @@ export type ListingDecisionStage =
   | "delivered"
   | "delivery_failed";
 
-/** Stages that answer “what happened to this listing?” after collection. */
-const TERMINAL_STAGES = new Set<ListingDecisionStage>([
-  "rejected_seller",
-  "rejected_geo",
-  "rejected_other",
-  "held",
-  "deduped",
+/**
+ * Post-dedupe outcomes. Catalog rejects are not in this set: a cycle can emit
+ * thousands of them, and they must not evict a rare delivery-path row.
+ */
+const DELIVERY_PATH_STAGES = new Set<ListingDecisionStage>([
   "suppressed_freshness",
+  "deduped",
+  "held",
   "queued",
   "delivered",
   "delivery_failed",
 ]);
+
+/** Bulk catalog filter. Post-candidate linked-seller rejects use other reason codes. */
+const BULK_SELLER_REJECT_REASON = "intermediary";
 
 export type ListingDecisionRecord = {
   cycleId: number;
@@ -120,9 +123,20 @@ export function listingDecisionTraceHas(
   return Boolean(row);
 }
 
+function isDeliveryPathDecision(row: ListingDecisionRecord): boolean {
+  if (DELIVERY_PATH_STAGES.has(row.stage)) {
+    return true;
+  }
+  // Same stage as catalog intermediaries, but recorded only after a listing
+  // became a candidate (linked-seller terminal reject / hold drop).
+  return row.stage === "rejected_seller" && row.reasonCode !== BULK_SELLER_REJECT_REASON;
+}
+
 /**
- * Prefer terminal decisions, then one collected row per listing, fairly across
- * sources. Absence from a truncated trace is never proof of non-collection.
+ * Keep rare post-dedupe decisions first, then fill the remaining cap in
+ * record order, one row per source per pass. Bulk intermediary/geo/other
+ * rejects and ordinary collected/normalized rows share that remainder.
+ * Absence from a truncated trace is never proof of non-collection.
  */
 export function selectListingDecisionTraceRows(
   rows: readonly ListingDecisionRecord[],
@@ -174,20 +188,7 @@ export function selectListingDecisionTraceRows(
     }
   };
 
-  takeRoundRobin((row) => TERMINAL_STAGES.has(row.stage));
-  // One collected marker per listing (skip duplicate normalized when tight).
-  const collectedSeen = new Set<string>();
-  takeRoundRobin((row) => {
-    if (row.stage !== "collected") {
-      return false;
-    }
-    const id = `${row.source}|${row.sourceId}`;
-    if (collectedSeen.has(id)) {
-      return false;
-    }
-    collectedSeen.add(id);
-    return true;
-  });
+  takeRoundRobin(isDeliveryPathDecision);
   takeRoundRobin(() => true);
 
   return { kept, dropped: rows.length - kept.length };

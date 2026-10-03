@@ -7,6 +7,7 @@ import {
   classifyListingFreshness,
   defaultMaxPublicationAgeMinutes,
   hasFreshnessGateApproval,
+  LATE_DISCOVERY_GRACE_MINUTES,
   markFreshnessApproved,
   withFirstSeenAt,
 } from "./listing-freshness.ts";
@@ -1333,6 +1334,7 @@ export async function runTelegramTestCycle(
     const freshness = classifyListingFreshness(listing, {
       maxPublicationAgeMinutes,
       strictNewPublications,
+      lateDiscoveryGraceMinutes: LATE_DISCOVERY_GRACE_MINUTES,
       now: now(),
       ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
     });
@@ -1508,6 +1510,7 @@ export async function runTelegramTestCycle(
       const freshness = classifyListingFreshness(listing, {
         maxPublicationAgeMinutes,
         strictNewPublications,
+        lateDiscoveryGraceMinutes: LATE_DISCOVERY_GRACE_MINUTES,
         now: now(),
         ...(monitoringStartedAt ? { monitoringStartedAt } : {}),
       });
