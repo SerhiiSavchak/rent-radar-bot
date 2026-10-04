@@ -463,6 +463,41 @@ describe("business snapshot persistence and first enable", () => {
     expect(report.collectedRaw).toBeGreaterThanOrEqual(2);
   });
 
+  it("suppresses an old ambiguous business listing before detail", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    store.establishSilent("olx", [], store, new Date("2026-09-01T00:00:00.000Z"));
+    store.recordSuccess("olx", new Date("2026-10-03T23:00:00.000Z"));
+    const probeOlxProfile = vi.fn(async () => ({ acquired: false }) as OlxProfileSnapshot);
+    const report = await runTelegramTestCycle(
+      {
+        adapters: [
+          adapter("olx", [
+            olxListing("old-ambiguous", {
+              publishedAt: new Date("2024-01-01T00:00:00.000Z"),
+              metadata: {
+                olxAccountType: "business",
+                olxIsBusiness: true,
+                ownerEvidenceLevel: "business_ambiguous",
+              },
+            }),
+          ]),
+        ],
+        config: config(),
+        sink: drySink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => NOW,
+        probeOlxProfile,
+      },
+      1,
+    );
+    expect(report.sentOk).toBe(0);
+    expect(report.suppressedOld + report.suppressedRefreshedOld + report.suppressedLateDiscovered).toBeGreaterThan(0);
+    expect(probeOlxProfile).not.toHaveBeenCalled();
+  });
+
   it("does not open detail pages for a thousand old business rows and does not send them", async () => {
     const path = dbPath();
     const store = new DurableDeliveryStore(getDb(path));
@@ -499,6 +534,227 @@ describe("business snapshot persistence and first enable", () => {
     expect(report.suppressedOld + report.suppressedRefreshedOld + report.suppressedLateDiscovered).toBeGreaterThan(0);
     expect(fetchOlxDetail).not.toHaveBeenCalled();
     expect(probeOlxProfile).not.toHaveBeenCalled();
+  });
+
+  it("does not open detail or profile for a thousand old ambiguous business rows", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    store.establishSilent("olx", [], store, new Date("2026-09-01T00:00:00.000Z"));
+    store.recordSuccess("olx", new Date("2026-10-03T23:00:00.000Z"));
+    const old = Array.from({ length: 1000 }, (_, index) =>
+      olxListing(String(810000000 + index), {
+        metadata: {
+          olxAccountType: "business",
+          olxIsBusiness: true,
+          ownerEvidenceLevel: "business_ambiguous",
+        },
+        publishedAt: new Date("2024-01-01T00:00:00.000Z"),
+      }),
+    );
+    const fetchOlxDetail = vi.fn(async () => ({ status: 200, finalUrl: "https://www.olx.ua/", bodyText: "" }));
+    const probeOlxProfile = vi.fn(async () => ({ acquired: false }) as OlxProfileSnapshot);
+    const report = await runTelegramTestCycle(
+      {
+        adapters: [adapter("olx", old)],
+        config: config(),
+        sink: drySink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => NOW,
+        fetchOlxDetail,
+        probeOlxProfile,
+      },
+      6,
+    );
+    expect(report.sentOk).toBe(0);
+    expect(report.suppressedOld + report.suppressedRefreshedOld + report.suppressedLateDiscovered).toBe(1000);
+    expect(fetchOlxDetail).not.toHaveBeenCalled();
+    expect(probeOlxProfile).not.toHaveBeenCalled();
+  }, 20_000);
+
+  function freshAmbiguous(sourceId: string, token: string): Listing {
+    return olxListing(sourceId, {
+      url: `https://www.olx.ua/d/uk/obyavlenie/orenda-ID${token}.html`,
+      title: "Оренда квартири",
+      metadata: {
+        olxAccountType: "business",
+        olxIsBusiness: true,
+        ownerEvidenceLevel: "business_ambiguous",
+        urlToken: token,
+      },
+      publishedAt: new Date("2026-10-03T23:40:00.000Z"),
+    });
+  }
+
+  function detailHtml(listing: Listing, description: string, sellerType: string | null = null) {
+    return derivedOracleOfferDetailHtml(
+      {
+        id: Number(listing.sourceId),
+        url: listing.url,
+        title: listing.title,
+        description,
+        business: true,
+        isBusiness: true,
+        user: { id: 1, name: "Оля", company_name: "", sellerType },
+      },
+      { memberSince: "січень 2016 р." },
+    );
+  }
+
+  it("opens detail for a fresh ambiguous business card and keeps a clean owner claim", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    store.establishSilent("olx", [], store, new Date("2026-10-03T22:00:00.000Z"));
+    store.recordSuccess("olx", new Date("2026-10-03T23:20:00.000Z"));
+    const listing = freshAmbiguous("936800001", "11owner");
+    const probeOlxProfile = vi.fn(async (): Promise<OlxProfileSnapshot> => ({
+      acquired: true,
+      listingHtml: detailHtml(listing, "Здається квартира від власника."),
+      precisePropertyKeys: [],
+      visibleAds: 1,
+    }));
+    let delivered: Listing | undefined;
+    const sendingSink = {
+      chatId: "1",
+      dryRun: false,
+      sendListing: async (item: Listing) => {
+        delivered = item;
+        return { ok: true, dryRun: false, attempts: 1, chatId: "1", messageCount: 1 };
+      },
+      sendText: async () => ({ ok: true, dryRun: false, attempts: 1, chatId: "1", messageCount: 1 }),
+    } as never;
+    const report = await runTelegramTestCycle(
+      {
+        adapters: [adapter("olx", [listing])],
+        config: config(),
+        sink: sendingSink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => NOW,
+        probeOlxProfile,
+      },
+      7,
+    );
+    expect(probeOlxProfile).toHaveBeenCalledTimes(1);
+    expect(delivered?.metadata?.ownerEvidenceLevel).toBe("self_declared");
+    expect(delivered?.metadata?.filterConsidersSelfDeclaredOwner).toBe(true);
+    expect(report.sentOk).toBe(1);
+  });
+
+  it("rejects a fresh ambiguous business card when detail has no owner evidence and does not probe it again", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    store.establishSilent("olx", [], store, new Date("2026-10-03T22:00:00.000Z"));
+    store.recordSuccess("olx", new Date("2026-10-03T23:20:00.000Z"));
+    const listing = freshAmbiguous("936800002", "11none1");
+    const probeOlxProfile = vi.fn(async (): Promise<OlxProfileSnapshot> => ({
+      acquired: true,
+      listingHtml: detailHtml(listing, "Здається квартира на Пасічній."),
+      precisePropertyKeys: [],
+      visibleAds: 1,
+    }));
+    const sendingSink = {
+      chatId: "1",
+      dryRun: false,
+      sendListing: async () => ({ ok: true, dryRun: false, attempts: 1, chatId: "1", messageCount: 1 }),
+      sendText: async () => ({ ok: true, dryRun: false, attempts: 1, chatId: "1", messageCount: 1 }),
+    } as never;
+    const first = await runTelegramTestCycle(
+      {
+        adapters: [adapter("olx", [listing])],
+        config: config(),
+        sink: sendingSink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => NOW,
+        probeOlxProfile,
+      },
+      8,
+    );
+    expect(probeOlxProfile).toHaveBeenCalledTimes(1);
+    expect(first.sentOk).toBe(0);
+    expect(first.linkedSellerEvents.some((event) => event.outcome === "business_without_positive_owner_evidence")).toBe(
+      true,
+    );
+    const second = await runTelegramTestCycle(
+      {
+        adapters: [adapter("olx", [listing])],
+        config: config(),
+        sink: sendingSink,
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(NOW.getTime() + 60_000),
+        probeOlxProfile,
+      },
+      9,
+    );
+    expect(second.newAfterDedupe).toBe(0);
+    expect(probeOlxProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a fresh ambiguous business card when detail shows an agent", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    store.establishSilent("olx", [], store, new Date("2026-10-03T22:00:00.000Z"));
+    store.recordSuccess("olx", new Date("2026-10-03T23:20:00.000Z"));
+    const listing = freshAmbiguous("936800003", "11agent");
+    const probeOlxProfile = vi.fn(async (): Promise<OlxProfileSnapshot> => ({
+      acquired: true,
+      listingHtml: detailHtml(listing, "Від власника.", "agent"),
+      precisePropertyKeys: [],
+    }));
+    const report = await runTelegramTestCycle(
+      {
+        adapters: [adapter("olx", [listing])],
+        config: config(),
+        sink: drySink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => NOW,
+        probeOlxProfile,
+      },
+      10,
+    );
+    expect(probeOlxProfile).toHaveBeenCalledTimes(1);
+    expect(report.sentOk).toBe(0);
+    expect(
+      report.linkedSellerEvents.some(
+        (event) => event.outcome === "detail_confirmed_agent" || event.outcome === "business_without_positive_owner_evidence",
+      ),
+    ).toBe(true);
+    expect(listing.metadata?.ownerEvidenceLevel).not.toBe("self_declared");
+  });
+
+  it("defers a fresh ambiguous business card when detail transport fails", async () => {
+    const path = dbPath();
+    const store = new DurableDeliveryStore(getDb(path));
+    store.establishSilent("olx", [], store, new Date("2026-10-03T22:00:00.000Z"));
+    store.recordSuccess("olx", new Date("2026-10-03T23:20:00.000Z"));
+    const listing = freshAmbiguous("936800004", "11trns1");
+    const probeOlxProfile = vi.fn(async () => {
+      throw new Error("detail transport down");
+    });
+    const report = await runTelegramTestCycle(
+      {
+        adapters: [adapter("olx", [listing])],
+        config: config(),
+        sink: drySink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => NOW,
+        probeOlxProfile,
+      },
+      11,
+    );
+    expect(probeOlxProfile).toHaveBeenCalledTimes(1);
+    expect(report.sentOk).toBe(0);
+    expect(report.linkedSellerEvents.some((event) => event.outcome === "detail_transport_failure")).toBe(true);
   });
 
   it("lets a business owner discovered inside the grace window reach detail, then not duplicate", async () => {
@@ -823,6 +1079,7 @@ describe("business catalog walk and probe budget", () => {
     lastFullScanAt?: string;
     now?: Date;
     repeatPage1IdOnPage2?: boolean;
+    parserLoss?: boolean;
   }) {
     const housePages = input.housePages ?? 2;
     const mocked = mockBrowser((url) => {
@@ -839,7 +1096,11 @@ describe("business catalog walk and probe budget", () => {
         return "fail";
       }
       const id = input.repeatPage1IdOnPage2 && page === 2 ? 3001 : 3000 + page;
-      return catalogHtml([ad(id, true)], page, input.apartmentPages);
+      const ads: unknown[] = [ad(id, true)];
+      if (input.parserLoss && page === 1) {
+        ads.push({ id: 999001 });
+      }
+      return catalogHtml(ads, page, input.apartmentPages);
     });
     const result = await extractOlxListingsViaBrowser({
       timeoutMs: 5_000,
@@ -859,6 +1120,8 @@ describe("business catalog walk and probe budget", () => {
     expect(businessHousePages(urls)).toEqual([1, 2]);
     expect(result.businessScan?.apartments.mode).toBe("full");
     expect(result.businessScan?.apartments.fullCoverage).toBe(true);
+    expect(result.businessScan?.apartments.pageCoverageComplete).toBe(true);
+    expect(result.businessScan?.apartments.parserCoverageHealthy).toBe(true);
     expect(result.businessFullScan?.succeeded).toBe(true);
     expect(result.businessFullScan?.pagesExpected).toBe(25);
     expect(result.businessFullScan?.pagesFetched).toBe(25);
@@ -866,6 +1129,21 @@ describe("business catalog walk and probe budget", () => {
     expect(result.coverage?.olxBusinessLastFullScanAt).toBe(NOW.toISOString());
     expect(result.businessFullScan?.apartmentFullCoverage).toBe(true);
     expect(urls.filter((url) => businessApartmentPages([url])[0] === 1)).toHaveLength(1);
+  });
+
+  it("does not stamp a snapshot when every page was fetched but a structured ad failed to parse", async () => {
+    const { result, urls } = await walk({ apartmentPages: 2, housePages: 1, parserLoss: true });
+    expect(businessApartmentPages(urls)).toEqual([1, 2]);
+    expect(result.businessScan?.apartments.pageCoverageComplete).toBe(true);
+    expect(result.businessScan?.apartments.parserCoverageHealthy).toBe(false);
+    expect(result.businessScan?.apartments.parser.rejectionReasonCounts.adapt_failed_missing_id_or_title).toBe(1);
+    expect(result.businessScan?.apartments.parser.examples.some((item) => item.id === "999001")).toBe(true);
+    expect(result.businessFullScan?.pageCoverageComplete).toBe(true);
+    expect(result.businessFullScan?.parserCoverageHealthy).toBe(false);
+    expect(result.businessFullScan?.succeeded).toBe(false);
+    expect(result.coverage?.olxBusinessLastFullScanAt).toBeUndefined();
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.listings.some((item) => item.sourceId === "3001")).toBe(true);
   });
 
   it("keeps page 1, degrades, and does not stamp a snapshot when a later page fails", async () => {

@@ -1,5 +1,5 @@
 import { listingSchema, type Listing, type PropertyType } from "../../domain/listing.ts";
-import { rentalTextRejectsHome } from "../../filters/property-type.ts";
+import { namesLongTermHome, rentalTextRejectMatch } from "../../filters/property-type.ts";
 import { classifyOwner, sellerAnnotation } from "../../filters/owner-filter.ts";
 import { collectTextEvidence } from "../../utils/text-evidence.ts";
 import { olxOfferSchema, type OlxOffer } from "./olx.types.ts";
@@ -66,17 +66,28 @@ function sellerSignals(offer: OlxOffer) {
 
 function propertyTypeFromOlx(offer: OlxOffer): PropertyType {
   const categoryId = Number(offer.category?.id);
-  const text = [offer.title, offer.description].filter(Boolean).join("\n");
-  if (rentalTextRejectsHome(text)) {
-    return "unknown";
-  }
+  const title = offer.title ?? "";
+  const description = offer.description ?? "";
   // 1760 = long-term apartment rent; 330 = long-term house rent (see olx.source.ts).
   // Any other or missing category stays unknown. Title text must not invent the type.
-  if (categoryId === 1760) {
-    return "apartment";
-  }
-  if (categoryId === 330) {
-    return "house";
+  // A known category is not erased by "2 кімнати" in the description: that is the
+  // apartment size. Daily rent, sale, a title that is itself a room, and a title
+  // that is a garage/office still stay unknown.
+  if (categoryId === 1760 || categoryId === 330) {
+    const titleReject = rentalTextRejectMatch(title);
+    const bodyReject = rentalTextRejectMatch(description);
+    const namesHome = namesLongTermHome(title) || namesLongTermHome(description);
+    if (
+      titleReject?.reason === "short_term" ||
+      titleReject?.reason === "sale" ||
+      bodyReject?.reason === "short_term" ||
+      bodyReject?.reason === "sale" ||
+      (titleReject?.reason === "room_unit" && !namesLongTermHome(title)) ||
+      (titleReject?.reason === "excluded_primary" && !namesHome)
+    ) {
+      return "unknown";
+    }
+    return categoryId === 1760 ? "apartment" : "house";
   }
   return "unknown";
 }

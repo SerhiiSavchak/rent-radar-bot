@@ -83,6 +83,28 @@ export const OLX_BUSINESS_HOUSE_PAGE_CEILING = 40;
 export const OLX_BUSINESS_LAST_FULL_SCAN_KEY = "olx_business_last_full_scan_at";
 
 /**
+ * Structured ads that never became a Listing. A wrong category or a duplicate
+ * id is not lost rental data. A missing city is: the geo filter never sees it.
+ */
+export const OLX_PARSER_LOSS_REASONS = [
+  "adapt_failed_missing_id_or_title",
+  "missing_city_label",
+  "schema_validation",
+  "listing_required_field_missing",
+] as const;
+
+export function olxParserLossCount(counts: Record<string, number> | undefined): number {
+  if (!counts) {
+    return 0;
+  }
+  return OLX_PARSER_LOSS_REASONS.reduce((sum, reason) => sum + (counts[reason] ?? 0), 0);
+}
+
+export function isOlxParserCoverageHealthy(counts: Record<string, number> | undefined): boolean {
+  return olxParserLossCount(counts) === 0;
+}
+
+/**
  * Retired keys from the cross-cycle page cursor. Production deletes them.
  * They are not coverage.
  */

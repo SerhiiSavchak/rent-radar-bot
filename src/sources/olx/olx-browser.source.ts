@@ -89,6 +89,8 @@ function businessScheduleNotes(report: OlxBusinessFullScanReport | undefined): s
   return [
     `businessApartmentMode=${report.apartmentMode}`,
     `businessApartmentFullCoverage=${report.apartmentFullCoverage}`,
+    `businessPageCoverageComplete=${report.pageCoverageComplete}`,
+    `businessParserCoverageHealthy=${report.parserCoverageHealthy}`,
     `businessLastFullScanAt=${report.lastFullScanAt ?? "none"}`,
     `businessFullScanAgeMinutes=${report.ageMinutes === null ? "none" : String(report.ageMinutes)}`,
     `businessFullScanDue=${report.due}`,

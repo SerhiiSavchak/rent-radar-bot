@@ -519,6 +519,15 @@ function countSellerDecisions(
   const filtered = applyListingFilters(listings, configWithoutAge);
   for (const item of filtered) {
     const bucket = sellerDecisionBucket(item.listing);
+    const businessDetailPending =
+      item.sellerRejectionReason === "business_without_positive_owner_evidence" &&
+      item.locationMatched &&
+      item.propertyMatched;
+    if (businessDetailPending) {
+      stats.sellerAcceptedUnknown += 1;
+      stats.acceptedCount += 1;
+      continue;
+    }
     if (bucket === "intermediary") {
       stats.sellerRejectedIntermediary += 1;
       const rejection = sellerRejectionReason(item.listing);
@@ -1018,7 +1027,14 @@ export async function runTelegramTestCycle(
       sellerTotals.otherFilterRejected += sellerStats.otherFilterRejected;
       sellerTotals.acceptedCount += sellerStats.acceptedCount;
       const acceptedRaw = applyListingFilters(result.listings, configWithoutAge)
-        .filter((item) => item.accepted && item.locationMatched)
+        .filter(
+          (item) =>
+            (item.accepted && item.locationMatched) ||
+            (item.sellerRejectionReason === "business_without_positive_owner_evidence" &&
+              item.locationMatched &&
+              item.propertyMatched &&
+              !item.tooOld),
+        )
         .map((item) => item.listing);
       const profilePolicies: SellerProfilePolicies = {
         likelyPolicy: deps.config.sellerProfileLikelyPolicy,

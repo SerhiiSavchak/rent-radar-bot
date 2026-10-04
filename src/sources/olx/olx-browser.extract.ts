@@ -39,6 +39,7 @@ import {
   assessOlxBusinessFullScanAge,
   buildOlxBrowserCategoryUrl,
   isOlxBusinessFullScanDue,
+  isOlxParserCoverageHealthy,
   OLX_BUSINESS_APARTMENT_PAGE_CEILING,
   OLX_BUSINESS_HOUSE_PAGE_CEILING,
   OLX_BUSINESS_HOUSE_ROUTINE_MAX_PAGES,
@@ -68,6 +69,7 @@ import {
   inspectPrerenderedState,
   readOlxStructuredCatalogPage,
   trustedOlxBusinessAdIds,
+  type OlxCandidateRejection,
   type OlxHtmlExtractDiagnostics,
   type OlxStructuredCatalogPage,
 } from "./olx-browser.html-extract.ts";
@@ -182,6 +184,8 @@ export type OlxBrowserCategoryExtract = {
   structuredCatalog?: OlxStructuredCatalogPage;
   trustedBusinessIds?: string[];
   structuredAdsCount?: number;
+  /** Numeric ids from structured catalog ads, in page order. Includes ads that failed parse. */
+  structuredAdIds?: string[];
 };
 
 export type OlxPrivateScanStatus =
@@ -220,17 +224,36 @@ export type OlxBusinessScanStatus =
   | "incomplete"
   | "skipped_budget";
 
+export type OlxBusinessParserRollup = {
+  rawAds: number;
+  rawUniqueIds: number;
+  duplicateRawIds: number;
+  parsedListings: number;
+  /** Property types of parsed listings on this Business category, before the private merge. */
+  propertyTypeCounts: Record<string, number>;
+  /** Category ids behind propertyType unknown. missing means the ad had no category id. */
+  unknownCategoryCounts: Record<string, number>;
+  unknownExamples: { id: string; title: string; categoryId: string }[];
+  rejectionReasonCounts: Record<string, number>;
+  examples: OlxCandidateRejection[];
+};
+
 export type OlxBusinessCategoryScan = {
   status: OlxBusinessScanStatus;
   /** hot = apartments page 1 only. full = every declared page this session. */
   mode: "hot" | "full" | "not_run";
   /** True only when this session fetched every declared page. Hot is never full. */
   fullCoverage: boolean;
+  /** Same as fullCoverage: every declared page was fetched. Not parser health. */
+  pageCoverageComplete: boolean;
+  /** No structured ad was dropped by the parser on the pages this session fetched. */
+  parserCoverageHealthy: boolean;
   ceilingExceeded: boolean;
   expectedPages: number | null;
   fetchedPages: number[];
   totalElements: number | null;
   uniqueListingIds: number;
+  parser: OlxBusinessParserRollup;
   failureDetails: OlxPrivateCatalogFailureDetail[];
 };
 
@@ -243,6 +266,8 @@ export type OlxBusinessFullScanReport = {
   pagesFetched: number;
   apartmentMode: OlxBusinessCategoryScan["mode"];
   apartmentFullCoverage: boolean;
+  pageCoverageComplete: boolean;
+  parserCoverageHealthy: boolean;
   /** healthy <= 30 min, coverage_degraded above 30, unsafe at 60 or with no success. */
   ageStatus: "healthy" | "coverage_degraded" | "unsafe";
 };
@@ -544,6 +569,7 @@ async function extractCategory(
   let structuredCatalog: OlxStructuredCatalogPage | undefined;
   let trustedBusinessIds: string[] = [];
   let structuredAdsCount = 0;
+  let structuredAdIds: string[] = [];
   const refreshStructured = (html: string | undefined) => {
     if (!html) {
       return;
@@ -557,15 +583,30 @@ async function extractCategory(
       structuredCatalog = page;
     }
     trustedBusinessIds = trustedOlxBusinessAdIds(inspection.decoded);
-    structuredAdsCount = extractListingAdsFromPrerenderedState(inspection.decoded).length;
+    const ads = extractListingAdsFromPrerenderedState(inspection.decoded);
+    structuredAdsCount = ads.length;
+    structuredAdIds = ads.flatMap((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return [];
+      }
+      const id = (raw as { id?: unknown }).id;
+      if (typeof id === "number" && Number.isFinite(id)) {
+        return [String(id)];
+      }
+      if (typeof id === "string" && id.trim()) {
+        return [id.trim()];
+      }
+      return [];
+    });
   };
   const structuredExtras = (): Pick<
     OlxBrowserCategoryExtract,
-    "structuredCatalog" | "trustedBusinessIds" | "structuredAdsCount"
+    "structuredCatalog" | "trustedBusinessIds" | "structuredAdsCount" | "structuredAdIds"
   > => ({
     ...(structuredCatalog ? { structuredCatalog } : {}),
     trustedBusinessIds,
     structuredAdsCount,
+    structuredAdIds,
   });
   const markTimeout = () => {
     if (!extractCompleted) {
@@ -1075,16 +1116,33 @@ function stampAccountCatalog(listing: Listing, catalog: "private" | "business"):
   return { ...listing, metadata };
 }
 
+function emptyParserRollup(): OlxBusinessParserRollup {
+  return {
+    rawAds: 0,
+    rawUniqueIds: 0,
+    duplicateRawIds: 0,
+    parsedListings: 0,
+    propertyTypeCounts: {},
+    unknownCategoryCounts: {},
+    unknownExamples: [],
+    rejectionReasonCounts: {},
+    examples: [],
+  };
+}
+
 function emptyBusinessScan(status: OlxBusinessScanStatus): OlxBusinessCategoryScan {
   return {
     status,
     mode: "not_run",
     fullCoverage: false,
+    pageCoverageComplete: false,
+    parserCoverageHealthy: false,
     ceilingExceeded: false,
     expectedPages: null,
     fetchedPages: [],
     totalElements: null,
     uniqueListingIds: 0,
+    parser: emptyParserRollup(),
     failureDetails: [],
   };
 }
@@ -1121,6 +1179,67 @@ async function scanOlxBusinessCategory(
   const listings: Listing[] = [];
   const fetchedPages: number[] = [];
   const failureDetails: OlxPrivateCatalogFailureDetail[] = [];
+  const rawIdCounts = new Map<string, number>();
+  let rawAds = 0;
+  const rejectionReasonCounts: Record<string, number> = {};
+  const parserExamples: OlxCandidateRejection[] = [];
+  const examplesPerReason = new Map<string, number>();
+  const rememberParser = (extracted: OlxBrowserCategoryExtract) => {
+    rawAds += extracted.structuredAdsCount ?? extracted.htmlDiagnostics?.rawCandidateCount ?? 0;
+    for (const id of extracted.structuredAdIds ?? []) {
+      rawIdCounts.set(id, (rawIdCounts.get(id) ?? 0) + 1);
+    }
+    for (const [reason, count] of Object.entries(extracted.htmlDiagnostics?.rejectionReasonCounts ?? {})) {
+      rejectionReasonCounts[reason] = (rejectionReasonCounts[reason] ?? 0) + count;
+    }
+    for (const example of extracted.htmlDiagnostics?.candidateRejections ?? []) {
+      const kept = examplesPerReason.get(example.reason) ?? 0;
+      if (kept >= 4 || parserExamples.length >= 40) {
+        continue;
+      }
+      examplesPerReason.set(example.reason, kept + 1);
+      parserExamples.push(example);
+    }
+  };
+  const finishParser = (parsed: Listing[]): OlxBusinessParserRollup => {
+    let duplicateRawIds = 0;
+    for (const count of rawIdCounts.values()) {
+      if (count > 1) {
+        duplicateRawIds += count - 1;
+      }
+    }
+    const propertyTypeCounts: Record<string, number> = {};
+    const unknownCategoryCounts: Record<string, number> = {};
+    const unknownExamples: { id: string; title: string; categoryId: string }[] = [];
+    for (const listing of parsed) {
+      propertyTypeCounts[listing.propertyType] = (propertyTypeCounts[listing.propertyType] ?? 0) + 1;
+      if (listing.propertyType !== "unknown") {
+        continue;
+      }
+      const rawCategory = listing.metadata?.olxCategoryId;
+      const categoryId =
+        typeof rawCategory === "number" || typeof rawCategory === "string" ? String(rawCategory) : "missing";
+      unknownCategoryCounts[categoryId] = (unknownCategoryCounts[categoryId] ?? 0) + 1;
+      if (unknownExamples.length < 8) {
+        unknownExamples.push({
+          id: listing.sourceId,
+          title: listing.title.slice(0, 120),
+          categoryId,
+        });
+      }
+    }
+    return {
+      rawAds,
+      rawUniqueIds: rawIdCounts.size,
+      duplicateRawIds,
+      parsedListings: parsed.length,
+      propertyTypeCounts,
+      unknownCategoryCounts,
+      unknownExamples,
+      rejectionReasonCounts,
+      examples: parserExamples,
+    };
+  };
   let expectedPages: number | null = null;
   let totalElements: number | null = null;
   let status: OlxBusinessScanStatus = "complete";
@@ -1206,17 +1325,23 @@ async function scanOlxBusinessCategory(
 
   const intendedMode: OlxBusinessCategoryScan["mode"] = category === "houses" ? "full" : apartmentMode;
   const first = await fetchPage(1);
+  if (first !== "stop") {
+    rememberParser(first);
+  }
   if (first === "stop" || expectedPages === null) {
     if (status === "complete") {
       status = "parser_failure";
     }
+    const parser = finishParser([]);
     const scan: OlxBusinessCategoryScan = {
       ...emptyBusinessScan(status),
       mode: intendedMode,
+      parserCoverageHealthy: isOlxParserCoverageHealthy(parser.rejectionReasonCounts),
       failureDetails,
       fetchedPages,
       expectedPages,
       totalElements,
+      parser,
     };
     return { scan, listings: [], notes };
   }
@@ -1251,6 +1376,7 @@ async function scanOlxBusinessCategory(
     if (extracted === "stop") {
       break;
     }
+    rememberParser(extracted);
   }
 
   const fullCoverage =
@@ -1258,20 +1384,28 @@ async function scanOlxBusinessCategory(
     !ceilingExceeded &&
     status === "complete" &&
     businessPagesComplete(expectedPages, fetchedPages);
+  const deduped = dedupeListings(listings);
+  const parser = finishParser(deduped);
+  const parserCoverageHealthy = isOlxParserCoverageHealthy(parser.rejectionReasonCounts);
   const scan: OlxBusinessCategoryScan = {
     status,
     mode,
     fullCoverage,
+    pageCoverageComplete: fullCoverage,
+    parserCoverageHealthy,
     ceilingExceeded,
     expectedPages,
     fetchedPages,
     totalElements,
-    uniqueListingIds: dedupeListings(listings).length,
+    uniqueListingIds: deduped.length,
+    parser,
     failureDetails,
   };
   notes.push(
     `${category}_business_mode=${mode}`,
     `${category}_business_full_coverage=${fullCoverage}`,
+    `${category}_business_page_coverage=${fullCoverage}`,
+    `${category}_business_parser_coverage=${parserCoverageHealthy}`,
     `${category}_business_ceiling_exceeded=${ceilingExceeded}`,
     `${category}_business_status=${status}`,
     `${category}_business_total_pages=${expectedPages}`,
@@ -1280,7 +1414,7 @@ async function scanOlxBusinessCategory(
       ? [`${category}_business_routine_max_pages=${OLX_BUSINESS_HOUSE_ROUTINE_MAX_PAGES}`]
       : []),
   );
-  return { scan, listings: dedupeListings(listings), notes };
+  return { scan, listings: deduped, notes };
 }
 
 /**
@@ -1488,12 +1622,14 @@ export async function extractOlxListingsViaBrowser(
     businessApartmentsScan.mode === "not_run" ||
     businessApartmentsScan.status !== "complete" ||
     businessApartmentsScan.ceilingExceeded ||
-    (businessApartmentsScan.mode === "full" && !businessApartmentsScan.fullCoverage);
+    (businessApartmentsScan.mode === "full" && !businessApartmentsScan.fullCoverage) ||
+    (businessApartmentsScan.mode === "full" && !businessApartmentsScan.parserCoverageHealthy);
   const houseCoverageProblem =
     businessHousesScan.mode === "not_run" ||
     businessHousesScan.status !== "complete" ||
     businessHousesScan.ceilingExceeded ||
-    !businessHousesScan.fullCoverage;
+    !businessHousesScan.fullCoverage ||
+    !businessHousesScan.parserCoverageHealthy;
   const privateIncomplete =
     apartmentsScan.status !== "complete" || housesScan.status !== "complete";
   const snapshotCommitAllowed =
@@ -1513,6 +1649,8 @@ export async function extractOlxListingsViaBrowser(
     pagesFetched: businessApartmentsScan.fetchedPages.length,
     apartmentMode: businessApartmentsScan.mode,
     apartmentFullCoverage: businessApartmentsScan.fullCoverage,
+    pageCoverageComplete: businessApartmentsScan.pageCoverageComplete,
+    parserCoverageHealthy: businessApartmentsScan.parserCoverageHealthy,
     ageStatus: fullScanAge.unsafe
       ? "unsafe"
       : fullScanAge.degraded

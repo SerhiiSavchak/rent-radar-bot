@@ -51,14 +51,40 @@ function maskNegatedSale(text: string): string {
 
 /** Rooms, daily rent, sale, and non-home property types are not long-term apartments or houses. */
 export function rentalTextRejectsHome(text: string): boolean {
+  return rentalTextRejectMatch(text) !== undefined;
+}
+
+export type RentalTextRejectReason = "short_term" | "sale" | "room_unit" | "excluded_primary";
+
+/** Which rental-text rule rejected the blob, plus the matched word. */
+export function rentalTextRejectMatch(
+  text: string,
+): { reason: RentalTextRejectReason; match: string } | undefined {
   const normalized = maskNegatedSale(text);
   if (!normalized.trim()) {
-    return false;
+    return undefined;
   }
-  if (SHORT_TERM.test(normalized) || SALE.test(normalized) || ROOM_UNIT.test(normalized)) {
-    return true;
+  const shortTerm = SHORT_TERM.exec(normalized);
+  if (shortTerm) {
+    return { reason: "short_term", match: shortTerm[0] };
   }
-  return EXCLUDED_PRIMARY.test(normalized) && !HOME.test(normalized);
+  const sale = SALE.exec(normalized);
+  if (sale) {
+    return { reason: "sale", match: sale[0] };
+  }
+  const room = ROOM_UNIT.exec(normalized);
+  if (room) {
+    return { reason: "room_unit", match: room[0] };
+  }
+  if (EXCLUDED_PRIMARY.test(normalized) && !HOME.test(normalized)) {
+    const excluded = EXCLUDED_PRIMARY.exec(normalized);
+    return { reason: "excluded_primary", match: excluded?.[0] ?? "excluded" };
+  }
+  return undefined;
+}
+
+export function namesLongTermHome(text: string): boolean {
+  return HOME.test(maskNegatedSale(text));
 }
 
 export function looksLikeExcludedProperty(text: string): boolean {
