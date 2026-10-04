@@ -30,8 +30,14 @@ export const LUN_HOUSES_URL = "https://lun.ua/rent/lviv/houses";
  */
 export const LUN_PAGE_SAFETY_CAP = 80;
 
-/** Per category. Stopping here is coverage_degraded, not a complete catalog. */
-export const LUN_CATEGORY_WALK_BUDGET_MS = 180_000;
+/**
+ * Per category. Stopping here is coverage_degraded, not a complete catalog.
+ * Local complete flats+houses walks finish in ~75–100s (2026-10-04). Production
+ * still saw mid-catalog truncations; Lviv flats are not newest-first, so an
+ * early stop can miss fresh cards. 300s keeps headroom for slower Oracle HTTP
+ * without changing walk semantics.
+ */
+export const LUN_CATEGORY_WALK_BUDGET_MS = 300_000;
 
 /**
  * Above a full Lviv rent catalog (about 1 600 grouped flats on 2026-10-01).
@@ -401,7 +407,7 @@ export class LunSource implements ListingSourceAdapter {
       );
       coverageTruncated = true;
       boundaryReached = false;
-      stopReasons.push("safety_cap");
+      stopReasons.push("acquired_response_cap");
     }
     // Listings from a partial walk stay processable. Completeness is coverage, not resultKind ok.
     const resultKind =
@@ -417,11 +423,15 @@ export class LunSource implements ListingSourceAdapter {
                 ? "valid_empty"
                 : "http_error";
     const capCoverage = coverageForAcquiredCards(unique.length, acquired.truncated);
+    const degradeReason = coverageTruncated
+      ? (acquired.truncated ? "acquired_response_cap" : (stopReasons[0] ?? "incomplete"))
+      : undefined;
     const coverage = {
       pagesFetched: Math.max(pagesFetched, capCoverage?.pagesFetched ?? 0),
       cardsFetched: unique.length,
       boundaryReached: boundaryReached && !coverageTruncated,
       coverageTruncated,
+      ...(degradeReason ? { degradeReason } : {}),
     };
     const healthy =
       (resultKind === "ok" || resultKind === "valid_empty") && !coverageTruncated;

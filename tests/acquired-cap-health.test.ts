@@ -185,6 +185,51 @@ describe("acquired-response cap coverage", () => {
     });
   }
 
+  it("records LUN walk stop reasons instead of a false acquired_response_cap label", async () => {
+    const path = dbPath();
+    const store = await seed(path, "lun");
+    const kept = listing("lun", "kept-walk", LATER);
+    const cycle = await runTelegramTestCycle(
+      {
+        adapters: [
+          adapter("lun", {
+            listings: [kept],
+            transport: "test",
+            dataKind: "MOCK DATA",
+            resultKind: "ok",
+            httpStatus: 200,
+            coverage: {
+              pagesFetched: 20,
+              cardsFetched: 1,
+              boundaryReached: false,
+              coverageTruncated: true,
+              degradeReason: "time_budget",
+            },
+            health: {
+              source: "lun",
+              healthy: false,
+              checkedAt: new Date(LATER),
+              message: "LUN coverage_degraded: time_budget kept 1 listings",
+            },
+          }),
+        ],
+        config: configFor("lun"),
+        sink: sink(),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(LATER),
+      },
+      1,
+    );
+    expect(cycle.sentOk).toBe(1);
+    const health = readSourceHealth(getDb(path), "lun");
+    expect(health?.status).toBe("coverage_degraded");
+    expect(health?.lastErrorSafe).toContain("time_budget");
+    expect(health?.lastErrorSafe).not.toContain("acquired_response_cap");
+    expect(health?.lastSuccessAt).toBe(SEED);
+  });
+
   it("does not mark coverage degraded when the acquired cap is not hit", async () => {
     const path = dbPath();
     const store = await seed(path, "lun");

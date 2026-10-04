@@ -604,8 +604,11 @@ function coverageDiagnostic(
   if (incrementalWalk) {
     return source === "olx" ? formatOlxCoverage(coverage) : formatRieltorCoverage(coverage);
   }
+  // Prefer the adapter's machine reason. Legacy label "acquired_response_cap" only
+  // when the local acquired-card cap actually trimmed cards (or reason is absent).
+  const reason = coverage.degradeReason?.trim() || "acquired_response_cap";
   return [
-    "acquired_response_cap",
+    reason,
     `cardsFetched=${coverage.cardsFetched}`,
     `boundaryReached=${coverage.boundaryReached}`,
     `coverageTruncated=${coverage.coverageTruncated}`,

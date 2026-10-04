@@ -54,5 +54,6 @@ export function coverageForAcquiredCards(
     cardsFetched,
     boundaryReached: false,
     coverageTruncated: true,
+    degradeReason: "acquired_response_cap",
   };
 }

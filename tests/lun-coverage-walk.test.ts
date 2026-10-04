@@ -284,6 +284,7 @@ describe("LUN catalog walk", () => {
     expect(result.health.healthy).toBe(false);
     expect(result.coverage?.coverageTruncated).toBe(true);
     expect(result.coverage?.boundaryReached).toBe(false);
+    expect(result.coverage?.degradeReason).toBe("schema_reject");
     expect(result.health.message).toContain("coverage_degraded");
     expect(result.health.message).toContain("schema_reject");
   });
@@ -408,7 +409,28 @@ describe("LUN catalog walk", () => {
     expect(result.listings.map((listing) => listing.sourceId)).toEqual(["1"]);
     expect(result.health.healthy).toBe(false);
     expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.coverage?.degradeReason).toBe("time_budget");
     expect(result.health.message).toContain("time_budget");
+  });
+
+  it("labels an acquired-card trim as acquired_response_cap, not a walk stop reason", async () => {
+    const pages = new Map<string, PageResponse>();
+    const cards = Array.from({ length: 5 }, (_, index) =>
+      card(100 + index, `2026-10-01T1${index}:00:00`),
+    );
+    pages.set(flatsUrl(1), {
+      status: 200,
+      bodyText: pageHtml(cards, { totalGroupedCount: 5 }),
+    });
+    const source = new LunSource({
+      acquiredCardCap: 2,
+      get: async (url) => pages.get(url) ?? { status: 404, bodyText: "" },
+    });
+    const result = await source.inspectLatest({ includeHouses: false });
+    expect(result.listings).toHaveLength(2);
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.coverage?.degradeReason).toBe("acquired_response_cap");
+    expect(result.health.message).toContain("acquired_response_cap");
   });
 
   it("does not call a premature empty page a complete catalog when the declared total is far ahead", async () => {

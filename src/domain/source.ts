@@ -63,6 +63,12 @@ export type IncrementalCoverage = {
   cardsFetched: number;
   boundaryReached: boolean;
   coverageTruncated: boolean;
+  /**
+   * Machine-readable first stop/degrade reason when coverageTruncated.
+   * Examples: acquired_response_cap, time_budget, schema_reject, safety_cap.
+   * Absent for complete coverage.
+   */
+  degradeReason?: string;
   oldestObservedPublication?: string;
   newestObservedPublication?: string;
   /** Present only when this category's walk closed the gap safely. */
