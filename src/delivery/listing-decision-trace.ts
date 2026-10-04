@@ -51,8 +51,23 @@ export type ListingDecisionRecord = {
 export type ListingDecisionTraceFlushReport = {
   written: number;
   dropped: number;
+  /**
+   * True when any attempted row was dropped by the cycle cap.
+   * Prefer deliveryPathTruncated / bulkOnlyTruncated for audits: a normal
+   * large catalog cycle truncates bulk rows without losing delivery-path evidence.
+   */
   truncated: boolean;
   totalAttempted: number;
+  deliveryPathAttempted: number;
+  deliveryPathWritten: number;
+  deliveryPathDropped: number;
+  bulkAttempted: number;
+  bulkWritten: number;
+  bulkDropped: number;
+  /** True only when a protected delivery-path row was dropped by the cap. */
+  deliveryPathTruncated: boolean;
+  /** True when truncation dropped only bulk catalog diagnostics. */
+  bulkOnlyTruncated: boolean;
 };
 
 export function insertListingDecisionTrace(
@@ -141,9 +156,25 @@ function isDeliveryPathDecision(row: ListingDecisionRecord): boolean {
 export function selectListingDecisionTraceRows(
   rows: readonly ListingDecisionRecord[],
   cap: number = LISTING_DECISION_TRACE_CYCLE_CAP,
-): { kept: ListingDecisionRecord[]; dropped: number } {
+): {
+  kept: ListingDecisionRecord[];
+  dropped: number;
+  deliveryPathAttempted: number;
+  deliveryPathKept: number;
+  bulkAttempted: number;
+  bulkKept: number;
+} {
+  const deliveryPathAttempted = rows.filter(isDeliveryPathDecision).length;
+  const bulkAttempted = rows.length - deliveryPathAttempted;
   if (rows.length <= cap) {
-    return { kept: [...rows], dropped: 0 };
+    return {
+      kept: [...rows],
+      dropped: 0,
+      deliveryPathAttempted,
+      deliveryPathKept: deliveryPathAttempted,
+      bulkAttempted,
+      bulkKept: bulkAttempted,
+    };
   }
   const bySource = new Map<string, ListingDecisionRecord[]>();
   for (const row of rows) {
@@ -191,19 +222,40 @@ export function selectListingDecisionTraceRows(
   takeRoundRobin(isDeliveryPathDecision);
   takeRoundRobin(() => true);
 
-  return { kept, dropped: rows.length - kept.length };
+  const deliveryPathKept = kept.filter(isDeliveryPathDecision).length;
+  const bulkKept = kept.length - deliveryPathKept;
+  return {
+    kept,
+    dropped: rows.length - kept.length,
+    deliveryPathAttempted,
+    deliveryPathKept,
+    bulkAttempted,
+    bulkKept,
+  };
+}
+
+function emptyFlushReport(): ListingDecisionTraceFlushReport {
+  return {
+    written: 0,
+    dropped: 0,
+    truncated: false,
+    totalAttempted: 0,
+    deliveryPathAttempted: 0,
+    deliveryPathWritten: 0,
+    deliveryPathDropped: 0,
+    bulkAttempted: 0,
+    bulkWritten: 0,
+    bulkDropped: 0,
+    deliveryPathTruncated: false,
+    bulkOnlyTruncated: false,
+  };
 }
 
 /** In-memory buffer used for one poll cycle, then flushed. */
 export class ListingDecisionTraceBuffer {
   private readonly rows: ListingDecisionRecord[] = [];
   private attempted = 0;
-  private lastFlush: ListingDecisionTraceFlushReport = {
-    written: 0,
-    dropped: 0,
-    truncated: false,
-    totalAttempted: 0,
-  };
+  private lastFlush: ListingDecisionTraceFlushReport = emptyFlushReport();
 
   constructor(
     private readonly cycleId: number,
@@ -231,11 +283,21 @@ export class ListingDecisionTraceBuffer {
   flush(db: DatabaseSync | undefined): ListingDecisionTraceFlushReport {
     const selected = selectListingDecisionTraceRows(this.rows, this.cap);
     const written = db ? insertListingDecisionTrace(db, selected.kept) : selected.kept.length;
+    const deliveryPathDropped = selected.deliveryPathAttempted - selected.deliveryPathKept;
+    const bulkDropped = selected.bulkAttempted - selected.bulkKept;
     this.lastFlush = {
       written,
       dropped: selected.dropped,
       truncated: selected.dropped > 0,
       totalAttempted: this.attempted,
+      deliveryPathAttempted: selected.deliveryPathAttempted,
+      deliveryPathWritten: selected.deliveryPathKept,
+      deliveryPathDropped,
+      bulkAttempted: selected.bulkAttempted,
+      bulkWritten: selected.bulkKept,
+      bulkDropped,
+      deliveryPathTruncated: deliveryPathDropped > 0,
+      bulkOnlyTruncated: selected.dropped > 0 && deliveryPathDropped === 0,
     };
     this.rows.length = 0;
     return this.lastFlush;

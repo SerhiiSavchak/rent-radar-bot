@@ -1364,9 +1364,16 @@ export async function runTelegramTestCycle(
       freshness.kind === "new_publication" || freshness.kind === "first_noticed"
         ? freshness.kind
         : "first_noticed";
+    // Match the normal post-freshness delivery path so hold releases stay auditable.
+    decisionTrace.record(listing.source, listing.sourceId, "queued", deliveryKind);
     const delivered = await handoff(listing, deliveryKind);
     if (delivered.sentOk === 0 && delivered.sentFailed > 0) {
       deps.baseline.notePendingDelivery?.(listing.source, listing.sourceId);
+    }
+    if (delivered.sentOk > 0) {
+      decisionTrace.record(listing.source, listing.sourceId, "delivered", "sent");
+    } else if (delivered.sentFailed > 0) {
+      decisionTrace.record(listing.source, listing.sourceId, "delivery_failed", "send_error");
     }
     if (crossSource) {
       crossSourcePeers.push(listing);
@@ -1564,12 +1571,11 @@ export async function runTelegramTestCycle(
       if (delivered.sentOk === 0 && delivered.sentFailed > 0) {
         deps.baseline.notePendingDelivery?.(listing.source, listing.sourceId);
       }
-      decisionTrace.record(
-        listing.source,
-        listing.sourceId,
-        delivered.sentOk > 0 ? "delivered" : "delivery_failed",
-        delivered.sentOk > 0 ? "sent" : "send_error",
-      );
+      if (delivered.sentOk > 0) {
+        decisionTrace.record(listing.source, listing.sourceId, "delivered", "sent");
+      } else if (delivered.sentFailed > 0) {
+        decisionTrace.record(listing.source, listing.sourceId, "delivery_failed", "send_error");
+      }
       if (crossSource) {
         crossSourcePeers.push(listing);
       }

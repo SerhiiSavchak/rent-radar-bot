@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   LISTING_DECISION_TRACE_CYCLE_CAP,
+  ListingDecisionTraceBuffer,
   selectListingDecisionTraceRows,
   type ListingDecisionRecord,
   type ListingDecisionStage,
@@ -65,5 +66,30 @@ describe("listing decision trace priority", () => {
     const counts = sources.map((source) => bulkBySource.get(source) ?? 0);
     expect(Math.min(...counts)).toBeGreaterThan(50);
     expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+    expect(selected.deliveryPathAttempted).toBe(5);
+    expect(selected.deliveryPathKept).toBe(5);
+    expect(selected.bulkAttempted).toBeGreaterThan(0);
+    expect(selected.bulkKept + selected.deliveryPathKept).toBe(LISTING_DECISION_TRACE_CYCLE_CAP);
+  });
+
+  it("reports bulk-only truncation separately from delivery-path loss", () => {
+    const buffer = new ListingDecisionTraceBuffer(11, 5);
+    for (let i = 0; i < 20; i += 1) {
+      buffer.record("lun", `bulk-${i}`, "collected", "source_fetch");
+      buffer.record("lun", `bulk-${i}`, "normalized", "listing_object");
+      buffer.record("lun", `bulk-${i}`, "rejected_seller", "intermediary");
+    }
+    buffer.record("olx", "rare-1", "queued", "new_publication");
+    buffer.record("olx", "rare-1", "delivered", "sent");
+    buffer.record("lun", "rare-2", "held", "detail_parser_failure");
+    const report = buffer.flush(undefined);
+    expect(report.truncated).toBe(true);
+    expect(report.bulkOnlyTruncated).toBe(true);
+    expect(report.deliveryPathTruncated).toBe(false);
+    expect(report.deliveryPathAttempted).toBe(3);
+    expect(report.deliveryPathWritten).toBe(3);
+    expect(report.deliveryPathDropped).toBe(0);
+    expect(report.bulkDropped).toBeGreaterThan(0);
+    expect(report.totalAttempted).toBe(20 * 3 + 3);
   });
 });

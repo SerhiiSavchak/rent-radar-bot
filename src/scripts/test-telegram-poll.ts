@@ -219,6 +219,10 @@ try {
       partialCoverage: report.partialCoverage,
       decisionTraceTruncated: report.decisionTrace?.truncated ?? false,
       decisionTraceDropped: report.decisionTrace?.dropped ?? 0,
+      decisionTraceBulkOnlyTruncated: report.decisionTrace?.bulkOnlyTruncated ?? false,
+      decisionTraceDeliveryPathTruncated: report.decisionTrace?.deliveryPathTruncated ?? false,
+      decisionTraceDeliveryPathDropped: report.decisionTrace?.deliveryPathDropped ?? 0,
+      decisionTraceTotalAttempted: report.decisionTrace?.totalAttempted ?? 0,
       dryRun: report.dryRun,
       sources: report.sourceAttempts.map((attempt) => ({
         source: attempt.source,

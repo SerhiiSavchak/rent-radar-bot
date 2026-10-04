@@ -12,6 +12,7 @@ import {
   SELLER_HOLD_MAX_MS,
   upsertSellerHold,
 } from "../src/delivery/seller-verification-hold.ts";
+import { listingDecisionTraceHas } from "../src/delivery/listing-decision-trace.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
@@ -364,5 +365,96 @@ describe("pipeline drops a temporary OLX failure once the deadline passes", () =
       .prepare("SELECT COUNT(*) AS n FROM telegram_outbox WHERE source = 'olx' AND source_id = ?")
       .get(SOURCE_ID) as { n: number };
     expect(Number(outbox.n)).toBe(0);
+  });
+
+  it("records queued/delivered when a held listing is later released and sent", async () => {
+    const path = join(dir, "release-trace.sqlite");
+    const store = new DurableDeliveryStore(getDb(path));
+    const batch: Listing[] = [];
+    const adapters = [adapter(() => batch)];
+    const item = listing();
+    await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink([]),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(published.getTime() - 60_000),
+        firstRunMode: "seed",
+      },
+      1,
+    );
+    batch.push(item);
+    let allowUnknown = false;
+    const probe = async () =>
+      allowUnknown
+        ? {
+            acquired: true as const,
+            pagesFetched: 1,
+            totalPages: 1,
+            listings: [{ id: SOURCE_ID, title: "one", location: "Львів" }],
+          }
+        : { acquired: false as const };
+
+    const first = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink([]),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => now,
+        probeOlxProfile: probe,
+      },
+      2,
+    );
+    expect(first.sentOk).toBe(0);
+    expect(hasSellerHold(getDb(path), "olx", SOURCE_ID)).toBe(true);
+    expect(
+      listingDecisionTraceHas(getDb(path), {
+        source: "olx",
+        sourceId: SOURCE_ID,
+        stage: "held",
+        cycleId: 2,
+      }),
+    ).toBe(true);
+
+    allowUnknown = true;
+    const releasedSent: Listing[] = [];
+    const released = await runTelegramTestCycle(
+      {
+        adapters,
+        config: configFor(),
+        sink: sink(releasedSent),
+        dedupe: store,
+        baseline: store,
+        outbox: store,
+        now: () => new Date(now.getTime() + 60_000),
+        probeOlxProfile: probe,
+      },
+      3,
+    );
+    expect(released.sentOk).toBe(1);
+    expect(releasedSent).toHaveLength(1);
+    expect(
+      listingDecisionTraceHas(getDb(path), {
+        source: "olx",
+        sourceId: SOURCE_ID,
+        stage: "queued",
+        cycleId: 3,
+      }),
+    ).toBe(true);
+    expect(
+      listingDecisionTraceHas(getDb(path), {
+        source: "olx",
+        sourceId: SOURCE_ID,
+        stage: "delivered",
+        cycleId: 3,
+      }),
+    ).toBe(true);
+    expect(released.decisionTrace?.deliveryPathTruncated).toBe(false);
   });
 });
