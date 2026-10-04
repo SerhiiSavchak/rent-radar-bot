@@ -35,8 +35,14 @@ const DELIVERY_PATH_STAGES = new Set<ListingDecisionStage>([
   "delivery_failed",
 ]);
 
-/** Bulk catalog filter. Post-candidate linked-seller rejects use other reason codes. */
-const BULK_SELLER_REJECT_REASON = "intermediary";
+/**
+ * Bulk catalog filters. Post-candidate linked-seller rejects use other reason codes.
+ * Business-account fail-closed rejects are also bulk: a cycle can emit hundreds.
+ */
+const BULK_SELLER_REJECT_REASONS = new Set([
+  "intermediary",
+  "business_without_positive_owner_evidence",
+]);
 
 export type ListingDecisionRecord = {
   cycleId: number;
@@ -129,7 +135,7 @@ function isDeliveryPathDecision(row: ListingDecisionRecord): boolean {
   }
   // Same stage as catalog intermediaries, but recorded only after a listing
   // became a candidate (linked-seller terminal reject / hold drop).
-  return row.stage === "rejected_seller" && row.reasonCode !== BULK_SELLER_REJECT_REASON;
+  return row.stage === "rejected_seller" && !BULK_SELLER_REJECT_REASONS.has(row.reasonCode);
 }
 
 /**

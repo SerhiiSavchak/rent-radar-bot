@@ -1,8 +1,8 @@
 import type { Listing, ListingSource } from "../domain/listing.ts";
-import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
+import type { FetchListingsOptions, ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
 import { usesOwnerOnlySourceFilter, type AppConfig } from "../config/env.ts";
 import { applyListingFilters } from "../filters/listing-filter.ts";
-import { sellerDecisionBucket } from "../filters/owner-filter.ts";
+import { sellerDecisionBucket, sellerRejectionReason } from "../filters/owner-filter.ts";
 import {
   classifyListingFreshness,
   defaultMaxPublicationAgeMinutes,
@@ -34,8 +34,11 @@ import {
 } from "../sources/rieltor/rieltor-incremental.ts";
 import {
   formatOlxCoverage,
+  olxBusinessRollingKey,
   olxCatchupKey,
   olxPublicationBoundaryKey,
+  parseOlxBusinessRolling,
+  serializeOlxBusinessRolling,
   type OlxBrowserCategoryName,
 } from "../sources/olx/olx-browser.coverage.ts";
 import {
@@ -518,11 +521,12 @@ function countSellerDecisions(
     const bucket = sellerDecisionBucket(item.listing);
     if (bucket === "intermediary") {
       stats.sellerRejectedIntermediary += 1;
+      const rejection = sellerRejectionReason(item.listing);
       trace?.record(
         item.listing.source,
         item.listing.sourceId,
         "rejected_seller",
-        "intermediary",
+        rejection === "business_without_positive_owner_evidence" ? rejection : "intermediary",
       );
       continue;
     }
@@ -984,12 +988,30 @@ export async function runTelegramTestCycle(
         adapter.source === "domria"
           ? parseDomriaAcquiredIds(readMetaValue(DOMRIA_ACQUIRED_IDS_KEY))
           : undefined;
+      const apartmentRolling =
+        adapter.source === "olx"
+          ? parseOlxBusinessRolling(readMetaValue(olxBusinessRollingKey("apartments")))
+          : undefined;
+      const houseRolling =
+        adapter.source === "olx"
+          ? parseOlxBusinessRolling(readMetaValue(olxBusinessRollingKey("houses")))
+          : undefined;
+      const olxBusinessRolling: NonNullable<FetchListingsOptions["olxBusinessRolling"]> = {};
+      if (apartmentRolling) {
+        olxBusinessRolling.apartments = apartmentRolling;
+      }
+      if (houseRolling) {
+        olxBusinessRolling.houses = houseRolling;
+      }
       const result: SourceFetchResult = await adapter.inspectLatest({
         preferOwners: usesOwnerOnlySourceFilter(deps.config),
         ...(publicationWatermarks ? { publicationWatermarks } : {}),
         ...(rieltorCatchup ? { rieltorCatchup } : {}),
         ...(rieltorBootstrapTarget ? { rieltorBootstrapTarget } : {}),
         ...(domriaKnownIds && domriaKnownIds.length > 0 ? { domriaKnownIds } : {}),
+        ...(olxBusinessRolling.apartments || olxBusinessRolling.houses
+          ? { olxBusinessRolling }
+          : {}),
       });
       const classified = classifySourceAttempt(adapter.source, result);
       // Do not drop old publishedAt here — baseline must see current inventory.
@@ -1062,9 +1084,21 @@ export async function runTelegramTestCycle(
         // Page cursors and publication boundaries are not OLX coverage.
         // Drop leftovers so a restart cannot treat them as progress.
         const deleteMeta = holdDb.prepare("DELETE FROM schema_meta WHERE key = ?");
+        const writeMeta = holdDb.prepare(
+          "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+        );
         for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
           deleteMeta.run(olxCatchupKey(category));
           deleteMeta.run(olxPublicationBoundaryKey(category));
+          if (!result.coverage.olxBusinessRolling || !(category in result.coverage.olxBusinessRolling)) {
+            continue;
+          }
+          const rolling = result.coverage.olxBusinessRolling[category];
+          if (rolling) {
+            writeMeta.run(olxBusinessRollingKey(category), serializeOlxBusinessRolling(rolling));
+          } else if (rolling === null) {
+            deleteMeta.run(olxBusinessRollingKey(category));
+          }
         }
       }
       const collectedIds = collectedSourceIdsForLog(result.listings);

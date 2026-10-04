@@ -50,11 +50,155 @@ export const OLX_PRIVATE_TOTAL_BUDGET_MS = 360_000;
 export const OLX_PRIVATE_HOUSE_RESERVE_MS = 90_000;
 
 /**
- * Shared acquired cap (120) was sized for one unfiltered catalog page (~51 cards).
- * Verified private apartments are 140 unique ids. This ceiling keeps that catalog
- * whole and still rejects a runaway payload.
+ * One cycle keeps the full Private catalog (~140 apartments) plus one Business
+ * hot page and 8 continuation pages (~50 cards each). 800 stays above that
+ * combined set and still rejects a runaway payload.
  */
-export const OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY = 250;
+export const OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY = 800;
+
+/** Business apartment pages after page 1, fetched each poll. Page 1 is extra. */
+export const OLX_BUSINESS_CONTINUATION_PAGE_BUDGET = 8;
+
+/**
+ * Business houses at or under this declared size are fetched whole every cycle.
+ * Larger house catalogs use the same rolling cursor as apartments.
+ */
+export const OLX_BUSINESS_HOUSE_FULL_SCAN_MAX_PAGES = 4;
+
+export const OLX_BUSINESS_POLL_INTERVAL_MINUTES = 10;
+export const OLX_BUSINESS_COVERAGE_TARGET_MINUTES = 30;
+export const OLX_BUSINESS_COVERAGE_UNSAFE_MINUTES = 60;
+
+export type OlxBusinessRollingState = {
+  resumePage: number;
+};
+
+export function olxBusinessRollingKey(category: OlxBrowserCategoryName): string {
+  return `olx_business_rolling_${category}`;
+}
+
+export function parseOlxBusinessRolling(raw: string | undefined): OlxBusinessRollingState | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { resumePage?: unknown };
+    const resumePage = Number(parsed.resumePage);
+    if (!Number.isInteger(resumePage) || resumePage < 2) {
+      return undefined;
+    }
+    return { resumePage };
+  } catch {
+    return undefined;
+  }
+}
+
+export function serializeOlxBusinessRolling(state: OlxBusinessRollingState): string {
+  return JSON.stringify({ resumePage: state.resumePage });
+}
+
+export function normalizeOlxBusinessResumePage(resumePage: number | undefined): number {
+  if (!Number.isInteger(resumePage) || (resumePage ?? 0) < 2) {
+    return 2;
+  }
+  return resumePage as number;
+}
+
+/** Pages 2..totalPages. Page 1 is never part of this cursor. */
+export function planOlxBusinessContinuation(
+  resumePage: number | undefined,
+  totalPages: number,
+  budget = OLX_BUSINESS_CONTINUATION_PAGE_BUDGET,
+): number[] {
+  if (!Number.isInteger(totalPages) || totalPages <= 1 || budget < 1) {
+    return [];
+  }
+  let start = normalizeOlxBusinessResumePage(resumePage);
+  if (start > totalPages) {
+    start = 2;
+  }
+  const pages: number[] = [];
+  for (let page = start; page <= totalPages && pages.length < budget; page += 1) {
+    pages.push(page);
+  }
+  return pages;
+}
+
+export function advanceOlxBusinessResume(input: {
+  plannedContinuation: number[];
+  fetchedContinuation: number[];
+  expectedPages: number;
+}): { resumePage: number; completedPlanned: boolean } {
+  if (input.plannedContinuation.length === 0) {
+    return { resumePage: 2, completedPlanned: true };
+  }
+  for (const page of input.plannedContinuation) {
+    if (!input.fetchedContinuation.includes(page)) {
+      return { resumePage: page, completedPlanned: false };
+    }
+  }
+  const last = input.plannedContinuation[input.plannedContinuation.length - 1] ?? 2;
+  const next = last + 1;
+  if (next > input.expectedPages) {
+    return { resumePage: 2, completedPlanned: true };
+  }
+  return { resumePage: next, completedPlanned: true };
+}
+
+export function assessOlxBusinessCoverageHorizon(
+  totalPages: number,
+  continuationPageBudget = OLX_BUSINESS_CONTINUATION_PAGE_BUDGET,
+  pollIntervalMinutes = OLX_BUSINESS_POLL_INTERVAL_MINUTES,
+): {
+  continuationPages: number;
+  continuationPageBudget: number;
+  cyclesToFullCoverage: number;
+  coverageMinutes: number;
+  degraded: boolean;
+  unsafe: boolean;
+} {
+  const continuationPages = Math.max(0, Math.floor(totalPages) - 1);
+  const budget = Math.max(1, continuationPageBudget);
+  const cyclesToFullCoverage =
+    continuationPages === 0 ? 0 : Math.ceil(continuationPages / budget);
+  const coverageMinutes = cyclesToFullCoverage * pollIntervalMinutes;
+  return {
+    continuationPages,
+    continuationPageBudget: budget,
+    cyclesToFullCoverage,
+    coverageMinutes,
+    degraded: coverageMinutes > OLX_BUSINESS_COVERAGE_TARGET_MINUTES,
+    unsafe: coverageMinutes >= OLX_BUSINESS_COVERAGE_UNSAFE_MINUTES,
+  };
+}
+
+export function simulateOlxBusinessApartmentSweep(
+  totalPages: number,
+  cycles: number,
+  budget = OLX_BUSINESS_CONTINUATION_PAGE_BUDGET,
+): { pagesByCycle: number[][]; coveredPages: number[]; resumePage: number } {
+  let resumePage = 2;
+  const pagesByCycle: number[][] = [];
+  const covered = new Set<number>();
+  for (let cycle = 0; cycle < cycles; cycle += 1) {
+    const continuation = planOlxBusinessContinuation(resumePage, totalPages, budget);
+    const pages = totalPages >= 1 ? [1, ...continuation] : [];
+    pagesByCycle.push(pages);
+    for (const page of pages) {
+      covered.add(page);
+    }
+    resumePage = advanceOlxBusinessResume({
+      plannedContinuation: continuation,
+      fetchedContinuation: continuation,
+      expectedPages: totalPages,
+    }).resumePage;
+  }
+  return {
+    pagesByCycle,
+    coveredPages: [...covered].sort((left, right) => left - right),
+    resumePage,
+  };
+}
 
 /**
  * Hard cap used only for offline depth probes / feasibility math.
@@ -236,6 +380,8 @@ export function buildOlxBrowserCategoryUrl(
      * unfiltered probe. Private is not ownership. Do not emit owner_type=private.
      */
     privateOnly?: boolean;
+    /** Account catalog. Business does not replace Private. */
+    accountCatalog?: "private" | "business";
   } = {},
 ): string {
   const path = category === "apartments" ? OLX_BROWSER_APARTMENTS_PATH : OLX_BROWSER_HOUSES_PATH;
@@ -244,7 +390,9 @@ export function buildOlxBrowserCategoryUrl(
   if (distance !== null && distance !== undefined) {
     params.set("search[dist]", String(distance));
   }
-  if (options.privateOnly !== false) {
+  if (options.accountCatalog === "business") {
+    params.set("search[private_business]", "business");
+  } else if (options.accountCatalog === "private" || options.privateOnly !== false) {
     params.set("search[private_business]", "private");
   }
   if (options.orderCreatedDesc === true) {

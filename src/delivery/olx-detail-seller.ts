@@ -168,26 +168,35 @@ export function classifyOlxLinkedSellerHtml(
     platformOwner: lowerType === "owner",
     platformAgent:
       lowerType === "agent" || lowerType === "agency" || lowerType === "intermediary",
-    // sellerType=business OR trusted isBusiness/business boolean — both strong commercial.
-    platformBusiness: lowerType === "business" || business === true,
+    // Explicit user.sellerType=business only. offer.isBusiness is account type.
+    platformBusiness: lowerType === "business",
     platformPrivate: business === false,
     isBusiness: business === true,
     agencyName: company,
     sellerIdentityName: sellerName,
     text: `${title}\n${description}`,
   });
-  if (sellerRejectionReason({ sellerType: owner.sellerType, metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel } })) {
+  if (sellerRejectionReason({ sellerType: owner.sellerType, metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel } }) &&
+    owner.ownerEvidenceLevel !== "business_ambiguous") {
     return {
       verdict: "confirmed_intermediary",
       evidence: owner.sellerEvidence.join("; ") || "linked OLX seller is intermediary",
     };
   }
   // Customer exclusion: exact platform registration year 2026 (not listing dates).
+  // This stays stronger than a Business-account fail-closed and stronger than an owner claim.
   const registrationYear = extractOlxAccountRegistrationYear(html);
   if (sellerRegistrationYearRejectionReason(registrationYear)) {
     return {
       verdict: "seller_registration_year_2026",
       evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+    };
+  }
+  if (owner.ownerEvidenceLevel === "business_ambiguous") {
+    return {
+      // Cache enum has no separate verdict. The evidence prefix is the product reason.
+      verdict: "confirmed_intermediary",
+      evidence: `business_without_positive_owner_evidence; ${owner.sellerEvidence.join("; ")}`,
     };
   }
   // Contract: confirmed_owner requires both sellerType=owner AND platform_confirmed.
@@ -283,6 +292,18 @@ function decisionFromStored(
   token: string,
   profilePolicies: SellerProfilePolicies,
 ): LinkedSellerDecision {
+  if (
+    row.sellerVerdict === "confirmed_intermediary" &&
+    (row.sellerEvidence ?? "").includes("business_without_positive_owner_evidence")
+  ) {
+    return {
+      outcome: "business_without_positive_owner_evidence",
+      drop: true,
+      requested: false,
+      externalId: token,
+      evidence: row.sellerEvidence ?? "business_without_positive_owner_evidence",
+    };
+  }
   if (row.sellerVerdict === "confirmed_intermediary") {
     return {
       outcome: "cache_confirmed_agent",
@@ -583,6 +604,16 @@ function decisionFromClassified(
   const evidence = evidencePrefix
     ? `${evidencePrefix}; ${classified.evidence}`
     : classified.evidence;
+  if (evidence.includes("business_without_positive_owner_evidence")) {
+    return {
+      outcome: "business_without_positive_owner_evidence",
+      drop: true,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
   if (classified.verdict === "confirmed_intermediary") {
     return {
       outcome: "detail_confirmed_agent",
@@ -1033,6 +1064,19 @@ export function createCycleOlxSellerVerifier(options: {
         };
       }
       if (profileProbes >= maxProfileProbes) {
+        const businessAccount =
+          listing.metadata?.olxAccountType === "business" || listing.metadata?.olxIsBusiness === true;
+        // Private keeps the existing evaluated-unknown path. A Business account
+        // must not be sent when the profile budget is already spent.
+        if (businessAccount) {
+          return {
+            outcome: "detail_capacity_deferred",
+            drop: false,
+            requested: false,
+            externalId: target.token,
+            evidence: `olx_profile_probe_cap=${maxProfileProbes}`,
+          };
+        }
         const capped: { verdict: StoredSellerVerdict; evidence: string } = {
           verdict: "unknown",
           evidence: `olx_profile_probe_cap=${maxProfileProbes}`,

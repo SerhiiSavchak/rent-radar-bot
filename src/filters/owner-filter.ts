@@ -5,11 +5,17 @@ import {
   hasExplicitSelfDeclaredOwnerText,
   hasMisleadingOwnerSeekingText,
   hasOwnerText,
+  hasStrongBareOwnerDeclaration,
   type SellerTextLevel,
 } from "../utils/text-evidence.ts";
 
 export type OwnerEvidenceLevel =
-  "platform_confirmed" | "self_declared" | "private_unknown" | "intermediary" | "conflict";
+  | "platform_confirmed"
+  | "self_declared"
+  | "private_unknown"
+  | "intermediary"
+  | "conflict"
+  | "business_ambiguous";
 
 export type SellerPolicy = "reject_intermediaries" | "owner_only";
 
@@ -26,7 +32,8 @@ export type SellerEvidenceItem = {
  * Conceptual seller states. Delivery still follows `isSellerEligible`.
  * `likely_agent` is reserved for a weak intermediary hint that must stay sendable.
  * v1 does not emit it for soft heuristics (e.g. LUN external site name alone).
- * Trusted OLX Business (`isBusiness` / `platformBusiness`) is `confirmed_agent`.
+ * Explicit platform seller role `platformBusiness` is `confirmed_agent`.
+ * OLX account type `isBusiness` is context only and is not `confirmed_agent`.
  * Evidence the existing gate already treats as an explicit intermediary is `confirmed_agent`.
  */
 export type SellerAssessmentState =
@@ -73,8 +80,10 @@ export type OwnerSignals = {
   /** Profile / company / seller display name — judged in identity-name context. */
   sellerIdentityName?: string | null | undefined;
   /**
-   * Trusted OLX account-type flag (`offer.isBusiness` / `offer.business`).
-   * Asymmetric: true is strong commercial evidence; false is Private and never ownership.
+   * OLX account/catalog type (`offer.isBusiness` / `offer.business` /
+   * `search[private_business]=business`). Context and risk only.
+   * True is not a seller role and is not intermediary proof.
+   * False is Private and never ownership.
    */
   isBusiness?: boolean | undefined;
   withoutCommission?: boolean | undefined;
@@ -139,9 +148,10 @@ function emptyClassification(
  * Contract: `sellerType === "owner"` is set only from trusted `platformOwner` and is
  * always paired with `ownerEvidenceLevel === "platform_confirmed"`. Free text and
  * Private account type cannot produce either field.
- * Trusted OLX Business (`platformBusiness` or `isBusiness`) is strong commercial
- * reject evidence under `reject_intermediaries`. Private (`platformPrivate`) never
- * implies ownership.
+ * Explicit platform role `platformBusiness` is strong commercial reject evidence.
+ * OLX account type `isBusiness` is not. A Business account without positive owner
+ * evidence is `business_ambiguous` and fails closed. Private (`platformPrivate`)
+ * never implies ownership.
  */
 function pushItem(items: SellerEvidenceItem[], item: SellerEvidenceItem): void {
   items.push(item);
@@ -154,8 +164,8 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     pushItem(items, { source: "adapter", type: "note", value: note, strength: "context" });
   }
   const text = signals.text;
-  const trustedBusiness =
-    signals.platformBusiness === true || signals.isBusiness === true;
+  const trustedBusiness = signals.platformBusiness === true;
+  const businessAccount = signals.isBusiness === true;
 
   if (signals.platformOwner === true) {
     evidence.push("platform seller type = owner");
@@ -190,13 +200,13 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   }
   if (signals.isBusiness === true) {
     evidence.push(
-      "platform account type = business (trusted commercial/intermediary evidence)",
+      "OLX account type = business (catalog context, not a seller role and not realtor proof)",
     );
     pushItem(items, {
       source: "account",
       type: "business_flag",
       value: "true",
-      strength: "strong",
+      strength: "context",
     });
   }
   if (signals.offerTypeLabel) {
@@ -313,7 +323,10 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   const explicitIntermediaryRole =
     signals.platformAgent === true || trustedBusiness || agency || agentCopy;
   const ownerClaim = hasExplicitSelfDeclaredOwnerText(text);
-  const selfDeclared = ownerClaim && !explicitIntermediaryRole && judged.level !== "likely";
+  const businessOwnerClaim =
+    businessAccount && hasStrongBareOwnerDeclaration(text) && !hasMisleadingOwnerSeekingText(text);
+  const selfDeclared =
+    (ownerClaim || businessOwnerClaim) && !explicitIntermediaryRole && judged.level !== "likely";
   const textLevel =
     judged.level === "likely" && !explicitIntermediaryRole ? "likely" : judged.level;
   const aggregatorOwner = signals.aggregatorOwner === true;
@@ -380,6 +393,16 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
     });
   }
 
+  if (businessAccount) {
+    uniqueEvidence.push(
+      "OLX business account has no positive owner evidence (fail closed)",
+    );
+    return emptyClassification("unknown", "business_ambiguous", uniqueEvidence, items, {
+      confidence: "medium",
+      sellerTextLevel: textLevel === "likely" ? "likely" : "unknown",
+    });
+  }
+
   if (signals.platformPrivate === true) {
     return emptyClassification("unknown", "private_unknown", uniqueEvidence, items, {
       sellerTextLevel: textLevel === "likely" ? "likely" : "unknown",
@@ -414,10 +437,13 @@ export function sellerAssessmentFromClassification(
     state = "confirmed_agent";
   } else if (classification.ownerEvidenceLevel === "self_declared") {
     state = "likely_owner";
+  } else if (classification.ownerEvidenceLevel === "business_ambiguous") {
+    state = "unknown";
   } else {
     state = "unknown";
   }
-  const send = state !== "confirmed_agent";
+  const send =
+    state !== "confirmed_agent" && classification.ownerEvidenceLevel !== "business_ambiguous";
   return {
     state,
     confidence: classification.confidence,
@@ -480,7 +506,8 @@ export function sellerAssessmentFromListing(listing: {
     level === "self_declared" ||
     level === "private_unknown" ||
     level === "intermediary" ||
-    level === "conflict"
+    level === "conflict" ||
+    level === "business_ambiguous"
       ? level
       : "private_unknown";
   const assessment = sellerAssessmentFromClassification({
@@ -554,6 +581,9 @@ export function sellerRejectionReason(listing: {
   }
   if (listing.sellerType === "business") {
     return "platform_business_role";
+  }
+  if (level === "business_ambiguous") {
+    return "business_without_positive_owner_evidence";
   }
   return undefined;
 }

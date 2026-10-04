@@ -36,7 +36,7 @@ function sellerSignals(offer: OlxOffer) {
   }
   if (offer.business === true) {
     extra.unshift(
-      "OLX isBusiness/business = true (trusted commercial/intermediary account type)",
+      "OLX isBusiness/business = true (account/catalog type, not a seller role)",
     );
   }
   if (userSellerType) {
@@ -54,7 +54,7 @@ function sellerSignals(offer: OlxOffer) {
       lowerSellerType === "agent" ||
       lowerSellerType === "agency" ||
       lowerSellerType === "intermediary",
-    platformBusiness: lowerSellerType === "business" || offer.business === true,
+    platformBusiness: lowerSellerType === "business",
     platformPrivate: offer.business === false,
     isBusiness: offer.business === true,
     agencyName: company,
@@ -179,7 +179,11 @@ function buildListingFromOffer(offer: OlxOffer, discoveredAt: Date): Listing | u
       ...(showDetailed === false ? { coordinatesApproximate: true } : {}),
       ...(offer.last_refresh_time ? { lastRefreshTime: offer.last_refresh_time } : {}),
       ...(offer.pushup_time ? { pushupTime: offer.pushup_time } : {}),
-      ...(offer.business !== undefined ? { olxIsBusiness: offer.business } : {}),
+      ...(offer.business === true
+        ? { olxIsBusiness: true, olxAccountType: "business" }
+        : offer.business === false
+          ? { olxIsBusiness: false, olxAccountType: "private" }
+          : {}),
       ...((offer as { is_promoted?: boolean }).is_promoted === true
         ? { olxIsPromoted: true }
         : {}),

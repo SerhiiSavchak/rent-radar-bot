@@ -8,7 +8,7 @@ import {
   defaultMaxPublicationAgeMinutes,
 } from "../../delivery/listing-freshness.ts";
 import type { Listing } from "../../domain/listing.ts";
-import { isSellerEligible, sellerDecisionBucket } from "../../filters/owner-filter.ts";
+import { isSellerEligible, sellerDecisionBucket, sellerRejectionReason } from "../../filters/owner-filter.ts";
 import { diagnoseOlxOfferParse, parseOlxOffer } from "./olx.parser.ts";
 import { olxOfferSchema } from "./olx.types.ts";
 
@@ -757,7 +757,7 @@ function eligibilityCounts(
       ownerEligibleCount += 1;
     }
     if (!isSellerEligible(listing)) {
-      bump(ownerRejectionReasonCounts, "explicit_intermediary");
+      bump(ownerRejectionReasonCounts, sellerRejectionReason(listing) ?? "explicit_intermediary");
     } else {
       const bucket = sellerDecisionBucket(listing);
       if (bucket === "unknown") {
