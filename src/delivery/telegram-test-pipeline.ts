@@ -1,5 +1,5 @@
 import type { Listing, ListingSource } from "../domain/listing.ts";
-import type { FetchListingsOptions, ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
+import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
 import { usesOwnerOnlySourceFilter, type AppConfig } from "../config/env.ts";
 import { applyListingFilters } from "../filters/listing-filter.ts";
 import { sellerDecisionBucket, sellerRejectionReason } from "../filters/owner-filter.ts";
@@ -34,11 +34,11 @@ import {
 } from "../sources/rieltor/rieltor-incremental.ts";
 import {
   formatOlxCoverage,
-  olxBusinessRollingKey,
+  OLX_BUSINESS_LAST_FULL_SCAN_KEY,
   olxCatchupKey,
   olxPublicationBoundaryKey,
-  parseOlxBusinessRolling,
-  serializeOlxBusinessRolling,
+  parseOlxBusinessLastFullScanAt,
+  RETIRED_OLX_BUSINESS_ROLLING_KEYS,
   type OlxBrowserCategoryName,
 } from "../sources/olx/olx-browser.coverage.ts";
 import {
@@ -988,29 +988,18 @@ export async function runTelegramTestCycle(
         adapter.source === "domria"
           ? parseDomriaAcquiredIds(readMetaValue(DOMRIA_ACQUIRED_IDS_KEY))
           : undefined;
-      const apartmentRolling =
+      const olxBusinessLastFullScanAt =
         adapter.source === "olx"
-          ? parseOlxBusinessRolling(readMetaValue(olxBusinessRollingKey("apartments")))
+          ? parseOlxBusinessLastFullScanAt(readMetaValue(OLX_BUSINESS_LAST_FULL_SCAN_KEY))
           : undefined;
-      const houseRolling =
-        adapter.source === "olx"
-          ? parseOlxBusinessRolling(readMetaValue(olxBusinessRollingKey("houses")))
-          : undefined;
-      const olxBusinessRolling: NonNullable<FetchListingsOptions["olxBusinessRolling"]> = {};
-      if (apartmentRolling) {
-        olxBusinessRolling.apartments = apartmentRolling;
-      }
-      if (houseRolling) {
-        olxBusinessRolling.houses = houseRolling;
-      }
       const result: SourceFetchResult = await adapter.inspectLatest({
         preferOwners: usesOwnerOnlySourceFilter(deps.config),
         ...(publicationWatermarks ? { publicationWatermarks } : {}),
         ...(rieltorCatchup ? { rieltorCatchup } : {}),
         ...(rieltorBootstrapTarget ? { rieltorBootstrapTarget } : {}),
         ...(domriaKnownIds && domriaKnownIds.length > 0 ? { domriaKnownIds } : {}),
-        ...(olxBusinessRolling.apartments || olxBusinessRolling.houses
-          ? { olxBusinessRolling }
+        ...(olxBusinessLastFullScanAt
+          ? { olxBusinessLastFullScanAt: olxBusinessLastFullScanAt.toISOString() }
           : {}),
       });
       const classified = classifySourceAttempt(adapter.source, result);
@@ -1090,15 +1079,17 @@ export async function runTelegramTestCycle(
         for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
           deleteMeta.run(olxCatchupKey(category));
           deleteMeta.run(olxPublicationBoundaryKey(category));
-          if (!result.coverage.olxBusinessRolling || !(category in result.coverage.olxBusinessRolling)) {
-            continue;
-          }
-          const rolling = result.coverage.olxBusinessRolling[category];
-          if (rolling) {
-            writeMeta.run(olxBusinessRollingKey(category), serializeOlxBusinessRolling(rolling));
-          } else if (rolling === null) {
-            deleteMeta.run(olxBusinessRollingKey(category));
-          }
+        }
+        for (const key of RETIRED_OLX_BUSINESS_ROLLING_KEYS) {
+          deleteMeta.run(key);
+        }
+        // Hot cycles and failed snapshots omit the timestamp. Do not clear a
+        // previous success, and do not write one unless this snapshot completed.
+        if (
+          !result.coverage.coverageTruncated &&
+          result.coverage.olxBusinessLastFullScanAt
+        ) {
+          writeMeta.run(OLX_BUSINESS_LAST_FULL_SCAN_KEY, result.coverage.olxBusinessLastFullScanAt);
         }
       }
       const collectedIds = collectedSourceIdsForLog(result.listings);

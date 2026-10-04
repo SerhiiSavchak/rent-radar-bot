@@ -50,153 +50,92 @@ export const OLX_PRIVATE_TOTAL_BUDGET_MS = 360_000;
 export const OLX_PRIVATE_HOUSE_RESERVE_MS = 90_000;
 
 /**
- * One cycle keeps the full Private catalog (~140 apartments) plus one Business
- * hot page and 8 continuation pages (~50 cards each). 800 stays above that
- * combined set and still rejects a runaway payload.
+ * One cycle keeps the full Private catalog plus one complete Business apartment
+ * snapshot (~1000 cards at the current 25-page size) or a hot page. 2500 stays
+ * above that set and still rejects a runaway payload. Truncation is incomplete
+ * coverage and must not be recorded as a successful Business snapshot.
  */
-export const OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY = 800;
+export const OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY = 2500;
 
-/** Business apartment pages after page 1, fetched each poll. Page 1 is extra. */
-export const OLX_BUSINESS_CONTINUATION_PAGE_BUDGET = 8;
-
-/**
- * Business houses at or under this declared size are fetched whole every cycle.
- * Larger house catalogs use the same rolling cursor as apartments.
- */
-export const OLX_BUSINESS_HOUSE_FULL_SCAN_MAX_PAGES = 4;
+/** How often a complete Business apartment snapshot is due. */
+export const OLX_BUSINESS_FULL_SCAN_INTERVAL_MS = 30 * 60 * 1000;
 
 export const OLX_BUSINESS_POLL_INTERVAL_MINUTES = 10;
 export const OLX_BUSINESS_COVERAGE_TARGET_MINUTES = 30;
 export const OLX_BUSINESS_COVERAGE_UNSAFE_MINUTES = 60;
 
-export type OlxBusinessRollingState = {
-  resumePage: number;
-};
+/**
+ * Houses at or under this size are fetched whole on every poll.
+ * Larger house catalogs are still fetched in one session while they stay
+ * under the safety ceiling. There is no cross-cycle house page cursor.
+ */
+export const OLX_BUSINESS_HOUSE_ROUTINE_MAX_PAGES = 4;
 
-export function olxBusinessRollingKey(category: OlxBrowserCategoryName): string {
-  return `olx_business_rolling_${category}`;
-}
+/**
+ * Hard stop for one Business walk. Current live apartments are 25 pages.
+ * 40 leaves headroom without an unbounded crawl. Above this, coverage is
+ * degraded and the full-scan timestamp is not written.
+ */
+export const OLX_BUSINESS_APARTMENT_PAGE_CEILING = 40;
+export const OLX_BUSINESS_HOUSE_PAGE_CEILING = 40;
 
-export function parseOlxBusinessRolling(raw: string | undefined): OlxBusinessRollingState | undefined {
+/** schema_meta key. Value is an ISO timestamp, written only after a complete snapshot. */
+export const OLX_BUSINESS_LAST_FULL_SCAN_KEY = "olx_business_last_full_scan_at";
+
+/**
+ * Retired keys from the cross-cycle page cursor. Production deletes them.
+ * They are not coverage.
+ */
+export const RETIRED_OLX_BUSINESS_ROLLING_KEYS = [
+  "olx_business_rolling_apartments",
+  "olx_business_rolling_houses",
+] as const;
+
+export function parseOlxBusinessLastFullScanAt(raw: string | undefined): Date | undefined {
   if (!raw) {
     return undefined;
   }
-  try {
-    const parsed = JSON.parse(raw) as { resumePage?: unknown };
-    const resumePage = Number(parsed.resumePage);
-    if (!Number.isInteger(resumePage) || resumePage < 2) {
-      return undefined;
-    }
-    return { resumePage };
-  } catch {
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
     return undefined;
   }
+  return parsed;
 }
 
-export function serializeOlxBusinessRolling(state: OlxBusinessRollingState): string {
-  return JSON.stringify({ resumePage: state.resumePage });
+/** No previous success, or the last success is at least 30 minutes old. */
+export function isOlxBusinessFullScanDue(lastFullScanAt: Date | undefined, now: Date): boolean {
+  if (!lastFullScanAt) {
+    return true;
+  }
+  return now.getTime() - lastFullScanAt.getTime() >= OLX_BUSINESS_FULL_SCAN_INTERVAL_MS;
 }
 
-export function normalizeOlxBusinessResumePage(resumePage: number | undefined): number {
-  if (!Number.isInteger(resumePage) || (resumePage ?? 0) < 2) {
-    return 2;
-  }
-  return resumePage as number;
-}
-
-/** Pages 2..totalPages. Page 1 is never part of this cursor. */
-export function planOlxBusinessContinuation(
-  resumePage: number | undefined,
-  totalPages: number,
-  budget = OLX_BUSINESS_CONTINUATION_PAGE_BUDGET,
-): number[] {
-  if (!Number.isInteger(totalPages) || totalPages <= 1 || budget < 1) {
-    return [];
-  }
-  let start = normalizeOlxBusinessResumePage(resumePage);
-  if (start > totalPages) {
-    start = 2;
-  }
-  const pages: number[] = [];
-  for (let page = start; page <= totalPages && pages.length < budget; page += 1) {
-    pages.push(page);
-  }
-  return pages;
-}
-
-export function advanceOlxBusinessResume(input: {
-  plannedContinuation: number[];
-  fetchedContinuation: number[];
-  expectedPages: number;
-}): { resumePage: number; completedPlanned: boolean } {
-  if (input.plannedContinuation.length === 0) {
-    return { resumePage: 2, completedPlanned: true };
-  }
-  for (const page of input.plannedContinuation) {
-    if (!input.fetchedContinuation.includes(page)) {
-      return { resumePage: page, completedPlanned: false };
-    }
-  }
-  const last = input.plannedContinuation[input.plannedContinuation.length - 1] ?? 2;
-  const next = last + 1;
-  if (next > input.expectedPages) {
-    return { resumePage: 2, completedPlanned: true };
-  }
-  return { resumePage: next, completedPlanned: true };
-}
-
-export function assessOlxBusinessCoverageHorizon(
-  totalPages: number,
-  continuationPageBudget = OLX_BUSINESS_CONTINUATION_PAGE_BUDGET,
-  pollIntervalMinutes = OLX_BUSINESS_POLL_INTERVAL_MINUTES,
+export function assessOlxBusinessFullScanAge(
+  lastFullScanAt: Date | undefined,
+  now: Date,
 ): {
-  continuationPages: number;
-  continuationPageBudget: number;
-  cyclesToFullCoverage: number;
-  coverageMinutes: number;
+  lastFullScanAt: string | null;
+  ageMinutes: number | null;
+  due: boolean;
   degraded: boolean;
   unsafe: boolean;
 } {
-  const continuationPages = Math.max(0, Math.floor(totalPages) - 1);
-  const budget = Math.max(1, continuationPageBudget);
-  const cyclesToFullCoverage =
-    continuationPages === 0 ? 0 : Math.ceil(continuationPages / budget);
-  const coverageMinutes = cyclesToFullCoverage * pollIntervalMinutes;
-  return {
-    continuationPages,
-    continuationPageBudget: budget,
-    cyclesToFullCoverage,
-    coverageMinutes,
-    degraded: coverageMinutes > OLX_BUSINESS_COVERAGE_TARGET_MINUTES,
-    unsafe: coverageMinutes >= OLX_BUSINESS_COVERAGE_UNSAFE_MINUTES,
-  };
-}
-
-export function simulateOlxBusinessApartmentSweep(
-  totalPages: number,
-  cycles: number,
-  budget = OLX_BUSINESS_CONTINUATION_PAGE_BUDGET,
-): { pagesByCycle: number[][]; coveredPages: number[]; resumePage: number } {
-  let resumePage = 2;
-  const pagesByCycle: number[][] = [];
-  const covered = new Set<number>();
-  for (let cycle = 0; cycle < cycles; cycle += 1) {
-    const continuation = planOlxBusinessContinuation(resumePage, totalPages, budget);
-    const pages = totalPages >= 1 ? [1, ...continuation] : [];
-    pagesByCycle.push(pages);
-    for (const page of pages) {
-      covered.add(page);
-    }
-    resumePage = advanceOlxBusinessResume({
-      plannedContinuation: continuation,
-      fetchedContinuation: continuation,
-      expectedPages: totalPages,
-    }).resumePage;
+  if (!lastFullScanAt) {
+    return {
+      lastFullScanAt: null,
+      ageMinutes: null,
+      due: true,
+      degraded: true,
+      unsafe: true,
+    };
   }
+  const ageMinutes = (now.getTime() - lastFullScanAt.getTime()) / 60_000;
   return {
-    pagesByCycle,
-    coveredPages: [...covered].sort((left, right) => left - right),
-    resumePage,
+    lastFullScanAt: lastFullScanAt.toISOString(),
+    ageMinutes,
+    due: ageMinutes >= OLX_BUSINESS_COVERAGE_TARGET_MINUTES,
+    degraded: ageMinutes > OLX_BUSINESS_COVERAGE_TARGET_MINUTES,
+    unsafe: ageMinutes >= OLX_BUSINESS_COVERAGE_UNSAFE_MINUTES,
   };
 }
 
@@ -277,7 +216,15 @@ export function assessOlxOrderIndependentFullScan(input: {
 }
 
 /**
- * Model miss risk when the catalog reshuffles while a forward page walk runs.
+ * Evidence against treating an offset/page cursor as catalog coverage.
+ * OLX pagination is non-monotone. A listing can move onto an already-skipped
+ * page, and HTML createdTime order is not a verified newest-first walk.
+ *
+ * Pages 2–9, then 10–17, then 18–25 collected on three polls are NOT one
+ * complete catalog. Production Business coverage is a same-cycle snapshot of
+ * every declared page. These helpers exist so that claim cannot return
+ * without revisiting the miss.
+ *
  * A listing inserted on page 1 after the walker left page 1 is missed in-scan.
  */
 export function olxForwardScanMissesInsertedOnPage1(input: {

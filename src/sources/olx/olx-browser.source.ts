@@ -21,6 +21,7 @@ import {
   type OlxBrowserExtractDeps,
   type OlxBrowserExtractResult,
   type OlxBusinessCategoryScan,
+  type OlxBusinessFullScanReport,
 } from "./olx-browser.extract.ts";
 import {
   buildOlxBrowserCategoryUrl,
@@ -67,14 +68,34 @@ function businessDiagnosticNotes(
   if (!scan) {
     return [];
   }
-  const degraded = scan.horizon?.degraded === true || scan.horizon?.unsafe === true || scan.status !== "complete";
+  const degraded =
+    scan.status !== "complete" ||
+    scan.ceilingExceeded ||
+    (scan.mode === "full" && !scan.fullCoverage);
   return [
+    `business${label}Mode=${scan.mode}`,
+    `business${label}FullCoverage=${scan.fullCoverage}`,
     `business${label}TotalPages=${scan.expectedPages ?? "none"}`,
     `business${label}PagesFetchedThisCycle=${scan.fetchedPages.join(",") || "none"}`,
-    `business${label}ResumePage=${scan.resumePageAfter ?? "unchanged"}`,
-    `business${label}CyclesToFullCoverage=${scan.horizon?.cyclesToFullCoverage ?? "none"}`,
-    `business${label}CoverageMinutes=${scan.horizon?.coverageMinutes ?? "none"}`,
+    `business${label}CeilingExceeded=${scan.ceilingExceeded}`,
     `business${label}CoverageDegraded=${degraded}`,
+  ];
+}
+
+function businessScheduleNotes(report: OlxBusinessFullScanReport | undefined): string[] {
+  if (!report) {
+    return [];
+  }
+  return [
+    `businessApartmentMode=${report.apartmentMode}`,
+    `businessApartmentFullCoverage=${report.apartmentFullCoverage}`,
+    `businessLastFullScanAt=${report.lastFullScanAt ?? "none"}`,
+    `businessFullScanAgeMinutes=${report.ageMinutes === null ? "none" : String(report.ageMinutes)}`,
+    `businessFullScanDue=${report.due}`,
+    `businessFullScanSucceeded=${report.succeeded}`,
+    `businessFullScanPagesExpected=${report.pagesExpected ?? "none"}`,
+    `businessFullScanPagesFetched=${report.pagesFetched}`,
+    `businessFullScanAgeStatus=${report.ageStatus}`,
   ];
 }
 
@@ -139,8 +160,8 @@ export function mapOlxBrowserExtractToFetchResult(
             ? { committedBoundary: walkCoverage.committedBoundary }
             : {}),
           ...(walkCoverage?.catchup ? { catchup: walkCoverage.catchup } : {}),
-          ...(walkCoverage?.olxBusinessRolling
-            ? { olxBusinessRolling: walkCoverage.olxBusinessRolling }
+          ...(allowCommit && walkCoverage?.olxBusinessLastFullScanAt
+            ? { olxBusinessLastFullScanAt: walkCoverage.olxBusinessLastFullScanAt }
             : {}),
         }
       : undefined;
@@ -183,6 +204,7 @@ export function mapOlxBrowserExtractToFetchResult(
     ...result.notes.slice(0, 10),
     ...businessDiagnosticNotes(businessScan?.apartments, "Apartments"),
     ...businessDiagnosticNotes(businessScan?.houses, "Houses"),
+    ...businessScheduleNotes(result.businessFullScan),
   ];
 
   return {
@@ -245,20 +267,14 @@ export class OlxBrowserSource implements ListingSourceAdapter {
     const budgets = resolveOlxBrowserBudgets();
     const extract = this.deps.extract ?? extractOlxListingsViaBrowser;
     // Publication watermarks are not collection inputs. Private walks totalPages.
-    // Business apartments use the persisted continuation cursor.
-    const rolling = options?.olxBusinessRolling;
+    // Business apartments use the last successful snapshot time, not a page cursor.
     const result = await extract({
       timeoutMs: this.deps.timeoutMs ?? budgets.timeoutMs,
       categoryBudgetMs: this.deps.categoryBudgetMs ?? budgets.categoryBudgetMs,
       totalBudgetMs: this.deps.totalBudgetMs ?? budgets.totalBudgetMs,
       now: this.deps.now ?? (() => new Date()),
-      ...(rolling
-        ? {
-            businessRolling: {
-              ...(rolling.apartments ? { apartments: rolling.apartments } : {}),
-              ...(rolling.houses ? { houses: rolling.houses } : {}),
-            },
-          }
+      ...(options?.olxBusinessLastFullScanAt
+        ? { businessLastFullScanAt: options.olxBusinessLastFullScanAt }
         : {}),
     });
     const mapped = mapOlxBrowserExtractToFetchResult(result, {

@@ -18,13 +18,16 @@ import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
 import { sellerRegistrationYearRejectionReason } from "../src/sources/olx/olx-account-registration.ts";
 import {
-  advanceOlxBusinessResume,
-  assessOlxBusinessCoverageHorizon,
+  assessOlxBusinessFullScanAge,
   buildOlxBrowserCategoryUrl,
-  olxBusinessRollingKey,
+  isOlxBusinessFullScanDue,
+  OLX_BUSINESS_APARTMENT_PAGE_CEILING,
+  OLX_BUSINESS_FULL_SCAN_INTERVAL_MS,
+  OLX_BUSINESS_LAST_FULL_SCAN_KEY,
   olxCatchupKey,
-  planOlxBusinessContinuation,
-  simulateOlxBusinessApartmentSweep,
+  olxForwardScanMissesInsertedOnPage1,
+  olxPageCursorResumeMisses,
+  RETIRED_OLX_BUSINESS_ROLLING_KEYS,
 } from "../src/sources/olx/olx-browser.coverage.ts";
 import { extractOlxListingsViaBrowser } from "../src/sources/olx/olx-browser.extract.ts";
 import {
@@ -229,7 +232,7 @@ describe("audit fixtures", () => {
   });
 });
 
-describe("business rolling schedule", () => {
+describe("business full snapshot schedule", () => {
   it("requests private and business catalogs separately", () => {
     expect(new URL(buildOlxBrowserCategoryUrl("apartments")).searchParams.get("search[private_business]")).toBe(
       "private",
@@ -245,46 +248,56 @@ describe("business rolling schedule", () => {
     ).toBe("2");
   });
 
-  it("covers 25 apartment pages in 3 cycles and then wraps to page 2", () => {
-    const sweep = simulateOlxBusinessApartmentSweep(25, 3);
-    expect(sweep.pagesByCycle[0]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    expect(sweep.pagesByCycle[1]).toEqual([1, 10, 11, 12, 13, 14, 15, 16, 17]);
-    expect(sweep.pagesByCycle[2]).toEqual([1, 18, 19, 20, 21, 22, 23, 24, 25]);
-    expect(sweep.coveredPages).toEqual(Array.from({ length: 25 }, (_, index) => index + 1));
-    expect(sweep.resumePage).toBe(2);
-    const horizon = assessOlxBusinessCoverageHorizon(25);
-    expect(horizon.continuationPages).toBe(24);
-    expect(horizon.cyclesToFullCoverage).toBe(3);
-    expect(horizon.coverageMinutes).toBe(30);
-    expect(horizon.degraded).toBe(false);
-    expect(horizon.unsafe).toBe(false);
+  it("treats a missing successful snapshot as due", () => {
+    expect(isOlxBusinessFullScanDue(undefined, NOW)).toBe(true);
+    expect(assessOlxBusinessFullScanAge(undefined, NOW)).toMatchObject({
+      due: true,
+      degraded: true,
+      unsafe: true,
+      ageMinutes: null,
+    });
   });
 
-  it("does not advance the cursor past a page that was not read", () => {
-    const planned = planOlxBusinessContinuation(10, 25);
-    expect(planned).toEqual([10, 11, 12, 13, 14, 15, 16, 17]);
-    expect(
-      advanceOlxBusinessResume({
-        plannedContinuation: planned,
-        fetchedContinuation: [10, 11, 12],
-        expectedPages: 25,
-      }),
-    ).toEqual({ resumePage: 13, completedPlanned: false });
-  });
-
-  it("marks a horizon above 30 minutes degraded and a 60 minute horizon unsafe", () => {
-    const degraded = assessOlxBusinessCoverageHorizon(26);
-    expect(degraded.coverageMinutes).toBe(40);
-    expect(degraded.degraded).toBe(true);
-    expect(degraded.unsafe).toBe(false);
-    const unsafe = assessOlxBusinessCoverageHorizon(49);
-    expect(unsafe.coverageMinutes).toBe(60);
+  it("is hot at 10 and 20 minutes and due again at 30", () => {
+    const success = NOW;
+    expect(isOlxBusinessFullScanDue(success, new Date(NOW.getTime() + 10 * 60 * 1000))).toBe(false);
+    expect(isOlxBusinessFullScanDue(success, new Date(NOW.getTime() + 20 * 60 * 1000))).toBe(false);
+    expect(isOlxBusinessFullScanDue(success, new Date(NOW.getTime() + OLX_BUSINESS_FULL_SCAN_INTERVAL_MS))).toBe(true);
+    const atThirty = assessOlxBusinessFullScanAge(success, new Date(NOW.getTime() + 30 * 60 * 1000));
+    expect(atThirty.due).toBe(true);
+    expect(atThirty.degraded).toBe(false);
+    expect(atThirty.ageMinutes).toBe(30);
+    const overdue = assessOlxBusinessFullScanAge(success, new Date(NOW.getTime() + 31 * 60 * 1000));
+    expect(overdue.degraded).toBe(true);
+    expect(overdue.unsafe).toBe(false);
+    const unsafe = assessOlxBusinessFullScanAge(success, new Date(NOW.getTime() + 60 * 60 * 1000));
     expect(unsafe.unsafe).toBe(true);
     expect(unsafe.degraded).toBe(true);
   });
+
+  it("does not treat pages 2-9, 10-17, and 18-25 across polls as one complete catalog", () => {
+    const movedOntoSkippedPage = olxPageCursorResumeMisses({
+      resumePage: 10,
+      idsNowOnSkippedPages: ["moved-onto-page-3"],
+      idsAlreadyStored: new Set(["seen-on-first-poll"]),
+    });
+    expect(movedOntoSkippedPage).toEqual(["moved-onto-page-3"]);
+    const insertedAfterPage1 = olxForwardScanMissesInsertedOnPage1({
+      walkedPagesInOrder: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      idsByPageAtWalkTime: { 1: ["already-walked"] },
+      latePage1InsertIds: ["inserted-after-page-1"],
+    });
+    expect(insertedAfterPage1.missedIds).toEqual(["inserted-after-page-1"]);
+    const secondWindow = olxPageCursorResumeMisses({
+      resumePage: 18,
+      idsNowOnSkippedPages: ["now-on-page-12"],
+      idsAlreadyStored: new Set<string>(),
+    });
+    expect(secondWindow).toEqual(["now-on-page-12"]);
+  });
 });
 
-describe("business rolling persistence and first enable", () => {
+describe("business snapshot persistence and first enable", () => {
   const dir = mkdtempSync(join(tmpdir(), "olx-business-rolling-"));
   let fileIndex = 0;
 
@@ -298,133 +311,156 @@ describe("business rolling persistence and first enable", () => {
     return join(dir, `case-${fileIndex}.sqlite`);
   }
 
-  it("persists the apartment cursor without touching private keys and resumes after restart", async () => {
+  function readStamp(db: DatabaseSync): string | undefined {
+    const row = db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(OLX_BUSINESS_LAST_FULL_SCAN_KEY) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  it("persists a successful snapshot, stays hot, retries a failure, and keeps the stamp across restart", async () => {
     const path = dbPath();
     const db = new DatabaseSync(path);
     applyMigrations(db);
+    for (const key of RETIRED_OLX_BUSINESS_ROLLING_KEYS) {
+      db.prepare("INSERT INTO schema_meta (key, value) VALUES (?, ?)").run(key, JSON.stringify({ resumePage: 10 }));
+    }
     const store = new DurableDeliveryStore(db);
-    const seen: Array<{ resume: number | "absent" }> = [];
+    const seen: Array<{ due: boolean; last: string | null }> = [];
+    let failFullScan = false;
+    let optionsNow = NOW;
     const olx: ListingSourceAdapter = {
       source: "olx",
       fetchLatest: async () => [],
       healthCheck: async () => ({ source: "olx", healthy: true, checkedAt: NOW }),
       inspectLatest: async (options) => {
-        const stored = options?.olxBusinessRolling?.apartments?.resumePage;
-        seen.push({ resume: stored ?? "absent" });
-        const resume = stored ?? 2;
+        const last = options?.olxBusinessLastFullScanAt ?? null;
+        const due = isOlxBusinessFullScanDue(last ? new Date(last) : undefined, optionsNow);
+        seen.push({ due, last });
+        const success = due && !failFullScan;
         return {
           listings: [olxListing("apt-1", { publishedAt: new Date("2020-01-01T00:00:00.000Z") })],
           transport: "stock_playwright_chromium",
-          dataKind: "FIXTURE DATA",
-          resultKind: "ok",
+          dataKind: "FIXTURE DATA" as const,
+          resultKind: "ok" as const,
           coverage: {
-            pagesFetched: 9,
+            pagesFetched: success ? 25 : 1,
             cardsFetched: 1,
-            boundaryReached: true,
-            coverageTruncated: false,
-            olxBusinessRolling: { apartments: { resumePage: resume + 8 } },
+            boundaryReached: success || !due,
+            coverageTruncated: due && !success,
+            ...(success ? { olxBusinessLastFullScanAt: optionsNow.toISOString() } : {}),
           },
-          health: { source: "olx", healthy: true, checkedAt: NOW, resultKind: "ok" },
+          health: { source: "olx" as const, healthy: success || !due, checkedAt: optionsNow, resultKind: "ok" as const },
         };
       },
     };
-    await runTelegramTestCycle(
-      {
-        adapters: [olx],
-        config: config(),
-        sink: drySink(),
-        dedupe: store,
-        baseline: store,
-        outbox: store,
-        now: () => NOW,
-        firstRunMode: "seed",
-      },
-      1,
-    );
-    expect(seen[0]?.resume).toBe("absent");
-    expect(db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxCatchupKey("apartments"))).toBeUndefined();
-    expect(
-      db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxBusinessRollingKey("apartments")),
-    ).toEqual({ value: JSON.stringify({ resumePage: 10 }) });
+    const run = (cycle: number) =>
+      runTelegramTestCycle(
+        {
+          adapters: [olx],
+          config: config(),
+          sink: drySink(),
+          dedupe: store,
+          baseline: store,
+          outbox: store,
+          now: () => optionsNow,
+          firstRunMode: "seed",
+        },
+        cycle,
+      );
 
-    await runTelegramTestCycle(
-      {
-        adapters: [olx],
-        config: config(),
-        sink: drySink(),
-        dedupe: store,
-        baseline: store,
-        outbox: store,
-        now: () => new Date(NOW.getTime() + 60_000),
-        firstRunMode: "seed",
-      },
-      2,
-    );
-    expect(seen[1]?.resume).toBe(10);
-    expect(
-      JSON.parse(
-        (db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxBusinessRollingKey("apartments")) as { value: string })
-          .value,
-      ).resumePage,
-    ).toBe(18);
+    await run(1);
+    expect(seen[0]).toEqual({ due: true, last: null });
+    expect(readStamp(db)).toBe(NOW.toISOString());
+    for (const key of RETIRED_OLX_BUSINESS_ROLLING_KEYS) {
+      expect(db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key)).toBeUndefined();
+    }
+    expect(db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxCatchupKey("apartments"))).toBeUndefined();
+
+    optionsNow = new Date(NOW.getTime() + 10 * 60 * 1000);
+    await run(2);
+    expect(seen[1]?.due).toBe(false);
+    expect(seen[1]?.last).toBe(NOW.toISOString());
+    expect(readStamp(db)).toBe(NOW.toISOString());
+
+    optionsNow = new Date(NOW.getTime() + 20 * 60 * 1000);
+    await run(3);
+    expect(seen[2]?.due).toBe(false);
+    expect(readStamp(db)).toBe(NOW.toISOString());
+
+    failFullScan = true;
+    optionsNow = new Date(NOW.getTime() + 30 * 60 * 1000);
+    await run(4);
+    expect(seen[3]?.due).toBe(true);
+    expect(readStamp(db)).toBe(NOW.toISOString());
+
+    failFullScan = false;
+    optionsNow = new Date(NOW.getTime() + 40 * 60 * 1000);
+    await run(5);
+    expect(seen[4]?.due).toBe(true);
+    expect(seen[4]?.last).toBe(NOW.toISOString());
+    expect(readStamp(db)).toBe(optionsNow.toISOString());
+
+    closeDb();
+    const reopened = getDb(path);
+    expect(readStamp(reopened)).toBe(optionsNow.toISOString());
   });
 
-  it("does not advance a cursor when the cycle omits it, and keeps houses apart from apartments", async () => {
+  it("does not move the snapshot timestamp when coverage is truncated, and still keeps other sources", async () => {
     const path = dbPath();
     const db = new DatabaseSync(path);
     applyMigrations(db);
     db.prepare("INSERT INTO schema_meta (key, value) VALUES (?, ?)").run(
-      olxBusinessRollingKey("apartments"),
-      JSON.stringify({ resumePage: 10 }),
-    );
-    db.prepare("INSERT INTO schema_meta (key, value) VALUES (?, ?)").run(
-      olxBusinessRollingKey("houses"),
-      JSON.stringify({ resumePage: 4 }),
+      OLX_BUSINESS_LAST_FULL_SCAN_KEY,
+      NOW.toISOString(),
     );
     const store = new DurableDeliveryStore(db);
     const olx: ListingSourceAdapter = {
       source: "olx",
       fetchLatest: async () => [],
-      healthCheck: async () => ({ source: "olx", healthy: true, checkedAt: NOW }),
+      healthCheck: async () => ({ source: "olx", healthy: false, checkedAt: NOW }),
       inspectLatest: async () => ({
-        listings: [],
+        listings: [olxListing("page-1")],
         transport: "stock_playwright_chromium",
         dataKind: "FIXTURE DATA",
         resultKind: "ok",
         coverage: {
           pagesFetched: 1,
-          cardsFetched: 0,
+          cardsFetched: 1,
           boundaryReached: false,
           coverageTruncated: true,
-          olxBusinessRolling: { houses: { resumePage: 4 } },
         },
         health: { source: "olx", healthy: false, checkedAt: NOW, resultKind: "ok" },
       }),
     };
-    await runTelegramTestCycle(
+    const lunListing: Listing = {
+      source: "lun",
+      sourceId: "lun-keep",
+      url: "https://lun.ua/uk/realty/lun-keep",
+      title: "Квартира",
+      location: { raw: "Львів", city: "Львів", latitude: 49.84, longitude: 24.03 },
+      propertyType: "apartment",
+      sellerType: "unknown",
+      discoveredAt: NOW,
+      publishedAt: new Date("2020-01-01T00:00:00.000Z"),
+      metadata: { ownerEvidenceLevel: "private_unknown" },
+    };
+    const report = await runTelegramTestCycle(
       {
-        adapters: [olx],
+        adapters: [olx, adapter("lun", [lunListing])],
         config: config(),
         sink: drySink(),
         dedupe: store,
         baseline: store,
         outbox: store,
-        now: () => NOW,
+        now: () => new Date(NOW.getTime() + 40 * 60 * 1000),
       },
       1,
     );
-    expect(
-      JSON.parse(
-        (db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxBusinessRollingKey("apartments")) as { value: string })
-          .value,
-      ).resumePage,
-    ).toBe(10);
-    expect(
-      JSON.parse(
-        (db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(olxBusinessRollingKey("houses")) as { value: string })
-          .value,
-      ).resumePage,
-    ).toBe(4);
+    expect(readStamp(db)).toBe(NOW.toISOString());
+    expect(report.sourceAttempts.find((attempt) => attempt.source === "olx")?.resultKind).toBe("coverage_degraded");
+    expect(report.sourceAttempts.find((attempt) => attempt.source === "lun")?.ok).toBe(true);
+    expect(report.collectedRaw).toBeGreaterThanOrEqual(2);
   });
 
   it("does not open detail pages for a thousand old business rows and does not send them", async () => {
@@ -761,77 +797,135 @@ describe("business catalog walk and probe budget", () => {
     return value === null ? 1 : Number(value);
   }
 
-  it("fetches business apartment page 1 plus eight continuation pages and isolates houses", async () => {
-    const mocked = mockBrowser((url) => {
-      const parsed = new URL(url);
-      const account = parsed.searchParams.get("search[private_business]");
-      const page = pageOf(url);
-      const houses = url.includes("/doma/");
-      if (account === "private") {
-        return catalogHtml([ad(1000 + page, false)], page, 1);
-      }
-      if (houses) {
-        return catalogHtml([houseAd(2000 + page)], page, 2);
-      }
-      return catalogHtml([ad(3000 + page, true)], page, 25);
-    });
-    const result = await extractOlxListingsViaBrowser({
-      timeoutMs: 5_000,
-      categoryBudgetMs: 60_000,
-      totalBudgetMs: 120_000,
-      cleanupBudgetMs: 1_000,
-      launch: mocked.launch,
-      businessRolling: { apartments: { resumePage: 2 } },
-    });
-    const businessApartmentPages = mocked.urls
+  function businessApartmentPages(urls: string[]): number[] {
+    return urls
       .filter(
         (url) =>
           new URL(url).searchParams.get("search[private_business]") === "business" &&
           url.includes("/kvartiry/"),
       )
       .map(pageOf);
-    const businessHousePages = mocked.urls
+  }
+
+  function businessHousePages(urls: string[]): number[] {
+    return urls
       .filter(
         (url) =>
           new URL(url).searchParams.get("search[private_business]") === "business" && url.includes("/doma/"),
       )
       .map(pageOf);
-    expect(businessApartmentPages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    expect(businessHousePages).toEqual([1, 2]);
-    expect(result.coverage?.olxBusinessRolling?.apartments).toEqual({ resumePage: 10 });
-    expect(result.coverage?.olxBusinessRolling?.houses).toBeNull();
-    expect(result.businessScan?.apartments.status).toBe("complete");
-    expect(result.coverage?.coverageTruncated).toBe(false);
-    expect(result.listings.filter((item) => item.sourceId === "3001")).toHaveLength(1);
-  });
+  }
 
-  it("does not advance the apartment cursor past an unread continuation page", async () => {
+  async function walk(input: {
+    apartmentPages: number;
+    housePages?: number;
+    failApartmentPage?: number;
+    lastFullScanAt?: string;
+    now?: Date;
+    repeatPage1IdOnPage2?: boolean;
+  }) {
+    const housePages = input.housePages ?? 2;
     const mocked = mockBrowser((url) => {
       const page = pageOf(url);
       const houses = url.includes("/doma/");
       const account = new URL(url).searchParams.get("search[private_business]");
       if (account === "private") {
-        return catalogHtml([ad(1000, false)], 1, 1);
+        return catalogHtml([ad(1000 + page, false)], page, 1);
       }
       if (houses) {
-        return catalogHtml([houseAd(2001)], page, 1);
+        return catalogHtml([houseAd(2000 + page)], page, housePages);
       }
-      if (page === 4) {
+      if (input.failApartmentPage === page) {
         return "fail";
       }
-      return catalogHtml([ad(3000 + page, true)], page, 25);
+      const id = input.repeatPage1IdOnPage2 && page === 2 ? 3001 : 3000 + page;
+      return catalogHtml([ad(id, true)], page, input.apartmentPages);
     });
     const result = await extractOlxListingsViaBrowser({
       timeoutMs: 5_000,
-      categoryBudgetMs: 60_000,
-      totalBudgetMs: 120_000,
+      categoryBudgetMs: 120_000,
+      totalBudgetMs: 180_000,
       cleanupBudgetMs: 1_000,
       launch: mocked.launch,
-      businessRolling: { apartments: { resumePage: 2 } },
+      now: () => input.now ?? NOW,
+      ...(input.lastFullScanAt ? { businessLastFullScanAt: input.lastFullScanAt } : {}),
     });
-    expect(result.coverage?.olxBusinessRolling?.apartments).toEqual({ resumePage: 4 });
-    expect(result.businessScan?.apartments.fetchedPages).toEqual([1, 2, 3]);
-    expect(result.businessScan?.houses.resumePageBefore).toBe(2);
+    return { result, urls: mocked.urls };
+  }
+
+  it("fetches every declared business apartment page in one full snapshot", async () => {
+    const { result, urls } = await walk({ apartmentPages: 25 });
+    expect(businessApartmentPages(urls)).toEqual(Array.from({ length: 25 }, (_, index) => index + 1));
+    expect(businessHousePages(urls)).toEqual([1, 2]);
+    expect(result.businessScan?.apartments.mode).toBe("full");
+    expect(result.businessScan?.apartments.fullCoverage).toBe(true);
+    expect(result.businessFullScan?.succeeded).toBe(true);
+    expect(result.businessFullScan?.pagesExpected).toBe(25);
+    expect(result.businessFullScan?.pagesFetched).toBe(25);
+    expect(result.coverage?.coverageTruncated).toBe(false);
+    expect(result.coverage?.olxBusinessLastFullScanAt).toBe(NOW.toISOString());
+    expect(result.businessFullScan?.apartmentFullCoverage).toBe(true);
+    expect(urls.filter((url) => businessApartmentPages([url])[0] === 1)).toHaveLength(1);
+  });
+
+  it("keeps page 1, degrades, and does not stamp a snapshot when a later page fails", async () => {
+    const { result, urls } = await walk({ apartmentPages: 25, failApartmentPage: 13 });
+    expect(businessApartmentPages(urls)).toEqual(Array.from({ length: 13 }, (_, index) => index + 1));
+    expect(result.businessScan?.apartments.fetchedPages).toEqual(Array.from({ length: 12 }, (_, index) => index + 1));
+    expect(result.businessScan?.apartments.fullCoverage).toBe(false);
+    expect(result.businessFullScan?.succeeded).toBe(false);
+    expect(result.coverage?.olxBusinessLastFullScanAt).toBeUndefined();
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.privateScan?.apartments.status).toBe("complete");
+    expect(result.listings.some((item) => item.sourceId === "1001")).toBe(true);
+    expect(businessHousePages(urls)).toEqual([1, 2]);
+    expect(result.listings.some((item) => item.sourceId === "3001")).toBe(true);
+  });
+
+  it("uses the totalPages declared on this cycle, including a change from 25 to 26", async () => {
+    const first = await walk({ apartmentPages: 25 });
+    const second = await walk({
+      apartmentPages: 26,
+      lastFullScanAt: new Date(NOW.getTime() - 30 * 60 * 1000).toISOString(),
+    });
+    expect(businessApartmentPages(first.urls)).toHaveLength(25);
+    expect(businessApartmentPages(second.urls)).toEqual(Array.from({ length: 26 }, (_, index) => index + 1));
+    expect(second.result.businessScan?.apartments.fullCoverage).toBe(true);
+    expect(second.result.businessScan?.apartments.expectedPages).toBe(26);
+  });
+
+  it("degrades instead of claiming a snapshot above the safety ceiling", async () => {
+    const pages = OLX_BUSINESS_APARTMENT_PAGE_CEILING + 1;
+    const { result, urls } = await walk({ apartmentPages: pages, housePages: 1 });
+    expect(businessApartmentPages(urls)).toEqual([1]);
+    expect(result.businessScan?.apartments.ceilingExceeded).toBe(true);
+    expect(result.businessScan?.apartments.fullCoverage).toBe(false);
+    expect(result.businessFullScan?.succeeded).toBe(false);
+    expect(result.coverage?.olxBusinessLastFullScanAt).toBeUndefined();
+    expect(result.coverage?.coverageTruncated).toBe(true);
+    expect(result.notes.some((note) => note.includes("exceeds_ceiling"))).toBe(true);
+  });
+
+  it("fetches only business apartment page 1 on a hot cycle and does not call it full coverage", async () => {
+    const recent = new Date(NOW.getTime() - 10 * 60 * 1000).toISOString();
+    const { result, urls } = await walk({ apartmentPages: 25, lastFullScanAt: recent });
+    expect(businessApartmentPages(urls)).toEqual([1]);
+    expect(businessHousePages(urls)).toEqual([1, 2]);
+    expect(result.businessScan?.apartments.mode).toBe("hot");
+    expect(result.businessScan?.apartments.fullCoverage).toBe(false);
+    expect(result.businessFullScan?.apartmentFullCoverage).toBe(false);
+    expect(result.businessFullScan?.succeeded).toBe(false);
+    expect(result.coverage?.coverageTruncated).toBe(false);
+    expect(result.coverage?.olxBusinessLastFullScanAt).toBeUndefined();
+    expect(result.businessFullScan?.ageStatus).toBe("healthy");
+    expect(result.businessFullScan?.due).toBe(false);
+  });
+
+  it("does not emit the same page-1 business id twice in one full snapshot", async () => {
+    const { result, urls } = await walk({ apartmentPages: 3, repeatPage1IdOnPage2: true, housePages: 1 });
+    expect(businessApartmentPages(urls)).toEqual([1, 2, 3]);
+    expect(result.listings.filter((item) => item.sourceId === "3001")).toHaveLength(1);
+    expect(result.businessScan?.apartments.uniqueListingIds).toBe(2);
   });
 
   it("keeps one downstream listing when the same id appears in private and business", async () => {

@@ -23,10 +23,11 @@ export type FetchListingsOptions = {
   olxCatchup?: Partial<
     Record<"apartment" | "house", { target: string; resumePage: number }>
   >;
-  /** Business rolling continuation cursor. Page 1 is not stored here. */
-  olxBusinessRolling?: Partial<
-    Record<"apartments" | "houses", { resumePage: number }>
-  >;
+  /**
+   * ISO time of the last successful complete Business apartment snapshot.
+   * Absent means none has succeeded, so a full snapshot is due.
+   */
+  olxBusinessLastFullScanAt?: string;
   /** Existing OLX baseline without a watermark — bootstrap catch-up target. */
   olxBootstrapTarget?: Date;
   /** DIM.RIA ids whose listing page was already read. Detail fetches skip these. */
@@ -74,12 +75,10 @@ export type IncrementalCoverage = {
   /** null clears a stored cursor. Absent means that category was not updated. */
   catchup?: Partial<Record<"apartment" | "house", { target: string; resumePage: number } | null>>;
   /**
-   * Business continuation cursor. null clears. Absent leaves the stored cursor.
-   * Page 1 is checked every cycle and is not this value.
+   * Set only when this cycle fetched every declared Business apartment page.
+   * Absent leaves the stored timestamp unchanged.
    */
-  olxBusinessRolling?: Partial<
-    Record<"apartments" | "houses", { resumePage: number } | null>
-  >;
+  olxBusinessLastFullScanAt?: string;
   /** DIM.RIA ids safely remembered after a successful listing-page read. */
   retainedSourceIds?: string[];
 };
