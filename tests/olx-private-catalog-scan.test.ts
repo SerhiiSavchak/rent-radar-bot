@@ -287,6 +287,61 @@ describe("OLX private-only structured full scan", () => {
     expect(mapped.coverage?.coverageTruncated).toBe(true);
   });
 
+  it("maps page-1-only apartments truncation to coverage_degraded with a private scan reason", async () => {
+    const { result } = await scan((url) => {
+      const page = requestedPage(url);
+      if (url.includes("/doma/")) {
+        return housePage();
+      }
+      if (page >= 2) {
+        return "timeout";
+      }
+      return catalogHtml(
+        Array.from({ length: 18 }, (_, index) =>
+          apartment(1000 + index, "2026-09-01T10:00:00+03:00"),
+        ),
+        {
+          pageNumber: 0,
+          totalPages: 4,
+          totalElements: 120,
+        },
+      );
+    });
+    expect(privateScan(result)?.apartments).toMatchObject({
+      status: "navigation_failed",
+      expectedPages: 4,
+      fetchedPages: [1],
+    });
+    const mapped = mapOlxBrowserExtractToFetchResult(result, { startedMs: Date.now() });
+    expect(mapped.listings.length).toBeGreaterThan(0);
+    // Apartments stopped after page 1; houses may still complete page 1 in the same poll.
+    expect(privateScan(result)?.apartments.fetchedPages).toEqual([1]);
+    expect(mapped.coverage?.coverageTruncated).toBe(true);
+    expect(mapped.coverage?.boundaryReached).toBe(false);
+    expect(mapped.coverage?.degradeReason).toBe("private_apartments_navigation_failed");
+    expect(mapped.resultKind).toBe("ok");
+    expect(mapped.health.healthy).toBe(false);
+    expect(mapped.health.message).toContain("structured scan incomplete");
+    expect(mapped.health.message).toContain("private_apartments_navigation_failed");
+  });
+
+  it("maps zero-kept incomplete private scan to parser_failure, never valid_empty", async () => {
+    const { result } = await scan((url) => {
+      if (url.includes("/doma/")) {
+        return "timeout";
+      }
+      return "timeout";
+    });
+    expect(result.listings).toHaveLength(0);
+    const mapped = mapOlxBrowserExtractToFetchResult(result, { startedMs: Date.now() });
+    expect(mapped.resultKind).toBe("parser_failure");
+    expect(mapped.resultKind).not.toBe("valid_empty");
+    expect(mapped.coverage?.coverageTruncated).toBe(true);
+    expect(mapped.health.healthy).toBe(false);
+    expect(mapped.health.message).toMatch(/kept 0 listings/);
+    expect(mapped.health.message).toContain("structured scan incomplete");
+  });
+
   it("keeps earlier pages when page 3 times out and does not claim complete coverage", async () => {
     const { result, urls } = await scan((url) => {
       const page = requestedPage(url);

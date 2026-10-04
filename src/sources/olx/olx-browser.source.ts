@@ -94,6 +94,15 @@ export function mapOlxBrowserExtractToFetchResult(
     scanFailed;
   // Acquired-card cap must never let a walk commit a boundary past discarded cards.
   const allowCommit = !acquired.truncated;
+  const degradeReason = acquired.truncated
+    ? "acquired_response_cap"
+    : privateScan?.apartments.status !== "complete"
+      ? `private_apartments_${privateScan?.apartments.status ?? "incomplete"}`
+      : privateScan?.houses.status !== "complete"
+        ? `private_houses_${privateScan?.houses.status ?? "incomplete"}`
+        : coverageTruncated
+          ? "coverage_truncated"
+          : undefined;
   const coverage =
     walkCoverage || capCoverage
       ? {
@@ -103,6 +112,7 @@ export function mapOlxBrowserExtractToFetchResult(
             ? (walkCoverage?.boundaryReached ?? !coverageTruncated)
             : false,
           coverageTruncated,
+          ...(degradeReason ? { degradeReason } : {}),
           ...(walkCoverage?.oldestObservedPublication
             ? { oldestObservedPublication: walkCoverage.oldestObservedPublication }
             : {}),
@@ -167,7 +177,9 @@ export function mapOlxBrowserExtractToFetchResult(
         : businessLeakCount > 0
           ? `OLX private filter contract leak: rejected ${businessLeakCount} Business card(s); kept ${unique.length} listings`
           : coverageTruncated
-            ? `OLX browser partial coverage: kept ${unique.length} listings (structured scan incomplete)`
+            ? `OLX browser partial coverage: kept ${unique.length} listings (structured scan incomplete${
+                degradeReason ? `; ${degradeReason}` : ""
+              })`
             : acquired.truncated
               ? `OLX browser extract kept ${unique.length} listings after the acquired-response cap`
               : blockedWithoutExtract
