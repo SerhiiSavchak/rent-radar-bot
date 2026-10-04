@@ -76,10 +76,12 @@ function pageTimestampOrder(pages: Array<{ page: number; timestamps: string[] }>
   const perPageNewest: Array<{ page: number; newest?: string; oldest?: string; count: number }> = [];
   for (const page of pages) {
     const sorted = [...page.timestamps].filter(Boolean).sort();
+    const newest = sorted.at(-1);
+    const oldest = sorted[0];
     perPageNewest.push({
       page: page.page,
-      newest: sorted.at(-1),
-      oldest: sorted[0],
+      ...(newest ? { newest } : {}),
+      ...(oldest ? { oldest } : {}),
       count: page.timestamps.length,
     });
   }

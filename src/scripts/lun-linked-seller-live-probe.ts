@@ -23,7 +23,6 @@ const verify = createCycleDomriaSellerVerifier({
   peers: result.listings,
   now: () => new Date(),
   timeoutMs: 25_000,
-  maxRequests: 8,
 });
 const decisions = [];
 for (const listing of sample) {
