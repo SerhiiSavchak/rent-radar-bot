@@ -868,7 +868,7 @@ describe("linked RIELTOR seller verification", () => {
     expect(calls).toBe(0);
   });
 
-  it("does not verify a fuzzy similar apartment; trusted OLX isBusiness rejects the exact link", async () => {
+  it("does not verify a fuzzy similar apartment; a business account without owner evidence drops the exact link", async () => {
     const path = dbPath();
     const store = new DurableDeliveryStore(getDb(path));
     const shared = {
@@ -942,11 +942,16 @@ describe("linked RIELTOR seller verification", () => {
     );
     expect(rieltorCalls).toBe(0);
     expect(olxCalls).toBe(1);
-    // Trusted OLX isBusiness is strong commercial evidence → confirmed intermediary drop.
+    // Account type alone is not a confirmed agent. Missing owner evidence still drops the link.
     expect(report.sentOk).toBe(1);
     expect(report.linkedSellerVerification.detailRequests).toBe(1);
-    expect(report.linkedSellerVerification.detailConfirmedAgent).toBe(1);
+    expect(report.linkedSellerVerification.detailConfirmedAgent).toBe(0);
     expect(report.linkedSellerVerification.detailUnknown).toBe(0);
+    expect(
+      report.linkedSellerEvents.some(
+        (event) => event.outcome === "business_without_positive_owner_evidence",
+      ),
+    ).toBe(true);
     expect(holdCount()).toBe(0);
   });
 

@@ -64,7 +64,14 @@ async function scan(handler: (url: string) => string): Promise<{
     route: vi.fn(async () => undefined),
     goto: vi.fn(async (navUrl: string) => {
       urls.push(navUrl);
-      const html = handler(navUrl);
+      const html =
+        new URL(navUrl).searchParams.get("search[private_business]") === "business"
+          ? catalogHtml([], {
+              pageNumber: requestedPage(navUrl) - 1,
+              totalPages: 1,
+              totalElements: 0,
+            })
+          : handler(navUrl);
       return {
         url: () => navUrl,
         status: () => 200,
@@ -148,9 +155,25 @@ describe("OLX structured page index", () => {
         totalElements: 140,
       });
     });
-    expect(urls.filter((url) => url.includes("/kvartiry/")).map(requestedPage)).toEqual([1, 2, 3, 4]);
+    expect(
+      urls
+        .filter(
+          (url) =>
+            url.includes("/kvartiry/") &&
+            new URL(url).searchParams.get("search[private_business]") === "private",
+        )
+        .map(requestedPage),
+    ).toEqual([1, 2, 3, 4]);
     expect(seenRaw).toEqual([0, 1, 2, 3]);
-    expect(urls.filter((url) => url.includes("/doma/")).map(requestedPage)).toEqual([1]);
+    expect(
+      urls
+        .filter(
+          (url) =>
+            url.includes("/doma/") &&
+            new URL(url).searchParams.get("search[private_business]") === "private",
+        )
+        .map(requestedPage),
+    ).toEqual([1]);
     expect(result.privateScan?.apartments).toMatchObject({
       status: "complete",
       expectedPages: 4,

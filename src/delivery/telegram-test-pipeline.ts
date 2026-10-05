@@ -2,7 +2,7 @@ import type { Listing, ListingSource } from "../domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../domain/source.ts";
 import { usesOwnerOnlySourceFilter, type AppConfig } from "../config/env.ts";
 import { applyListingFilters } from "../filters/listing-filter.ts";
-import { sellerDecisionBucket } from "../filters/owner-filter.ts";
+import { sellerDecisionBucket, sellerRejectionReason } from "../filters/owner-filter.ts";
 import {
   classifyListingFreshness,
   defaultMaxPublicationAgeMinutes,
@@ -34,8 +34,11 @@ import {
 } from "../sources/rieltor/rieltor-incremental.ts";
 import {
   formatOlxCoverage,
+  OLX_BUSINESS_LAST_FULL_SCAN_KEY,
   olxCatchupKey,
   olxPublicationBoundaryKey,
+  parseOlxBusinessLastFullScanAt,
+  RETIRED_OLX_BUSINESS_ROLLING_KEYS,
   type OlxBrowserCategoryName,
 } from "../sources/olx/olx-browser.coverage.ts";
 import {
@@ -516,13 +519,23 @@ function countSellerDecisions(
   const filtered = applyListingFilters(listings, configWithoutAge);
   for (const item of filtered) {
     const bucket = sellerDecisionBucket(item.listing);
+    const businessDetailPending =
+      item.sellerRejectionReason === "business_without_positive_owner_evidence" &&
+      item.locationMatched &&
+      item.propertyMatched;
+    if (businessDetailPending) {
+      stats.sellerAcceptedUnknown += 1;
+      stats.acceptedCount += 1;
+      continue;
+    }
     if (bucket === "intermediary") {
       stats.sellerRejectedIntermediary += 1;
+      const rejection = sellerRejectionReason(item.listing);
       trace?.record(
         item.listing.source,
         item.listing.sourceId,
         "rejected_seller",
-        "intermediary",
+        rejection === "business_without_positive_owner_evidence" ? rejection : "intermediary",
       );
       continue;
     }
@@ -987,12 +1000,19 @@ export async function runTelegramTestCycle(
         adapter.source === "domria"
           ? parseDomriaAcquiredIds(readMetaValue(DOMRIA_ACQUIRED_IDS_KEY))
           : undefined;
+      const olxBusinessLastFullScanAt =
+        adapter.source === "olx"
+          ? parseOlxBusinessLastFullScanAt(readMetaValue(OLX_BUSINESS_LAST_FULL_SCAN_KEY))
+          : undefined;
       const result: SourceFetchResult = await adapter.inspectLatest({
         preferOwners: usesOwnerOnlySourceFilter(deps.config),
         ...(publicationWatermarks ? { publicationWatermarks } : {}),
         ...(rieltorCatchup ? { rieltorCatchup } : {}),
         ...(rieltorBootstrapTarget ? { rieltorBootstrapTarget } : {}),
         ...(domriaKnownIds && domriaKnownIds.length > 0 ? { domriaKnownIds } : {}),
+        ...(olxBusinessLastFullScanAt
+          ? { olxBusinessLastFullScanAt: olxBusinessLastFullScanAt.toISOString() }
+          : {}),
       });
       const classified = classifySourceAttempt(adapter.source, result);
       // Do not drop old publishedAt here — baseline must see current inventory.
@@ -1010,7 +1030,14 @@ export async function runTelegramTestCycle(
       sellerTotals.otherFilterRejected += sellerStats.otherFilterRejected;
       sellerTotals.acceptedCount += sellerStats.acceptedCount;
       const acceptedRaw = applyListingFilters(result.listings, configWithoutAge)
-        .filter((item) => item.accepted && item.locationMatched)
+        .filter(
+          (item) =>
+            (item.accepted && item.locationMatched) ||
+            (item.sellerRejectionReason === "business_without_positive_owner_evidence" &&
+              item.locationMatched &&
+              item.propertyMatched &&
+              !item.tooOld),
+        )
         .map((item) => item.listing);
       const profilePolicies: SellerProfilePolicies = {
         likelyPolicy: deps.config.sellerProfileLikelyPolicy,
@@ -1065,9 +1092,23 @@ export async function runTelegramTestCycle(
         // Page cursors and publication boundaries are not OLX coverage.
         // Drop leftovers so a restart cannot treat them as progress.
         const deleteMeta = holdDb.prepare("DELETE FROM schema_meta WHERE key = ?");
+        const writeMeta = holdDb.prepare(
+          "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+        );
         for (const category of ["apartments", "houses"] as const satisfies readonly OlxBrowserCategoryName[]) {
           deleteMeta.run(olxCatchupKey(category));
           deleteMeta.run(olxPublicationBoundaryKey(category));
+        }
+        for (const key of RETIRED_OLX_BUSINESS_ROLLING_KEYS) {
+          deleteMeta.run(key);
+        }
+        // Hot cycles and failed snapshots omit the timestamp. Do not clear a
+        // previous success, and do not write one unless this snapshot completed.
+        if (
+          !result.coverage.coverageTruncated &&
+          result.coverage.olxBusinessLastFullScanAt
+        ) {
+          writeMeta.run(OLX_BUSINESS_LAST_FULL_SCAN_KEY, result.coverage.olxBusinessLastFullScanAt);
         }
       }
       const collectedIds = collectedSourceIdsForLog(result.listings);

@@ -144,11 +144,20 @@ function mockCatalog(handler: (url: string) => string | "timeout"): {
   return { browser, urls, launch: async () => browser };
 }
 
+function emptyBusinessPage(url: string): string {
+  const page = requestedPage(url);
+  return catalogHtml([], { pageNumber: page - 1, totalPages: 1, totalElements: 0 });
+}
+
 async function scan(handler: (url: string) => string | "timeout"): Promise<{
   result: OlxBrowserExtractResult;
   urls: string[];
 }> {
-  const mocked = mockCatalog(handler);
+  const mocked = mockCatalog((url) =>
+    new URL(url).searchParams.get("search[private_business]") === "business"
+      ? emptyBusinessPage(url)
+      : handler(url),
+  );
   const result = await extractOlxListingsViaBrowser({
     timeoutMs: 5_000,
     categoryBudgetMs: 30_000,
@@ -201,8 +210,15 @@ describe("OLX private-only structured full scan", () => {
       return catalogHtml(ads, { pageNumber: page - 1, totalPages: 4, totalElements: 140 });
     });
 
-    const apartmentUrls = urls.filter((url) => url.includes("/kvartiry/"));
-    const houseUrls = urls.filter((url) => url.includes("/doma/"));
+    const apartmentUrls = urls.filter(
+      (url) =>
+        url.includes("/kvartiry/") &&
+        new URL(url).searchParams.get("search[private_business]") === "private",
+    );
+    const houseUrls = urls.filter(
+      (url) =>
+        url.includes("/doma/") && new URL(url).searchParams.get("search[private_business]") === "private",
+    );
     expect(apartmentUrls.map(requestedPage)).toEqual([1, 2, 3, 4]);
     expect(houseUrls.map(requestedPage)).toEqual([1]);
     expect(urls.indexOf(apartmentUrls[0]!)).toBeLessThan(urls.indexOf(houseUrls[0]!));
@@ -248,8 +264,24 @@ describe("OLX private-only structured full scan", () => {
         totalElements: 140,
       });
     });
-    expect(urls.filter((url) => url.includes("/kvartiry/")).map(requestedPage)).toEqual([1]);
-    expect(urls.filter((url) => url.includes("/doma/")).map(requestedPage)).toEqual([1]);
+    expect(
+      urls
+        .filter(
+          (url) =>
+            url.includes("/kvartiry/") &&
+            new URL(url).searchParams.get("search[private_business]") === "private",
+        )
+        .map(requestedPage),
+    ).toEqual([1]);
+    expect(
+      urls
+        .filter(
+          (url) =>
+            url.includes("/doma/") &&
+            new URL(url).searchParams.get("search[private_business]") === "private",
+        )
+        .map(requestedPage),
+    ).toEqual([1]);
   });
 
   it("treats a structured page mismatch as failure, never valid_empty", async () => {
@@ -278,7 +310,13 @@ describe("OLX private-only structured full scan", () => {
       }
       return `<!DOCTYPE html><html><body><div data-cy="l-card">card</div></body></html>`;
     });
-    expect(urls.filter((url) => url.includes("/kvartiry/"))).toHaveLength(1);
+    expect(
+      urls.filter(
+        (url) =>
+          url.includes("/kvartiry/") &&
+          new URL(url).searchParams.get("search[private_business]") === "private",
+      ),
+    ).toHaveLength(1);
     expect(privateScan(result)?.apartments.status).toBe("parser_failure");
     expect(result.listings.some((item) => item.sourceId === "9001")).toBe(true);
     const mapped = mapOlxBrowserExtractToFetchResult(result, { startedMs: Date.now() });
@@ -357,7 +395,15 @@ describe("OLX private-only structured full scan", () => {
         totalElements: 140,
       });
     });
-    expect(urls.filter((url) => url.includes("/kvartiry/")).map(requestedPage)).toEqual([1, 2, 3]);
+    expect(
+      urls
+        .filter(
+          (url) =>
+            url.includes("/kvartiry/") &&
+            new URL(url).searchParams.get("search[private_business]") === "private",
+        )
+        .map(requestedPage),
+    ).toEqual([1, 2, 3]);
     expect(privateScan(result)?.apartments).toMatchObject({
       status: "navigation_failed",
       expectedPages: 4,
@@ -386,7 +432,15 @@ describe("OLX private-only structured full scan", () => {
         totalElements: 140,
       });
     });
-    expect(urls.filter((url) => url.includes("/kvartiry/")).map(requestedPage)).toEqual([1, 2]);
+    expect(
+      urls
+        .filter(
+          (url) =>
+            url.includes("/kvartiry/") &&
+            new URL(url).searchParams.get("search[private_business]") === "private",
+        )
+        .map(requestedPage),
+    ).toEqual([1, 2]);
     expect(privateScan(result)?.apartments.status).toBe("pagination_unstable");
     expect(privateScan(result)?.apartments.expectedPages).toBe(4);
     expect(result.coverage?.coverageTruncated).toBe(true);

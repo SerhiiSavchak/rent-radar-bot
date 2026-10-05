@@ -166,8 +166,8 @@ export function inspectOlxOfferDetailHtml(
     ? classifyOwner({
         platformOwner: platformLabel === "owner",
         platformAgent: platformLabel === "agent",
-        // sellerType=business OR isBusiness/business boolean — both trusted platform fields.
-        platformBusiness: platformLabel === "business" || accountType === "business",
+        // Explicit user.sellerType=business only. isBusiness is account type, not this role.
+        platformBusiness: platformLabel === "business",
         platformPrivate: accountType === "private",
         isBusiness: accountType === "business",
         agencyName: company,

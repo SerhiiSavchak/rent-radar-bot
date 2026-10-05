@@ -1,7 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import { chromium } from "playwright";
 import type { Listing } from "../domain/listing.ts";
-import { sellerRejectionReason, classifyOwner } from "../filters/owner-filter.ts";
+import {
+  sellerRejectionReason,
+  classifyOwner,
+  sellerAssessmentFromListing,
+  type OwnerEvidenceLevel,
+} from "../filters/owner-filter.ts";
 import { safeStoredError } from "../storage/source-health.ts";
 import { awaitWithTimeout } from "../utils/deadline.ts";
 import { httpGet } from "../utils/http.ts";
@@ -127,10 +132,17 @@ function offerMatchesToken(offer: Record<string, unknown>, token: string): boole
   return extractOlxUrlToken(haystack)?.toLowerCase() === token.toLowerCase();
 }
 
+type OlxHtmlSellerClassification = {
+  verdict: StoredSellerVerdict;
+  evidence: string;
+  ownerEvidenceLevel?: OwnerEvidenceLevel;
+  sellerType?: Listing["sellerType"];
+};
+
 export function classifyOlxLinkedSellerHtml(
   html: string,
   token: string,
-): { verdict: StoredSellerVerdict; evidence: string } {
+): OlxHtmlSellerClassification {
   const inspection = inspectPrerenderedState(html);
   if (!inspection.present || !inspection.decoded) {
     return { verdict: "parser_failure", evidence: "prerendered state missing" };
@@ -168,26 +180,35 @@ export function classifyOlxLinkedSellerHtml(
     platformOwner: lowerType === "owner",
     platformAgent:
       lowerType === "agent" || lowerType === "agency" || lowerType === "intermediary",
-    // sellerType=business OR trusted isBusiness/business boolean — both strong commercial.
-    platformBusiness: lowerType === "business" || business === true,
+    // Explicit user.sellerType=business only. offer.isBusiness is account type.
+    platformBusiness: lowerType === "business",
     platformPrivate: business === false,
     isBusiness: business === true,
     agencyName: company,
     sellerIdentityName: sellerName,
     text: `${title}\n${description}`,
   });
-  if (sellerRejectionReason({ sellerType: owner.sellerType, metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel } })) {
+  if (sellerRejectionReason({ sellerType: owner.sellerType, metadata: { ownerEvidenceLevel: owner.ownerEvidenceLevel } }) &&
+    owner.ownerEvidenceLevel !== "business_ambiguous") {
     return {
       verdict: "confirmed_intermediary",
       evidence: owner.sellerEvidence.join("; ") || "linked OLX seller is intermediary",
     };
   }
   // Customer exclusion: exact platform registration year 2026 (not listing dates).
+  // This stays stronger than a Business-account fail-closed and stronger than an owner claim.
   const registrationYear = extractOlxAccountRegistrationYear(html);
   if (sellerRegistrationYearRejectionReason(registrationYear)) {
     return {
       verdict: "seller_registration_year_2026",
       evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
+    };
+  }
+  if (owner.ownerEvidenceLevel === "business_ambiguous") {
+    return {
+      // Cache enum has no separate verdict. The evidence prefix is the product reason.
+      verdict: "confirmed_intermediary",
+      evidence: `business_without_positive_owner_evidence; ${owner.sellerEvidence.join("; ")}`,
     };
   }
   // Contract: confirmed_owner requires both sellerType=owner AND platform_confirmed.
@@ -199,15 +220,63 @@ export function classifyOlxLinkedSellerHtml(
     })
   ) {
     return {
-      verdict: "confirmed_owner",
+      verdict: "confirmed_owner" as const,
       evidence: owner.sellerEvidence.join("; ") || "linked OLX seller is owner",
+      ownerEvidenceLevel: owner.ownerEvidenceLevel,
+      sellerType: owner.sellerType,
     };
   }
   // A linked shop/storefront URL is not intermediary proof by itself. Inventory
   // and explicit agency/service text are classified through existing tiers.
   return {
-    verdict: "unknown",
+    verdict: "unknown" as const,
     evidence: owner.sellerEvidence.join("; ") || "linked OLX seller unresolved",
+    ownerEvidenceLevel: owner.ownerEvidenceLevel,
+    sellerType: owner.sellerType,
+  };
+}
+
+function catalogRejectionIsTerminal(listing: {
+  sellerType: Listing["sellerType"];
+  metadata?: Listing["metadata"];
+}): boolean {
+  const reason = sellerRejectionReason(listing);
+  // Catalog Business ambiguity is not intermediary proof. A fresh card still
+  // gets one detail read. Explicit roles and agency text stay terminal.
+  return reason !== undefined && reason !== "business_without_positive_owner_evidence";
+}
+
+function businessDetailStillRequired(listing: Listing): boolean {
+  const business =
+    listing.metadata?.olxAccountType === "business" || listing.metadata?.olxIsBusiness === true;
+  if (!business) {
+    return false;
+  }
+  const level = listing.metadata?.ownerEvidenceLevel;
+  return level !== "self_declared" && level !== "platform_confirmed";
+}
+
+function applyPositiveDetailOwner(
+  listing: Listing,
+  classified: { ownerEvidenceLevel?: string; sellerType?: Listing["sellerType"] } | undefined,
+): void {
+  const level = classified?.ownerEvidenceLevel;
+  const business =
+    listing.metadata?.olxAccountType === "business" || listing.metadata?.olxIsBusiness === true;
+  if (!business || (level !== "self_declared" && level !== "platform_confirmed")) {
+    return;
+  }
+  if (classified?.sellerType) {
+    listing.sellerType = classified.sellerType;
+  }
+  listing.metadata = {
+    ...(listing.metadata ?? {}),
+    ownerEvidenceLevel: level,
+    filterConsidersSelfDeclaredOwner: level === "self_declared",
+  };
+  listing.metadata = {
+    ...listing.metadata,
+    sellerAssessment: sellerAssessmentFromListing(listing),
   };
 }
 
@@ -283,6 +352,18 @@ function decisionFromStored(
   token: string,
   profilePolicies: SellerProfilePolicies,
 ): LinkedSellerDecision {
+  if (
+    row.sellerVerdict === "confirmed_intermediary" &&
+    (row.sellerEvidence ?? "").includes("business_without_positive_owner_evidence")
+  ) {
+    return {
+      outcome: "business_without_positive_owner_evidence",
+      drop: true,
+      requested: false,
+      externalId: token,
+      evidence: row.sellerEvidence ?? "business_without_positive_owner_evidence",
+    };
+  }
   if (row.sellerVerdict === "confirmed_intermediary") {
     return {
       outcome: "cache_confirmed_agent",
@@ -583,6 +664,16 @@ function decisionFromClassified(
   const evidence = evidencePrefix
     ? `${evidencePrefix}; ${classified.evidence}`
     : classified.evidence;
+  if (evidence.includes("business_without_positive_owner_evidence")) {
+    return {
+      outcome: "business_without_positive_owner_evidence",
+      drop: true,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
   if (classified.verdict === "confirmed_intermediary") {
     return {
       outcome: "detail_confirmed_agent",
@@ -943,6 +1034,14 @@ export function createCycleOlxSellerVerifier(options: {
     if (listing.source === "olx") {
       const target = canonicalOlxDetailTarget(listing.url);
       if (!target) {
+        if (businessDetailStillRequired(listing)) {
+          return {
+            outcome: "business_without_positive_owner_evidence",
+            drop: true,
+            requested: false,
+            evidence: "business_without_positive_owner_evidence",
+          };
+        }
         return { outcome: "not_required", drop: false, requested: false };
       }
       // A persisted hold stores the previous card. The fresh same-cycle card can
@@ -951,7 +1050,7 @@ export function createCycleOlxSellerVerifier(options: {
         (item) =>
           item.source === "olx" &&
           peerToken(item)?.toLowerCase() === target.token.toLowerCase() &&
-          sellerRejectionReason(item) !== undefined,
+          catalogRejectionIsTerminal(item),
       );
       if (sameCycleAgent) {
         return {
@@ -1033,6 +1132,19 @@ export function createCycleOlxSellerVerifier(options: {
         };
       }
       if (profileProbes >= maxProfileProbes) {
+        const businessAccount =
+          listing.metadata?.olxAccountType === "business" || listing.metadata?.olxIsBusiness === true;
+        // Private keeps the existing evaluated-unknown path. A Business account
+        // must not be sent when the profile budget is already spent.
+        if (businessAccount) {
+          return {
+            outcome: "detail_capacity_deferred",
+            drop: false,
+            requested: false,
+            externalId: target.token,
+            evidence: `olx_profile_probe_cap=${maxProfileProbes}`,
+          };
+        }
         const capped: { verdict: StoredSellerVerdict; evidence: string } = {
           verdict: "unknown",
           evidence: `olx_profile_probe_cap=${maxProfileProbes}`,
@@ -1057,7 +1169,7 @@ export function createCycleOlxSellerVerifier(options: {
         return profileReadFailure(target, nowDirect, "transport");
       }
 
-      let listingClassified: { verdict: StoredSellerVerdict; evidence: string } | undefined;
+      let listingClassified: OlxHtmlSellerClassification | undefined;
       if (snapshot.listingHtml) {
         listingClassified = classifyOlxLinkedSellerHtml(snapshot.listingHtml, target.token);
         if (
@@ -1103,6 +1215,7 @@ export function createCycleOlxSellerVerifier(options: {
       }
 
       if (listingClassified?.verdict === "confirmed_owner") {
+        applyPositiveDetailOwner(listing, listingClassified);
         rememberVerdict(options.db, target, listingClassified, 200, nowDirect);
         return decisionFromClassified(
           listingClassified,
@@ -1121,6 +1234,22 @@ export function createCycleOlxSellerVerifier(options: {
           : profileDecision.evidence,
       };
       rememberVerdict(options.db, target, unresolved, undefined, nowDirect);
+      applyPositiveDetailOwner(listing, listingClassified);
+      if (businessDetailStillRequired(listing)) {
+        const failClosed = {
+          verdict: "confirmed_intermediary" as const,
+          evidence: "business_without_positive_owner_evidence",
+        };
+        rememberVerdict(options.db, target, failClosed, undefined, nowDirect);
+        return decisionFromClassified(
+          failClosed,
+          target.token,
+          200,
+          false,
+          undefined,
+          profilePolicies,
+        );
+      }
       return {
         outcome: "detail_unknown",
         drop: false,
@@ -1143,7 +1272,7 @@ export function createCycleOlxSellerVerifier(options: {
       (item) => item.source === "olx" && peerToken(item)?.toLowerCase() === target.token.toLowerCase(),
     );
     if (peer) {
-      if (sellerRejectionReason(peer)) {
+      if (catalogRejectionIsTerminal(peer)) {
         return {
           outcome: "same_cycle_confirmed_agent",
           drop: true,
@@ -1238,7 +1367,7 @@ export function createCycleOlxSellerVerifier(options: {
           } catch {
             return profileReadFailure(target, now, "transport", cached.lastHttpStatus ?? undefined);
           }
-          let listingClassified: { verdict: StoredSellerVerdict; evidence: string } | undefined;
+          let listingClassified: OlxHtmlSellerClassification | undefined;
           if (snapshot.listingHtml) {
             listingClassified = classifyOlxLinkedSellerHtml(snapshot.listingHtml, target.token);
             if (

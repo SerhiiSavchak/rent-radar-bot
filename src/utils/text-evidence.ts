@@ -319,6 +319,20 @@ export function hasExplicitSelfDeclaredOwnerText(text: string | undefined): bool
   return SELF_DECLARED_OWNER_PHRASES.some((phrase) => includesPhrase(lower, phrase));
 }
 
+/**
+ * Bare owner noun used as a Business-account positive claim.
+ * Private listings do not call this. It does not match "приватний" or owner-seeking copy.
+ */
+const BARE_OWNER_DECLARATION =
+  /(?:^|[^\p{L}\p{N}_])(?:власник|власниц\p{L}*|собственник|хозяин)(?![\p{L}\p{N}_])/iu;
+
+export function hasStrongBareOwnerDeclaration(text: string | undefined): boolean {
+  if (!text || hasMisleadingOwnerSeekingText(text)) {
+    return false;
+  }
+  return BARE_OWNER_DECLARATION.test(text);
+}
+
 export function normalizeSellerText(text: string): string {
   return text
     .replace(/[\u2019\u2018\u02BC`]/g, "'")

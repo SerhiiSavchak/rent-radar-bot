@@ -14,9 +14,13 @@
  * categoryBudgetMs / totalBudgetMs abort in-flight navigation/capture, skip the next
  * category, and close the owned browser.
  *
- * Production walk: Private-only catalog, concurrency=1, one Chromium, every
- * structured page through totalPages. createdTime order, publication boundaries,
- * and page cursors do not decide coverage. Private is not ownership.
+ * Production walk: Private catalog in full, then Business.
+ * Concurrency=1, one Chromium. Private still walks every structured page.
+ * Business apartments fetch page 1 every cycle. About every 30 minutes they
+ * also fetch every declared page in this same session. That snapshot is the
+ * only complete Business apartment coverage. A page cursor across cycles is not.
+ * createdTime order and publication boundaries do not decide coverage.
+ * Private is not ownership. Business account type is not a seller role.
  *
  * Extraction success is independent of budgetExceeded. timedOut means extract did
  * not finish before cancellation. Cleanup is bounded and reported separately.
@@ -32,11 +36,18 @@ import {
   type OlxBrowserOutcome,
 } from "../../probe/olx-browser-classify.ts";
 import {
+  assessOlxBusinessFullScanAge,
   buildOlxBrowserCategoryUrl,
+  isOlxBusinessFullScanDue,
+  isOlxParserCoverageHealthy,
+  OLX_BUSINESS_APARTMENT_PAGE_CEILING,
+  OLX_BUSINESS_HOUSE_PAGE_CEILING,
+  OLX_BUSINESS_HOUSE_ROUTINE_MAX_PAGES,
   OLX_PRIVATE_CATALOG_PAGE_CAP,
   OLX_PRIVATE_HOUSE_RESERVE_MS,
   olxCategoryToCoverageKey,
   olxPrivateCatalogNotes,
+  parseOlxBusinessLastFullScanAt,
   type OlxBrowserCategoryName,
   type OlxCatchupState,
 } from "./olx-browser.coverage.ts";
@@ -58,6 +69,7 @@ import {
   inspectPrerenderedState,
   readOlxStructuredCatalogPage,
   trustedOlxBusinessAdIds,
+  type OlxCandidateRejection,
   type OlxHtmlExtractDiagnostics,
   type OlxStructuredCatalogPage,
 } from "./olx-browser.html-extract.ts";
@@ -172,6 +184,8 @@ export type OlxBrowserCategoryExtract = {
   structuredCatalog?: OlxStructuredCatalogPage;
   trustedBusinessIds?: string[];
   structuredAdsCount?: number;
+  /** Numeric ids from structured catalog ads, in page order. Includes ads that failed parse. */
+  structuredAdIds?: string[];
 };
 
 export type OlxPrivateScanStatus =
@@ -201,6 +215,63 @@ export type OlxPrivateCategoryScan = {
   pageElapsedMs: number[];
 };
 
+export type OlxBusinessScanStatus =
+  | "complete"
+  | "navigation_failed"
+  | "parser_failure"
+  | "page_mismatch"
+  | "pagination_unstable"
+  | "incomplete"
+  | "skipped_budget";
+
+export type OlxBusinessParserRollup = {
+  rawAds: number;
+  rawUniqueIds: number;
+  duplicateRawIds: number;
+  parsedListings: number;
+  /** Property types of parsed listings on this Business category, before the private merge. */
+  propertyTypeCounts: Record<string, number>;
+  /** Category ids behind propertyType unknown. missing means the ad had no category id. */
+  unknownCategoryCounts: Record<string, number>;
+  unknownExamples: { id: string; title: string; categoryId: string }[];
+  rejectionReasonCounts: Record<string, number>;
+  examples: OlxCandidateRejection[];
+};
+
+export type OlxBusinessCategoryScan = {
+  status: OlxBusinessScanStatus;
+  /** hot = apartments page 1 only. full = every declared page this session. */
+  mode: "hot" | "full" | "not_run";
+  /** True only when this session fetched every declared page. Hot is never full. */
+  fullCoverage: boolean;
+  /** Same as fullCoverage: every declared page was fetched. Not parser health. */
+  pageCoverageComplete: boolean;
+  /** No structured ad was dropped by the parser on the pages this session fetched. */
+  parserCoverageHealthy: boolean;
+  ceilingExceeded: boolean;
+  expectedPages: number | null;
+  fetchedPages: number[];
+  totalElements: number | null;
+  uniqueListingIds: number;
+  parser: OlxBusinessParserRollup;
+  failureDetails: OlxPrivateCatalogFailureDetail[];
+};
+
+export type OlxBusinessFullScanReport = {
+  lastFullScanAt: string | null;
+  ageMinutes: number | null;
+  due: boolean;
+  succeeded: boolean;
+  pagesExpected: number | null;
+  pagesFetched: number;
+  apartmentMode: OlxBusinessCategoryScan["mode"];
+  apartmentFullCoverage: boolean;
+  pageCoverageComplete: boolean;
+  parserCoverageHealthy: boolean;
+  /** healthy <= 30 min, coverage_degraded above 30, unsafe at 60 or with no success. */
+  ageStatus: "healthy" | "coverage_degraded" | "unsafe";
+};
+
 export type OlxBrowserExtractResult = {
   apartments: OlxBrowserCategoryExtract;
   houses: OlxBrowserCategoryExtract;
@@ -224,6 +295,12 @@ export type OlxBrowserExtractResult = {
     apartments: OlxPrivateCategoryScan;
     houses: OlxPrivateCategoryScan;
   };
+  businessScan?: {
+    apartments: OlxBusinessCategoryScan;
+    houses: OlxBusinessCategoryScan;
+  };
+  /** Age of the last successful Business apartment snapshot, after this cycle. */
+  businessFullScan?: OlxBusinessFullScanReport;
 };
 
 export type OlxBrowserExtractDeps = {
@@ -243,6 +320,11 @@ export type OlxBrowserExtractDeps = {
   publicationWatermarks?: Partial<Record<OlxBrowserCategoryName, Date>>;
   /** Ignored. A page cursor is not the private-catalog collector. */
   catchup?: Partial<Record<OlxBrowserCategoryName, OlxCatchupState>>;
+  /**
+   * ISO time of the last successful Business apartment snapshot.
+   * Absent means a full snapshot is due.
+   */
+  businessLastFullScanAt?: string;
   /** Ignored. Bootstrap targets do not choose OLX pages. */
   bootstrapTarget?: Date;
   /** @deprecated Prefer publicationWatermarks. Ignored when publicationWatermarks is set. */
@@ -487,6 +569,7 @@ async function extractCategory(
   let structuredCatalog: OlxStructuredCatalogPage | undefined;
   let trustedBusinessIds: string[] = [];
   let structuredAdsCount = 0;
+  let structuredAdIds: string[] = [];
   const refreshStructured = (html: string | undefined) => {
     if (!html) {
       return;
@@ -500,15 +583,30 @@ async function extractCategory(
       structuredCatalog = page;
     }
     trustedBusinessIds = trustedOlxBusinessAdIds(inspection.decoded);
-    structuredAdsCount = extractListingAdsFromPrerenderedState(inspection.decoded).length;
+    const ads = extractListingAdsFromPrerenderedState(inspection.decoded);
+    structuredAdsCount = ads.length;
+    structuredAdIds = ads.flatMap((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return [];
+      }
+      const id = (raw as { id?: unknown }).id;
+      if (typeof id === "number" && Number.isFinite(id)) {
+        return [String(id)];
+      }
+      if (typeof id === "string" && id.trim()) {
+        return [id.trim()];
+      }
+      return [];
+    });
   };
   const structuredExtras = (): Pick<
     OlxBrowserCategoryExtract,
-    "structuredCatalog" | "trustedBusinessIds" | "structuredAdsCount"
+    "structuredCatalog" | "trustedBusinessIds" | "structuredAdsCount" | "structuredAdIds"
   > => ({
     ...(structuredCatalog ? { structuredCatalog } : {}),
     trustedBusinessIds,
     structuredAdsCount,
+    structuredAdIds,
   });
   const markTimeout = () => {
     if (!extractCompleted) {
@@ -990,6 +1088,335 @@ async function extractCategory(
   }
 }
 
+function stampAccountCatalog(listing: Listing, catalog: "private" | "business"): Listing {
+  const metadata: Record<string, unknown> = {
+    ...(listing.metadata ?? {}),
+    olxAccountType: catalog,
+    olxAccountCatalog: catalog,
+  };
+  const level = metadata.ownerEvidenceLevel;
+  const positive =
+    level === "self_declared" ||
+    level === "platform_confirmed" ||
+    listing.sellerType === "owner";
+  const alreadyRejected =
+    level === "intermediary" || level === "conflict" || listing.sellerType === "agent" || listing.sellerType === "business";
+  if (catalog === "business" && !positive && !alreadyRejected) {
+    metadata.ownerEvidenceLevel = "business_ambiguous";
+    metadata.filterConsidersSelfDeclaredOwner = false;
+    const assessment = metadata.sellerAssessment;
+    if (assessment && typeof assessment === "object") {
+      metadata.sellerAssessment = {
+        ...(assessment as Record<string, unknown>),
+        state: "unknown",
+        send: false,
+      };
+    }
+  }
+  return { ...listing, metadata };
+}
+
+function emptyParserRollup(): OlxBusinessParserRollup {
+  return {
+    rawAds: 0,
+    rawUniqueIds: 0,
+    duplicateRawIds: 0,
+    parsedListings: 0,
+    propertyTypeCounts: {},
+    unknownCategoryCounts: {},
+    unknownExamples: [],
+    rejectionReasonCounts: {},
+    examples: [],
+  };
+}
+
+function emptyBusinessScan(status: OlxBusinessScanStatus): OlxBusinessCategoryScan {
+  return {
+    status,
+    mode: "not_run",
+    fullCoverage: false,
+    pageCoverageComplete: false,
+    parserCoverageHealthy: false,
+    ceilingExceeded: false,
+    expectedPages: null,
+    fetchedPages: [],
+    totalElements: null,
+    uniqueListingIds: 0,
+    parser: emptyParserRollup(),
+    failureDetails: [],
+  };
+}
+
+function businessPagesComplete(expectedPages: number, fetchedPages: number[]): boolean {
+  if (expectedPages < 1 || fetchedPages.length !== expectedPages) {
+    return false;
+  }
+  return fetchedPages.every((page, index) => page === index + 1);
+}
+
+/**
+ * Business apartments: page 1 every call. A full snapshot, when due, fetches
+ * every declared page in this same session. There is no cross-cycle cursor.
+ * Business houses: every declared page while the catalog stays within the ceiling.
+ * A failed or ceiling-stopped page is incomplete coverage.
+ */
+async function scanOlxBusinessCategory(
+  browser: Browser,
+  category: OlxBrowserCategoryName,
+  apartmentMode: "hot" | "full",
+  deps: {
+    navigationTimeoutMs: number;
+    categoryBudgetMs: number;
+    now: () => Date;
+    clock: () => number;
+    commit: string;
+    runDeadlineAt: number;
+    cleanupBudgetMs: number;
+    captureDir?: string;
+  },
+): Promise<{ scan: OlxBusinessCategoryScan; listings: Listing[]; notes: string[] }> {
+  const notes: string[] = [];
+  const listings: Listing[] = [];
+  const fetchedPages: number[] = [];
+  const failureDetails: OlxPrivateCatalogFailureDetail[] = [];
+  const rawIdCounts = new Map<string, number>();
+  let rawAds = 0;
+  const rejectionReasonCounts: Record<string, number> = {};
+  const parserExamples: OlxCandidateRejection[] = [];
+  const examplesPerReason = new Map<string, number>();
+  const rememberParser = (extracted: OlxBrowserCategoryExtract) => {
+    rawAds += extracted.structuredAdsCount ?? extracted.htmlDiagnostics?.rawCandidateCount ?? 0;
+    for (const id of extracted.structuredAdIds ?? []) {
+      rawIdCounts.set(id, (rawIdCounts.get(id) ?? 0) + 1);
+    }
+    for (const [reason, count] of Object.entries(extracted.htmlDiagnostics?.rejectionReasonCounts ?? {})) {
+      rejectionReasonCounts[reason] = (rejectionReasonCounts[reason] ?? 0) + count;
+    }
+    for (const example of extracted.htmlDiagnostics?.candidateRejections ?? []) {
+      const kept = examplesPerReason.get(example.reason) ?? 0;
+      if (kept >= 4 || parserExamples.length >= 40) {
+        continue;
+      }
+      examplesPerReason.set(example.reason, kept + 1);
+      parserExamples.push(example);
+    }
+  };
+  const finishParser = (parsed: Listing[]): OlxBusinessParserRollup => {
+    let duplicateRawIds = 0;
+    for (const count of rawIdCounts.values()) {
+      if (count > 1) {
+        duplicateRawIds += count - 1;
+      }
+    }
+    const propertyTypeCounts: Record<string, number> = {};
+    const unknownCategoryCounts: Record<string, number> = {};
+    const unknownExamples: { id: string; title: string; categoryId: string }[] = [];
+    for (const listing of parsed) {
+      propertyTypeCounts[listing.propertyType] = (propertyTypeCounts[listing.propertyType] ?? 0) + 1;
+      if (listing.propertyType !== "unknown") {
+        continue;
+      }
+      const rawCategory = listing.metadata?.olxCategoryId;
+      const categoryId =
+        typeof rawCategory === "number" || typeof rawCategory === "string" ? String(rawCategory) : "missing";
+      unknownCategoryCounts[categoryId] = (unknownCategoryCounts[categoryId] ?? 0) + 1;
+      if (unknownExamples.length < 8) {
+        unknownExamples.push({
+          id: listing.sourceId,
+          title: listing.title.slice(0, 120),
+          categoryId,
+        });
+      }
+    }
+    return {
+      rawAds,
+      rawUniqueIds: rawIdCounts.size,
+      duplicateRawIds,
+      parsedListings: parsed.length,
+      propertyTypeCounts,
+      unknownCategoryCounts,
+      unknownExamples,
+      rejectionReasonCounts,
+      examples: parserExamples,
+    };
+  };
+  let expectedPages: number | null = null;
+  let totalElements: number | null = null;
+  let status: OlxBusinessScanStatus = "complete";
+  let mode: OlxBusinessCategoryScan["mode"];
+
+  const remember = (page: number, reason: string, detail: string) => {
+    failureDetails.push({ page, reason, detail });
+    notes.push(detail);
+  };
+
+  const fetchPage = async (page: number): Promise<OlxBrowserCategoryExtract | "stop"> => {
+    if (remainingMs(deps.runDeadlineAt, deps.clock()) < MIN_GOTO_BUDGET_MS) {
+      remember(page, "category_budget_exhausted", `${category}_business_page_${page}_skipped_budget`);
+      status = fetchedPages.length === 0 ? "skipped_budget" : "incomplete";
+      return "stop";
+    }
+    const url = buildOlxBrowserCategoryUrl(category, { page, accountCatalog: "business" });
+    const left = remainingMs(deps.runDeadlineAt, deps.clock());
+    try {
+      const extracted = await extractCategory(browser, category, url, {
+        navigationTimeoutMs: Math.min(deps.navigationTimeoutMs, left),
+        categoryBudgetMs: Math.min(deps.categoryBudgetMs, left),
+        now: deps.now,
+        clock: deps.clock,
+        commit: deps.commit,
+        runDeadlineAt: deps.runDeadlineAt,
+        cleanupBudgetMs: deps.cleanupBudgetMs,
+        ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
+      });
+      if (navigationFailed(extracted)) {
+        const nav = extracted.rejections.find((item) =>
+          item.reason === "category_page_navigation_failed" ||
+          item.reason === "category_budget_exhausted" ||
+          item.reason === "navigation_response_missing",
+        );
+        remember(page, nav?.reason ?? "category_page_navigation_failed", nav?.detail ?? `${category}_business_page_${page}_navigation_failed`);
+        status = "navigation_failed";
+        return "stop";
+      }
+      const structured = extracted.structuredCatalog;
+      if (!structured) {
+        const statePresent = extracted.htmlDiagnostics?.hasPrerenderedState === true;
+        const reason = statePresent ? "olx_pagination_invalid" : "olx_structured_state_missing";
+        remember(page, reason, `${category}_business_page_${page}_${reason}`);
+        status = "parser_failure";
+        return "stop";
+      }
+      if (structured.pageNumber !== page) {
+        remember(page, "olx_page_mismatch", `${category}_business_page_${page}_mismatch structured=${structured.pageNumber}`);
+        status = "page_mismatch";
+        return "stop";
+      }
+      if (expectedPages === null) {
+        expectedPages = structured.totalPages;
+        totalElements = structured.totalElements;
+      } else if (structured.totalPages !== expectedPages) {
+        remember(
+          page,
+          "olx_pagination_unstable",
+          `${category}_business_page_${page}_totalPages_changed expected=${expectedPages} actual=${structured.totalPages}`,
+        );
+        status = "pagination_unstable";
+        return "stop";
+      }
+      const adsCount = extracted.structuredAdsCount ?? 0;
+      if (structured.totalElements > 0 && adsCount === 0 && extracted.listings.length === 0) {
+        remember(page, "olx_structured_state_missing", `${category}_business_page_${page}_elements_without_ads`);
+        status = "parser_failure";
+        return "stop";
+      }
+      fetchedPages.push(page);
+      listings.push(...extracted.listings.map((listing) => stampAccountCatalog(listing, "business")));
+      return extracted;
+    } catch (error) {
+      if (!isRecoverableOlxCategoryExtractionError(error)) {
+        throw error;
+      }
+      remember(page, "category_page_navigation_failed", `${category}_business_page_${page}_extraction_error=${safeErrorDetail(error)}`);
+      status = "navigation_failed";
+      return "stop";
+    }
+  };
+
+  const intendedMode: OlxBusinessCategoryScan["mode"] = category === "houses" ? "full" : apartmentMode;
+  const first = await fetchPage(1);
+  if (first !== "stop") {
+    rememberParser(first);
+  }
+  if (first === "stop" || expectedPages === null) {
+    if (status === "complete") {
+      status = "parser_failure";
+    }
+    const parser = finishParser([]);
+    const scan: OlxBusinessCategoryScan = {
+      ...emptyBusinessScan(status),
+      mode: intendedMode,
+      parserCoverageHealthy: isOlxParserCoverageHealthy(parser.rejectionReasonCounts),
+      failureDetails,
+      fetchedPages,
+      expectedPages,
+      totalElements,
+      parser,
+    };
+    return { scan, listings: [], notes };
+  }
+
+  const ceiling =
+    category === "apartments" ? OLX_BUSINESS_APARTMENT_PAGE_CEILING : OLX_BUSINESS_HOUSE_PAGE_CEILING;
+  let ceilingExceeded = false;
+  const plannedPages: number[] = [];
+  if (category === "apartments" && apartmentMode === "hot") {
+    mode = "hot";
+  } else if (expectedPages > ceiling) {
+    mode = "full";
+    ceilingExceeded = true;
+    status = "incomplete";
+    remember(
+      1,
+      "olx_business_page_ceiling",
+      `${category}_business_total_pages_${expectedPages}_exceeds_ceiling_${ceiling}`,
+    );
+  } else {
+    mode = "full";
+    for (let page = 2; page <= expectedPages; page += 1) {
+      plannedPages.push(page);
+    }
+  }
+
+  for (const page of plannedPages) {
+    if (status !== "complete") {
+      break;
+    }
+    const extracted = await fetchPage(page);
+    if (extracted === "stop") {
+      break;
+    }
+    rememberParser(extracted);
+  }
+
+  const fullCoverage =
+    mode === "full" &&
+    !ceilingExceeded &&
+    status === "complete" &&
+    businessPagesComplete(expectedPages, fetchedPages);
+  const deduped = dedupeListings(listings);
+  const parser = finishParser(deduped);
+  const parserCoverageHealthy = isOlxParserCoverageHealthy(parser.rejectionReasonCounts);
+  const scan: OlxBusinessCategoryScan = {
+    status,
+    mode,
+    fullCoverage,
+    pageCoverageComplete: fullCoverage,
+    parserCoverageHealthy,
+    ceilingExceeded,
+    expectedPages,
+    fetchedPages,
+    totalElements,
+    uniqueListingIds: deduped.length,
+    parser,
+    failureDetails,
+  };
+  notes.push(
+    `${category}_business_mode=${mode}`,
+    `${category}_business_full_coverage=${fullCoverage}`,
+    `${category}_business_page_coverage=${fullCoverage}`,
+    `${category}_business_parser_coverage=${parserCoverageHealthy}`,
+    `${category}_business_ceiling_exceeded=${ceilingExceeded}`,
+    `${category}_business_status=${status}`,
+    `${category}_business_total_pages=${expectedPages}`,
+    `${category}_business_pages_fetched=${fetchedPages.join(",") || "none"}`,
+    ...(category === "houses"
+      ? [`${category}_business_routine_max_pages=${OLX_BUSINESS_HOUSE_ROUTINE_MAX_PAGES}`]
+      : []),
+  );
+  return { scan, listings: deduped, notes };
+}
+
 /**
  * One Chromium launch, apartments then houses (concurrency=1), always close.
  * Each category walks structured pages 1..totalPages on the Private catalog.
@@ -1052,6 +1479,12 @@ export async function extractOlxListingsViaBrowser(
   let houses: OlxBrowserCategoryExtract | undefined;
   let apartmentsScan: OlxPrivateCategoryScan | undefined;
   let housesScan: OlxPrivateCategoryScan | undefined;
+  const previousFullScanAt = parseOlxBusinessLastFullScanAt(deps.businessLastFullScanAt);
+  const apartmentMode = isOlxBusinessFullScanDue(previousFullScanAt, now()) ? "full" : "hot";
+  let businessApartmentsScan: OlxBusinessCategoryScan;
+  let businessHousesScan: OlxBusinessCategoryScan;
+  let businessApartmentListings: Listing[] = [];
+  let businessHouseListings: Listing[] = [];
   let browserCloseMs: number;
   let browserCloseTimedOut: boolean;
   try {
@@ -1119,6 +1552,61 @@ export async function extractOlxListingsViaBrowser(
         notes.push(`houses_category_extraction_error=${detail}`);
       }
     }
+
+    const businessDeps = {
+      navigationTimeoutMs,
+      categoryBudgetMs,
+      now,
+      clock,
+      commit,
+      runDeadlineAt,
+      cleanupBudgetMs,
+      ...(deps.captureDir ? { captureDir: deps.captureDir } : {}),
+    };
+    try {
+      const businessApartments = await scanOlxBusinessCategory(
+        browser,
+        "apartments",
+        apartmentMode,
+        businessDeps,
+      );
+      businessApartmentsScan = businessApartments.scan;
+      businessApartmentListings = businessApartments.listings;
+      notes.push(...businessApartments.notes);
+    } catch (error) {
+      if (!isRecoverableOlxCategoryExtractionError(error)) {
+        throw error;
+      }
+      const detail = safeErrorDetail(error);
+      businessApartmentsScan = {
+        ...emptyBusinessScan("navigation_failed"),
+        mode: apartmentMode,
+        failureDetails: [{ page: 1, reason: "category_page_navigation_failed", detail }],
+      };
+      notes.push(`business_apartments_extraction_error=${detail}`);
+    }
+    try {
+      const businessHouses = await scanOlxBusinessCategory(
+        browser,
+        "houses",
+        apartmentMode,
+        businessDeps,
+      );
+      businessHousesScan = businessHouses.scan;
+      businessHouseListings = businessHouses.listings;
+      notes.push(...businessHouses.notes);
+    } catch (error) {
+      if (!isRecoverableOlxCategoryExtractionError(error)) {
+        throw error;
+      }
+      const detail = safeErrorDetail(error);
+      businessHousesScan = {
+        ...emptyBusinessScan("navigation_failed"),
+        mode: "full",
+        failureDetails: [{ page: 1, reason: "category_page_navigation_failed", detail }],
+      };
+      notes.push(`business_houses_extraction_error=${detail}`);
+    }
   } finally {
     const closed = await closeWithBudget(() => browser.close(), cleanupBudgetMs);
     browserCloseMs = closed.elapsedMs;
@@ -1129,12 +1617,60 @@ export async function extractOlxListingsViaBrowser(
     throw new Error("OLX browser extract incomplete before browser.close()");
   }
   const privateScan = { apartments: apartmentsScan, houses: housesScan };
+  const businessScan = { apartments: businessApartmentsScan, houses: businessHousesScan };
+  const apartmentCoverageProblem =
+    businessApartmentsScan.mode === "not_run" ||
+    businessApartmentsScan.status !== "complete" ||
+    businessApartmentsScan.ceilingExceeded ||
+    (businessApartmentsScan.mode === "full" && !businessApartmentsScan.fullCoverage) ||
+    (businessApartmentsScan.mode === "full" && !businessApartmentsScan.parserCoverageHealthy);
+  const houseCoverageProblem =
+    businessHousesScan.mode === "not_run" ||
+    businessHousesScan.status !== "complete" ||
+    businessHousesScan.ceilingExceeded ||
+    !businessHousesScan.fullCoverage ||
+    !businessHousesScan.parserCoverageHealthy;
+  const privateIncomplete =
+    apartmentsScan.status !== "complete" || housesScan.status !== "complete";
+  const snapshotCommitAllowed =
+    businessApartmentsScan.fullCoverage === true &&
+    !apartmentCoverageProblem &&
+    !houseCoverageProblem &&
+    !privateIncomplete;
+  const snapshotCompletedAt = snapshotCommitAllowed ? now() : undefined;
+  const effectiveFullScanAt = snapshotCompletedAt ?? previousFullScanAt;
+  const fullScanAge = assessOlxBusinessFullScanAge(effectiveFullScanAt, now());
+  const businessFullScan: OlxBusinessFullScanReport = {
+    lastFullScanAt: fullScanAge.lastFullScanAt,
+    ageMinutes: fullScanAge.ageMinutes,
+    due: fullScanAge.due,
+    succeeded: snapshotCommitAllowed,
+    pagesExpected: businessApartmentsScan.expectedPages,
+    pagesFetched: businessApartmentsScan.fetchedPages.length,
+    apartmentMode: businessApartmentsScan.mode,
+    apartmentFullCoverage: businessApartmentsScan.fullCoverage,
+    pageCoverageComplete: businessApartmentsScan.pageCoverageComplete,
+    parserCoverageHealthy: businessApartmentsScan.parserCoverageHealthy,
+    ageStatus: fullScanAge.unsafe
+      ? "unsafe"
+      : fullScanAge.degraded
+        ? "coverage_degraded"
+        : "healthy",
+  };
   const pagesFetchedTotal =
-    apartmentsScan.fetchedPages.length + housesScan.fetchedPages.length;
-  // Structured pages exhausted. This is not a publication-time boundary.
-  const boundaryReached =
-    apartmentsScan.status === "complete" && housesScan.status === "complete";
-  const coverageTruncated = !boundaryReached;
+    apartmentsScan.fetchedPages.length +
+    housesScan.fetchedPages.length +
+    businessApartmentsScan.fetchedPages.length +
+    businessHousesScan.fetchedPages.length;
+  // A hot apartment page is acquisition, not a coverage hole, while the last
+  // snapshot is still inside the healthy age. A failed or overdue snapshot is not.
+  const coverageTruncated =
+    privateIncomplete ||
+    apartmentCoverageProblem ||
+    houseCoverageProblem ||
+    fullScanAge.degraded ||
+    fullScanAge.unsafe;
+  const boundaryReached = !coverageTruncated;
 
   notes.push(
     ...olxPrivateCatalogNotes({
@@ -1188,7 +1724,12 @@ export async function extractOlxListingsViaBrowser(
     );
   }
 
-  const listings = dedupeListings([...apartments.listings, ...houses.listings]);
+  const listings = dedupeListings([
+    ...apartments.listings.map((listing) => stampAccountCatalog(listing, "private")),
+    ...houses.listings.map((listing) => stampAccountCatalog(listing, "private")),
+    ...businessApartmentListings,
+    ...businessHouseListings,
+  ]);
   const housesSkippedBudget = houses.rejections.some((item) => item.reason === "total_budget_exhausted");
   const accessibilityOk =
     apartments.accessibilityOk && (houses.accessibilityOk || housesSkippedBudget);
@@ -1216,6 +1757,18 @@ export async function extractOlxListingsViaBrowser(
   if (cleanupTimedOut) {
     notes.push("cleanup_budget_hit=true");
   }
+  notes.push(
+    `businessApartmentMode=${businessFullScan.apartmentMode}`,
+    `businessApartmentFullCoverage=${businessFullScan.apartmentFullCoverage}`,
+    `businessLastFullScanAt=${businessFullScan.lastFullScanAt ?? "none"}`,
+    `businessFullScanAgeMinutes=${businessFullScan.ageMinutes === null ? "none" : String(businessFullScan.ageMinutes)}`,
+    `businessFullScanDue=${businessFullScan.due}`,
+    `businessFullScanSucceeded=${businessFullScan.succeeded}`,
+    `businessFullScanPagesExpected=${businessFullScan.pagesExpected ?? "none"}`,
+    `businessFullScanPagesFetched=${businessFullScan.pagesFetched}`,
+    `businessFullScanAgeStatus=${businessFullScan.ageStatus}`,
+    "business_cross_cycle_page_cursor_not_coverage=true",
+  );
   const coverage: IncrementalCoverage = {
     pagesFetched: pagesFetchedTotal,
     cardsFetched: listings.length,
@@ -1226,6 +1779,7 @@ export async function extractOlxListingsViaBrowser(
       [olxCategoryToCoverageKey("apartments")]: null,
       [olxCategoryToCoverageKey("houses")]: null,
     },
+    ...(snapshotCompletedAt ? { olxBusinessLastFullScanAt: snapshotCompletedAt.toISOString() } : {}),
   };
   return {
     apartments,
@@ -1246,6 +1800,8 @@ export async function extractOlxListingsViaBrowser(
     },
     coverage,
     privateScan,
+    businessScan,
+    businessFullScan,
     ...(deps.captureDir ? { captureRootDir: deps.captureDir } : {}),
   };
 }

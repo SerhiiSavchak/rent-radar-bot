@@ -199,8 +199,8 @@ describe("registration year, OLX account type, and conflict", () => {
       }),
     ).toBe(true);
     const business = classifyOwner({ isBusiness: true, platformPrivate: false });
-    expect(business.sellerType).toBe("business");
-    expect(business.ownerEvidenceLevel).toBe("intermediary");
+    expect(business.sellerType).toBe("unknown");
+    expect(business.ownerEvidenceLevel).toBe("business_ambiguous");
     expect(
       isSellerEligible({
         sellerType: business.sellerType,

@@ -96,10 +96,10 @@ describe("seller identity name context", () => {
     ).toBeTruthy();
   });
 
-  it("rejects trusted OLX isBusiness as commercial intermediary", () => {
+  it("rejects OLX isBusiness without an owner claim", () => {
     const owner = classifyOwner({ isBusiness: true, text: "Здам квартиру" });
-    expect(owner.sellerType).toBe("business");
-    expect(owner.ownerEvidenceLevel).toBe("intermediary");
+    expect(owner.sellerType).toBe("unknown");
+    expect(owner.ownerEvidenceLevel).toBe("business_ambiguous");
     expect(
       isSellerEligible({
         sellerType: owner.sellerType,

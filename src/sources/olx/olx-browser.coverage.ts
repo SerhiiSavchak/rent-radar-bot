@@ -50,11 +50,116 @@ export const OLX_PRIVATE_TOTAL_BUDGET_MS = 360_000;
 export const OLX_PRIVATE_HOUSE_RESERVE_MS = 90_000;
 
 /**
- * Shared acquired cap (120) was sized for one unfiltered catalog page (~51 cards).
- * Verified private apartments are 140 unique ids. This ceiling keeps that catalog
- * whole and still rejects a runaway payload.
+ * One cycle keeps the full Private catalog plus one complete Business apartment
+ * snapshot (~1000 cards at the current 25-page size) or a hot page. 2500 stays
+ * above that set and still rejects a runaway payload. Truncation is incomplete
+ * coverage and must not be recorded as a successful Business snapshot.
  */
-export const OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY = 250;
+export const OLX_PRIVATE_ACQUIRED_CAP_PER_CATEGORY = 2500;
+
+/** How often a complete Business apartment snapshot is due. */
+export const OLX_BUSINESS_FULL_SCAN_INTERVAL_MS = 30 * 60 * 1000;
+
+export const OLX_BUSINESS_POLL_INTERVAL_MINUTES = 10;
+export const OLX_BUSINESS_COVERAGE_TARGET_MINUTES = 30;
+export const OLX_BUSINESS_COVERAGE_UNSAFE_MINUTES = 60;
+
+/**
+ * Houses at or under this size are fetched whole on every poll.
+ * Larger house catalogs are still fetched in one session while they stay
+ * under the safety ceiling. There is no cross-cycle house page cursor.
+ */
+export const OLX_BUSINESS_HOUSE_ROUTINE_MAX_PAGES = 4;
+
+/**
+ * Hard stop for one Business walk. Current live apartments are 25 pages.
+ * 40 leaves headroom without an unbounded crawl. Above this, coverage is
+ * degraded and the full-scan timestamp is not written.
+ */
+export const OLX_BUSINESS_APARTMENT_PAGE_CEILING = 40;
+export const OLX_BUSINESS_HOUSE_PAGE_CEILING = 40;
+
+/** schema_meta key. Value is an ISO timestamp, written only after a complete snapshot. */
+export const OLX_BUSINESS_LAST_FULL_SCAN_KEY = "olx_business_last_full_scan_at";
+
+/**
+ * Structured ads that never became a Listing. A wrong category or a duplicate
+ * id is not lost rental data. A missing city is: the geo filter never sees it.
+ */
+export const OLX_PARSER_LOSS_REASONS = [
+  "adapt_failed_missing_id_or_title",
+  "missing_city_label",
+  "schema_validation",
+  "listing_required_field_missing",
+] as const;
+
+export function olxParserLossCount(counts: Record<string, number> | undefined): number {
+  if (!counts) {
+    return 0;
+  }
+  return OLX_PARSER_LOSS_REASONS.reduce((sum, reason) => sum + (counts[reason] ?? 0), 0);
+}
+
+export function isOlxParserCoverageHealthy(counts: Record<string, number> | undefined): boolean {
+  return olxParserLossCount(counts) === 0;
+}
+
+/**
+ * Retired keys from the cross-cycle page cursor. Production deletes them.
+ * They are not coverage.
+ */
+export const RETIRED_OLX_BUSINESS_ROLLING_KEYS = [
+  "olx_business_rolling_apartments",
+  "olx_business_rolling_houses",
+] as const;
+
+export function parseOlxBusinessLastFullScanAt(raw: string | undefined): Date | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+  return parsed;
+}
+
+/** No previous success, or the last success is at least 30 minutes old. */
+export function isOlxBusinessFullScanDue(lastFullScanAt: Date | undefined, now: Date): boolean {
+  if (!lastFullScanAt) {
+    return true;
+  }
+  return now.getTime() - lastFullScanAt.getTime() >= OLX_BUSINESS_FULL_SCAN_INTERVAL_MS;
+}
+
+export function assessOlxBusinessFullScanAge(
+  lastFullScanAt: Date | undefined,
+  now: Date,
+): {
+  lastFullScanAt: string | null;
+  ageMinutes: number | null;
+  due: boolean;
+  degraded: boolean;
+  unsafe: boolean;
+} {
+  if (!lastFullScanAt) {
+    return {
+      lastFullScanAt: null,
+      ageMinutes: null,
+      due: true,
+      degraded: true,
+      unsafe: true,
+    };
+  }
+  const ageMinutes = (now.getTime() - lastFullScanAt.getTime()) / 60_000;
+  return {
+    lastFullScanAt: lastFullScanAt.toISOString(),
+    ageMinutes,
+    due: ageMinutes >= OLX_BUSINESS_COVERAGE_TARGET_MINUTES,
+    degraded: ageMinutes > OLX_BUSINESS_COVERAGE_TARGET_MINUTES,
+    unsafe: ageMinutes >= OLX_BUSINESS_COVERAGE_UNSAFE_MINUTES,
+  };
+}
 
 /**
  * Hard cap used only for offline depth probes / feasibility math.
@@ -133,7 +238,15 @@ export function assessOlxOrderIndependentFullScan(input: {
 }
 
 /**
- * Model miss risk when the catalog reshuffles while a forward page walk runs.
+ * Evidence against treating an offset/page cursor as catalog coverage.
+ * OLX pagination is non-monotone. A listing can move onto an already-skipped
+ * page, and HTML createdTime order is not a verified newest-first walk.
+ *
+ * Pages 2–9, then 10–17, then 18–25 collected on three polls are NOT one
+ * complete catalog. Production Business coverage is a same-cycle snapshot of
+ * every declared page. These helpers exist so that claim cannot return
+ * without revisiting the miss.
+ *
  * A listing inserted on page 1 after the walker left page 1 is missed in-scan.
  */
 export function olxForwardScanMissesInsertedOnPage1(input: {
@@ -236,6 +349,8 @@ export function buildOlxBrowserCategoryUrl(
      * unfiltered probe. Private is not ownership. Do not emit owner_type=private.
      */
     privateOnly?: boolean;
+    /** Account catalog. Business does not replace Private. */
+    accountCatalog?: "private" | "business";
   } = {},
 ): string {
   const path = category === "apartments" ? OLX_BROWSER_APARTMENTS_PATH : OLX_BROWSER_HOUSES_PATH;
@@ -244,7 +359,9 @@ export function buildOlxBrowserCategoryUrl(
   if (distance !== null && distance !== undefined) {
     params.set("search[dist]", String(distance));
   }
-  if (options.privateOnly !== false) {
+  if (options.accountCatalog === "business") {
+    params.set("search[private_business]", "business");
+  } else if (options.accountCatalog === "private" || options.privateOnly !== false) {
     params.set("search[private_business]", "private");
   }
   if (options.orderCreatedDesc === true) {

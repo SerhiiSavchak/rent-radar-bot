@@ -213,13 +213,13 @@ describe("positive owner evidence — intermediary conflict", () => {
     ).toBe(false);
   });
 
-  it("Business + self-declared owner text → Business wins, not confirmed_owner", () => {
+  it("Business account plus a clean owner claim is self-declared, not a platform owner", () => {
     const result = classifyOwner({
       isBusiness: true,
       text: "я власник. від власника без посередників",
     });
-    expect(result.sellerType).toBe("business");
-    expect(result.ownerEvidenceLevel).toBe("conflict");
+    expect(result.sellerType).toBe("unknown");
+    expect(result.ownerEvidenceLevel).toBe("self_declared");
     expect(
       classifyOlxLinkedSellerHtml(
         olxHtml({
@@ -229,7 +229,7 @@ describe("positive owner evidence — intermediary conflict", () => {
         }),
         TOKEN,
       ).verdict,
-    ).toBe("confirmed_intermediary");
+    ).not.toBe("confirmed_intermediary");
   });
 });
 
@@ -272,27 +272,18 @@ describe("positive owner evidence — OR vs AND contract", () => {
 });
 
 describe("OLX Business vs Private account type", () => {
-  it("trusted isBusiness=true → strong reject, cannot become confirmed_owner", () => {
+  it("isBusiness=true without owner evidence fails closed and is not a seller role", () => {
     const result = classifyOwner({ isBusiness: true });
-    expect(result.sellerType).toBe("business");
-    expect(result.ownerEvidenceLevel).toBe("intermediary");
+    expect(result.sellerType).toBe("unknown");
+    expect(result.ownerEvidenceLevel).toBe("business_ambiguous");
     expect(
       sellerRejectionReason({
         sellerType: result.sellerType,
         metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
       }),
-    ).toBeTruthy();
-    expect(
-      ["platform_business_role", "explicit_intermediary"].includes(
-        sellerRejectionReason({
-          sellerType: result.sellerType,
-          metadata: { ownerEvidenceLevel: result.ownerEvidenceLevel },
-        }) ?? "",
-      ),
-    ).toBe(true);
-    expect(
-      classifyOlxLinkedSellerHtml(olxHtml({ sellerType: null, isBusiness: true }), TOKEN).verdict,
-    ).toBe("confirmed_intermediary");
+    ).toBe("business_without_positive_owner_evidence");
+    const linked = classifyOlxLinkedSellerHtml(olxHtml({ sellerType: null, isBusiness: true }), TOKEN);
+    expect(linked.evidence).toContain("business_without_positive_owner_evidence");
   });
 
   it("trusted Private alone is NOT confirmed_owner", () => {

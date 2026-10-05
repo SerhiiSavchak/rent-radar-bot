@@ -200,12 +200,12 @@ describe("owner classifier", () => {
     expect(result.ownerEvidenceLevel).toBe("intermediary");
   });
 
-  it("treats trusted OLX isBusiness as commercial intermediary (not ownership)", () => {
+  it("treats OLX isBusiness alone as fail-closed context, not a seller role", () => {
     const result = classifyOwner({
       isBusiness: true,
     });
-    expect(result.sellerType).toBe("business");
-    expect(result.ownerEvidenceLevel).toBe("intermediary");
+    expect(result.sellerType).toBe("unknown");
+    expect(result.ownerEvidenceLevel).toBe("business_ambiguous");
     expect(
       isSellerEligible({
         sellerType: result.sellerType,
@@ -283,12 +283,12 @@ describe("owner classifier", () => {
     ).toBe(true);
   });
 
-  it("rejects trusted OLX isBusiness as confirmed commercial intermediary", () => {
+  it("rejects OLX isBusiness without owner evidence and does not call it a confirmed agent", () => {
     const result = classifyOwner({ isBusiness: true });
     const assessment = sellerAssessmentFromClassification(result);
-    expect(result.sellerType).toBe("business");
-    expect(result.ownerEvidenceLevel).toBe("intermediary");
-    expect(assessment.state).toBe("confirmed_agent");
+    expect(result.sellerType).toBe("unknown");
+    expect(result.ownerEvidenceLevel).toBe("business_ambiguous");
+    expect(assessment.state).not.toBe("confirmed_agent");
     expect(assessment.send).toBe(false);
     expect(assessment.evidence).toEqual(
       expect.arrayContaining([
@@ -296,7 +296,7 @@ describe("owner classifier", () => {
           source: "account",
           type: "business_flag",
           value: "true",
-          strength: "strong",
+          strength: "context",
         }),
       ]),
     );

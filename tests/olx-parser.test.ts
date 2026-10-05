@@ -60,8 +60,9 @@ describe("OLX parser", () => {
     expect(listings[0]?.metadata?.lastRefreshTime).toBe("2026-09-14T18:22:44+03:00");
     expect(listings[0]?.metadata?.urlToken).toBe("11gqaj");
     expect(listings[0]?.metadata?.olxIsBusiness).toBe(true);
-    expect(listings[0]?.sellerType).toBe("business");
-    expect(listings[0]?.metadata?.ownerEvidenceLevel).toBe("intermediary");
+    expect(listings[0]?.metadata?.olxAccountType).toBe("business");
+    expect(listings[0]?.sellerType).toBe("unknown");
+    expect(listings[0]?.metadata?.ownerEvidenceLevel).toBe("business_ambiguous");
     expect(isSellerEligible(listings[0]!)).toBe(false);
   });
 
@@ -104,6 +105,52 @@ describe("OLX parser", () => {
       extractOlxUrlToken("https://www.olx.ua/d/uk/obyavlenie/zdam-1-kmnatnu-kvartiru-ID11gWHG.html"),
     ).toBe("11gWHG");
     expect(extractOlxUrlToken("https://www.olx.ua/uk/obyavlenie/no-token-here")).toBeUndefined();
+  });
+
+  it("keeps a long-term OLX apartment when the description only counts rooms", () => {
+    const listings = parseOlxOffersPayload({
+      data: [
+        {
+          id: 935252831,
+          title: "Оренда квартири на Сихові",
+          description: "2 кімнати, поверх 4",
+          url: "https://www.olx.ua/d/uk/obyavlenie/orenda-ID11rooms.html",
+          created_time: "2026-09-21T10:00:00+03:00",
+          category: { id: 1760 },
+          location: { city: { name: "Львів" } },
+        },
+      ],
+    });
+    expect(listings[0]?.propertyType).toBe("apartment");
+  });
+
+  it("still rejects a room, a daily rental, and a sale inside the long-term OLX category", () => {
+    const offer = (title: string, description: string) => ({
+      id: 1,
+      title,
+      description,
+      url: "https://www.olx.ua/d/uk/obyavlenie/orenda-ID11room1.html",
+      created_time: "2026-09-21T10:00:00+03:00",
+      category: { id: 1760 },
+      location: { city: { name: "Львів" } },
+    });
+    expect(parseOlxOffersPayload({ data: [offer("Оренда кімнати", "окрема кімната")] })[0]?.propertyType).toBe(
+      "unknown",
+    );
+    expect(
+      parseOlxOffersPayload({ data: [offer("Оренда квартири", "здача подобово")] })[0]?.propertyType,
+    ).toBe("unknown");
+    expect(parseOlxOffersPayload({ data: [offer("Продаж квартири", "терміново")] })[0]?.propertyType).toBe(
+      "unknown",
+    );
+    expect(
+      parseOlxOffersPayload({
+        data: [offer("Вільна! 75м. Паркінг. Стрийський парк", "Здається квартира біля парку")],
+      })[0]?.propertyType,
+    ).toBe("apartment");
+    expect(parseOlxOffersPayload({ data: [offer("Оренда паркомісця", "підземний паркінг")] })[0]?.propertyType).toBe(
+      "unknown",
+    );
   });
 });
 

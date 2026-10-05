@@ -48,6 +48,7 @@ export type LinkedSellerOutcome =
   | "detail_transport_failure"
   | "detail_parser_failure"
   | "detail_capacity_deferred"
+  | "business_without_positive_owner_evidence"
   | "skipped_after_rate_limit"
   | "not_required";
 
