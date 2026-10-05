@@ -149,9 +149,9 @@ export function mapOlxBrowserExtractToFetchResult(
       ? `private_apartments_${privateScan?.apartments.status ?? "incomplete"}`
       : privateScan?.houses.status !== "complete"
         ? `private_houses_${privateScan?.houses.status ?? "incomplete"}`
-        : businessScan?.apartments.status !== "complete"
+        : businessScan && businessScan.apartments.status !== "complete"
           ? `business_apartments_${businessScan.apartments.status}`
-          : businessScan?.houses.status !== "complete"
+          : businessScan && businessScan.houses.status !== "complete"
             ? `business_houses_${businessScan.houses.status}`
             : coverageTruncated
               ? "coverage_truncated"
