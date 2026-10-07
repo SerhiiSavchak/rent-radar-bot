@@ -8,7 +8,9 @@ Production facts:
 - service: `rent-radar-telegram.service` (user systemd)
 - checkout: `/home/ubuntu/rent-radar-bot`
 - database: `/home/ubuntu/rent-radar-bot/data/rent-radar.sqlite`
-- previous production SHA: `533e69f55ffaa6de2f0cb360e267be1c34bf301b`
+- previous production SHA: `12203d9c9db71a39a8fe962bd1ac92a10d2d31ba`
+- previous schema: 13
+- target schema after this release: 14
 - Telegram destination is configuration. A migrated supergroup id is stored in `schema_meta.telegram_effective_chat_id` after Telegram returns `migrate_to_chat_id`. Do not hard-code it.
 
 The unit forces `ENABLE_DOMRIA=true`, `ENABLE_LUN=true`, `ENABLE_OLX=false`, `ENABLE_OLX_BROWSER=true`, `ENABLE_RIELTOR=false`, `GEO_UNKNOWN_POLICY=exclude`, `TARGET_RADIUS_KM=15`, `FIRST_RUN_MODE=seed`. Those lines override the env file.
@@ -100,7 +102,7 @@ git rev-parse HEAD
 Install only when the lockfile changed:
 
 ```bash
-git diff --name-only 533e69f55ffaa6de2f0cb360e267be1c34bf301b "$RELEASE_SHA" -- package-lock.json
+git diff --name-only 12203d9c9db71a39a8fe962bd1ac92a10d2d31ba "$RELEASE_SHA" -- package-lock.json
 npm ci
 ```
 
@@ -159,24 +161,24 @@ One Node poller. A pending outbox row is still one row and is retried. A sent ro
 
 ## 18. Rollback
 
-Previous SHA: `533e69f55ffaa6de2f0cb360e267be1c34bf301b` (schema 11). That process refuses any other schema version.
+Previous production SHA: `12203d9c9db71a39a8fe962bd1ac92a10d2d31ba` (schema 13). That process expects schema 13 and refuses any other schema version. Do not use the older schema-11 SHA `533e69f55ffaa6de2f0cb360e267be1c34bf301b` as the normal rollback target for this release.
 
-Before the new process opens the database, migrations have not run. Stop the service and `git checkout` that SHA, then start. No restore.
+Before migration 14 has been applied, the new process has not opened the database. Stop the service and `git checkout` the previous production SHA, then start. A code-only rollback is possible. No restore.
 
-After the new process has opened the database, schema is 14. Restoring the step 5 backup is required. A code-only checkout will exit on `schema version 14 != 11`.
+After migration 14 is applied, schema is 14. Previous production code expects schema 13, so a code-only checkout exits on `schema version 14 != 13`. Restore the WAL-safe step 5 backup before starting the previous SHA.
 
 ```bash
 systemctl --user stop rent-radar-telegram.service
 pgrep -af 'test-telegram-poll|chrome|chromium' || true
 mv "$DB" "$DB.failed-release"
 cp "$BACKUP" "$DB"
-git checkout 533e69f55ffaa6de2f0cb360e267be1c34bf301b
+git checkout 12203d9c9db71a39a8fe962bd1ac92a10d2d31ba
 npm ci
 systemctl --user start rent-radar-telegram.service
 systemctl --user is-active rent-radar-telegram.service
 ```
 
-Confirm heartbeat `commit` is `533e69f55ffaa6de2f0cb360e267be1c34bf301b` and `source_health` is readable. The restored file does not contain sends written after the backup. Those listings can be sent again.
+Confirm heartbeat `commit` is `12203d9c9db71a39a8fe962bd1ac92a10d2d31ba` and `source_health` is readable. One Node poller. The restored file does not contain sends written after the backup. Those listings can be sent again.
 
 ## Retention
 
