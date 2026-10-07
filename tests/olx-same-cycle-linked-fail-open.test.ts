@@ -254,6 +254,8 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
           ...olxPeer({
             ownerEvidenceLevel: "platform_confirmed",
             distinctPreciseRealEstateProperties: 1,
+            realEstateAds: 1,
+            coarseLocations: 1,
           }),
           sellerType: "owner",
         },

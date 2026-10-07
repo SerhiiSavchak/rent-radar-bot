@@ -53,6 +53,7 @@ export function preciseInventoryBucket(count: number): OlxPreciseAuditBucket {
 function hardRejectReason(verdict: string): string | null {
   if (
     verdict === "seller_inventory_limit" ||
+    verdict === "seller_mass_inventory" ||
     verdict === "seller_registration_year_2026" ||
     verdict === "confirmed_intermediary"
   ) {

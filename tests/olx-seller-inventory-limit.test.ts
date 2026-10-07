@@ -7,9 +7,12 @@ import { loadConfig, resetConfigCache } from "../src/config/env.ts";
 import { createCycleOlxSellerVerifier } from "../src/delivery/olx-detail-seller.ts";
 import { runTelegramTestCycle } from "../src/delivery/telegram-test-pipeline.ts";
 import { CONFIRMED_SELLER_CACHE_MS } from "../src/delivery/rieltor-detail-seller.ts";
+import { sellerVerificationDisposition } from "../src/delivery/seller-verification-hold.ts";
 import {
+  isPlatformConfirmedOwner,
   SELLER_INVENTORY_LIMIT_MIN,
   SELLER_INVENTORY_LIMIT_REASON,
+  SELLER_MASS_INVENTORY_REASON,
 } from "../src/delivery/seller-profile.ts";
 import type { Listing } from "../src/domain/listing.ts";
 import type { ListingSourceAdapter, SourceFetchResult } from "../src/domain/source.ts";
@@ -554,6 +557,185 @@ describe("owner evidence does not override seller_inventory_limit", () => {
     expect(decision.drop).toBe(false);
     expect(decision.outcome).toBe("cache_confirmed_owner");
     expect(decision.evidence ?? "").not.toContain(SELLER_INVENTORY_LIMIT_REASON);
+  });
+});
+
+function coarseKeys(count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `львів район ${index + 1}`);
+}
+
+function preciseKeys(count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `львів центр вул точна ${index + 1}`);
+}
+
+function massProfile(input: {
+  realEstateAds: number;
+  coarse: number;
+  precise: number;
+  pagesFetched: number;
+  totalPages: number;
+}): OlxProfileSnapshot {
+  const coarse = coarseKeys(input.coarse);
+  return {
+    acquired: true,
+    totalPages: input.totalPages,
+    pagesFetched: input.pagesFetched,
+    totalElements: input.realEstateAds,
+    visibleAds: input.realEstateAds,
+    realEstateAds: input.realEstateAds,
+    precisePropertyKeys: preciseKeys(input.precise),
+    coarseLocationKeys: coarse,
+    propertyKeys: input.precise > 0 ? preciseKeys(input.precise) : coarse,
+  };
+}
+
+describe("seller_mass_inventory classification", () => {
+  it("rejects a complete profile with 10 real-estate ads and 5 coarse locations", () => {
+    const decision = classifyOlxProfileInventory(
+      massProfile({ realEstateAds: 10, coarse: 5, precise: 0, pagesFetched: 2, totalPages: 2 }),
+    );
+    expect(decision.verdict).toBe("seller_mass_inventory");
+    expect(decision.evidence).toContain(SELLER_MASS_INVENTORY_REASON);
+    expect(decision.verdict).not.toBe("confirmed_intermediary");
+  });
+
+  it("rejects a partial profile once the mass-inventory lower bound is already proven", () => {
+    const decision = classifyOlxProfileInventory(
+      massProfile({ realEstateAds: 10, coarse: 5, precise: 0, pagesFetched: 1, totalPages: 2 }),
+    );
+    expect(decision.verdict).toBe("seller_mass_inventory");
+    expect(decision.evidence).toContain(SELLER_MASS_INVENTORY_REASON);
+    expect(decision.evidence).not.toContain("olx_inventory_incomplete=1");
+    expect(decision.evidence).toContain("olx_real_estate_count=10");
+    expect(decision.evidence).toContain("olx_coarse_locations=5");
+  });
+
+  it("does not mass-reject 9 real-estate ads even with 5 coarse locations", () => {
+    const decision = classifyOlxProfileInventory(
+      massProfile({ realEstateAds: 9, coarse: 5, precise: 0, pagesFetched: 1, totalPages: 2 }),
+    );
+    expect(decision.verdict).not.toBe("seller_mass_inventory");
+    expect(decision.verdict).not.toBe("seller_inventory_limit");
+  });
+
+  it("does not mass-reject 10 real-estate ads with only 4 coarse locations", () => {
+    const decision = classifyOlxProfileInventory(
+      massProfile({ realEstateAds: 10, coarse: 4, precise: 0, pagesFetched: 1, totalPages: 2 }),
+    );
+    expect(decision.verdict).not.toBe("seller_mass_inventory");
+    expect(decision.evidence).toContain("olx_shadow_re8_coarse4=1");
+    expect(decision.verdict).not.toBe("seller_inventory_limit");
+  });
+
+  it("keeps preciseProperties >= 5 as seller_inventory_limit ahead of mass inventory", () => {
+    const decision = classifyOlxProfileInventory(
+      massProfile({ realEstateAds: 11, coarse: 6, precise: 5, pagesFetched: 2, totalPages: 2 }),
+    );
+    expect(decision.verdict).toBe("seller_inventory_limit");
+    expect(decision.evidence).toContain(SELLER_INVENTORY_LIMIT_REASON);
+  });
+});
+
+describe("seller_mass_inventory via createCycleOlxSellerVerifier", () => {
+  const incidentUrl = "https://www.olx.ua/d/uk/obyavlenie/orenda-1-k-kvartiri-ID11pP0b.html";
+
+  function incidentLun(): Listing {
+    return {
+      source: "lun",
+      sourceId: "4729068845",
+      url: "https://lun.ua/uk/realty/4729068845",
+      title: "Квартира",
+      location: { raw: "Львів", city: "Львів" },
+      propertyType: "apartment",
+      sellerType: "unknown",
+      discoveredAt: published,
+      publishedAt: published,
+      metadata: {
+        originalUrl: incidentUrl,
+        isOwner: true,
+        ownerEvidenceLevel: "private_unknown",
+      },
+    };
+  }
+
+  function privateHtml(url: string, sellerType: string | null = null): string {
+    return derivedOracleOfferDetailHtml(
+      {
+        id: 11,
+        url,
+        title: "Квартира",
+        description: "оренда",
+        user: { name: "Олена", company_name: null, sellerType },
+        isBusiness: false,
+      },
+      { memberSince: "січень 2020 р." },
+    );
+  }
+
+  it("mass inventory still rejects a platform owner", async () => {
+    const verify = createCycleOlxSellerVerifier({
+      peers: [],
+      now: () => now,
+      timeoutMs: 1000,
+      probeProfile: async () => ({
+        ...massProfile({ realEstateAds: 10, coarse: 5, precise: 0, pagesFetched: 2, totalPages: 2 }),
+        listingHtml: privateHtml(OLX_URL, "owner"),
+      }),
+    });
+    const decision = await verify({
+      ...olxListing(),
+      sellerType: "owner",
+      metadata: { urlToken: TOKEN, ownerEvidenceLevel: "platform_confirmed" },
+    });
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("detail_mass_inventory");
+    expect(decision.evidence).toContain(SELLER_MASS_INVENTORY_REASON);
+    expect(decision.outcome).not.toBe("detail_confirmed_owner");
+  });
+
+  it("does not reject a genuine platform owner with 3 precise properties and a small profile", async () => {
+    const verify = createCycleOlxSellerVerifier({
+      peers: [],
+      now: () => now,
+      timeoutMs: 1000,
+      probeProfile: async () => ({
+        ...massProfile({ realEstateAds: 3, coarse: 3, precise: 3, pagesFetched: 1, totalPages: 1 }),
+        listingHtml: privateHtml(OLX_URL, "owner"),
+      }),
+    });
+    const decision = await verify({
+      ...olxListing(),
+      sellerType: "owner",
+      metadata: { urlToken: TOKEN, ownerEvidenceLevel: "platform_confirmed" },
+    });
+    expect(decision.drop).toBe(false);
+    expect(decision.outcome).toBe("detail_confirmed_owner");
+    expect(decision.outcome).not.toBe("detail_mass_inventory");
+    expect(decision.outcome).not.toBe("detail_inventory_limit");
+  });
+
+  it("rejects live-shaped LUN 4729068845 / OLX 11pP0b instead of allowing unknown", async () => {
+    const listing = incidentLun();
+    expect(isPlatformConfirmedOwner(listing)).toBe(false);
+    const verify = createCycleOlxSellerVerifier({
+      peers: [listing],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => ({
+        status: 200,
+        finalUrl: incidentUrl,
+        bodyText: privateHtml(incidentUrl, null),
+      }),
+      probeProfile: async () =>
+        massProfile({ realEstateAds: 10, coarse: 5, precise: 0, pagesFetched: 1, totalPages: 2 }),
+    });
+    const decision = await verify(listing);
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("detail_mass_inventory");
+    expect(decision.evidence).toContain(SELLER_MASS_INVENTORY_REASON);
+    expect(decision.externalId).toBe("11pP0b");
+    expect(decision.outcome).not.toBe("detail_unknown");
+    expect(sellerVerificationDisposition(decision, "reject_intermediaries")).toBe("reject");
   });
 });
 

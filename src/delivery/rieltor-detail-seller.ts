@@ -23,6 +23,7 @@ export type StoredSellerVerdict =
   | "profile_likely_intermediary"
   | "seller_registration_year_2026"
   | "seller_inventory_limit"
+  | "seller_mass_inventory"
   | "unknown"
   | "rate_limited"
   | "transport_failure"
@@ -32,17 +33,20 @@ export type LinkedSellerOutcome =
   | "same_cycle_confirmed_agent"
   | "same_cycle_registration_year_excluded"
   | "same_cycle_inventory_limit"
+  | "same_cycle_mass_inventory"
   | "same_cycle_resolved"
   | "cache_confirmed_agent"
   | "cache_confirmed_owner"
   | "cache_registration_year_excluded"
   | "cache_inventory_limit"
+  | "cache_mass_inventory"
   | "cache_unknown"
   | "detail_confirmed_agent"
   | "detail_confirmed_owner"
   | "detail_profile_likely"
   | "detail_registration_year_excluded"
   | "detail_inventory_limit"
+  | "detail_mass_inventory"
   | "detail_unknown"
   | "detail_rate_limited"
   | "detail_transport_failure"
@@ -72,17 +76,20 @@ export type LinkedSellerVerificationCounts = {
   sameCycleConfirmedAgent: number;
   sameCycleRegistrationYearExcluded: number;
   sameCycleInventoryLimit: number;
+  sameCycleMassInventory: number;
   sameCycleResolved: number;
   cacheConfirmedAgent: number;
   cacheConfirmedOwner: number;
   cacheRegistrationYearExcluded: number;
   cacheInventoryLimit: number;
+  cacheMassInventory: number;
   cacheUnknown: number;
   detailConfirmedAgent: number;
   detailConfirmedOwner: number;
   detailProfileLikely: number;
   detailRegistrationYearExcluded: number;
   detailInventoryLimit: number;
+  detailMassInventory: number;
   detailUnknown: number;
   detailRateLimited: number;
   detailTransportFailure: number;
@@ -98,17 +105,20 @@ export function emptyLinkedSellerVerification(): LinkedSellerVerificationCounts 
     sameCycleConfirmedAgent: 0,
     sameCycleRegistrationYearExcluded: 0,
     sameCycleInventoryLimit: 0,
+    sameCycleMassInventory: 0,
     sameCycleResolved: 0,
     cacheConfirmedAgent: 0,
     cacheConfirmedOwner: 0,
     cacheRegistrationYearExcluded: 0,
     cacheInventoryLimit: 0,
+    cacheMassInventory: 0,
     cacheUnknown: 0,
     detailConfirmedAgent: 0,
     detailConfirmedOwner: 0,
     detailProfileLikely: 0,
     detailRegistrationYearExcluded: 0,
     detailInventoryLimit: 0,
+    detailMassInventory: 0,
     detailUnknown: 0,
     detailRateLimited: 0,
     detailTransportFailure: 0,

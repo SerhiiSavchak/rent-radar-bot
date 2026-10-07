@@ -30,6 +30,9 @@ import {
   shouldRejectSellerProfile,
   SELLER_INVENTORY_LIMIT_MIN,
   SELLER_INVENTORY_LIMIT_REASON,
+  SELLER_MASS_INVENTORY_MIN_ADS,
+  SELLER_MASS_INVENTORY_MIN_COARSE,
+  SELLER_MASS_INVENTORY_REASON,
   isPlatformConfirmedOwner,
   type SellerProfileDeliveryPolicy,
   type SellerProfilePolicies,
@@ -341,6 +344,7 @@ function writeOlxSellerVerification(
       input.verdict === "profile_likely_intermediary" ||
       input.verdict === "seller_registration_year_2026" ||
       input.verdict === "seller_inventory_limit" ||
+      input.verdict === "seller_mass_inventory" ||
       input.verdict === "unknown"
       ? null
       : safeStoredError(input.evidence, input.verdict),
@@ -389,6 +393,15 @@ function decisionFromStored(
       requested: false,
       externalId: token,
       evidence: row.sellerEvidence ?? SELLER_INVENTORY_LIMIT_REASON,
+    };
+  }
+  if (row.sellerVerdict === "seller_mass_inventory") {
+    return {
+      outcome: "cache_mass_inventory",
+      drop: true,
+      requested: false,
+      externalId: token,
+      evidence: row.sellerEvidence ?? SELLER_MASS_INVENTORY_REASON,
     };
   }
   if (row.sellerVerdict === "profile_likely_intermediary") {
@@ -653,6 +666,23 @@ export async function fetchOlxLinkedDetailViaBrowser(
   };
 }
 
+function nonNegativeInt(raw: unknown): number | undefined {
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : undefined;
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  return undefined;
+}
+
+function massInventoryCountsProven(ads: number | undefined, coarse: number | undefined): boolean {
+  return (
+    ads !== undefined &&
+    coarse !== undefined &&
+    ads >= SELLER_MASS_INVENTORY_MIN_ADS &&
+    coarse >= SELLER_MASS_INVENTORY_MIN_COARSE
+  );
+}
+
 function decisionFromClassified(
   classified: { verdict: StoredSellerVerdict; evidence: string },
   token: string,
@@ -704,6 +734,16 @@ function decisionFromClassified(
       evidence,
     };
   }
+  if (classified.verdict === "seller_mass_inventory") {
+    return {
+      outcome: "detail_mass_inventory",
+      drop: true,
+      requested,
+      externalId: token,
+      httpStatus,
+      evidence,
+    };
+  }
   if (classified.verdict === "profile_likely_intermediary") {
     return {
       outcome: "detail_profile_likely",
@@ -748,6 +788,7 @@ function decisionFromClassified(
 function profileInventoryClearedForOwner(decision: { verdict: string; evidence: string }): boolean {
   if (
     decision.verdict === "seller_inventory_limit" ||
+    decision.verdict === "seller_mass_inventory" ||
     decision.verdict === "profile_likely_intermediary"
   ) {
     return false;
@@ -770,7 +811,8 @@ function rememberVerdict(
     classified.verdict === "confirmed_owner" ||
     classified.verdict === "profile_likely_intermediary" ||
     classified.verdict === "seller_registration_year_2026" ||
-    classified.verdict === "seller_inventory_limit"
+    classified.verdict === "seller_inventory_limit" ||
+    classified.verdict === "seller_mass_inventory"
       ? CONFIRMED_SELLER_CACHE_MS
       : classified.verdict === "unknown"
         ? UNKNOWN_SELLER_CACHE_MS
@@ -933,6 +975,7 @@ export function createCycleOlxSellerVerifier(options: {
     const profileDecision = classifyOlxProfileInventory(snapshot, now);
     if (
       profileDecision.verdict === "seller_inventory_limit" ||
+      profileDecision.verdict === "seller_mass_inventory" ||
       profileDecision.verdict === "profile_likely_intermediary"
     ) {
       const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
@@ -1185,6 +1228,27 @@ export function createCycleOlxSellerVerifier(options: {
           evidence: SELLER_INVENTORY_LIMIT_REASON,
         };
       }
+      const directAds = nonNegativeInt(listing.metadata?.realEstateAds);
+      const directCoarse = nonNegativeInt(listing.metadata?.coarseLocations);
+      if (massInventoryCountsProven(directAds, directCoarse)) {
+        rememberVerdict(
+          options.db,
+          target,
+          {
+            verdict: "seller_mass_inventory",
+            evidence: `${SELLER_MASS_INVENTORY_REASON};olx_real_estate_count=${directAds};olx_coarse_locations=${directCoarse}`,
+          },
+          undefined,
+          nowDirect,
+        );
+        return {
+          outcome: "detail_mass_inventory",
+          drop: true,
+          requested: false,
+          externalId: target.token,
+          evidence: SELLER_MASS_INVENTORY_REASON,
+        };
+      }
       if (profileProbes >= maxProfileProbes) {
         const businessAccount =
           listing.metadata?.olxAccountType === "business" || listing.metadata?.olxIsBusiness === true;
@@ -1249,6 +1313,7 @@ export function createCycleOlxSellerVerifier(options: {
       const profileDecision = classifyOlxProfileInventory(snapshot, nowDirect);
       if (
         profileDecision.verdict === "seller_inventory_limit" ||
+        profileDecision.verdict === "seller_mass_inventory" ||
         profileDecision.verdict === "profile_likely_intermediary"
       ) {
         const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
@@ -1343,6 +1408,7 @@ export function createCycleOlxSellerVerifier(options: {
       (item) => item.source === "olx" && peerToken(item)?.toLowerCase() === target.token.toLowerCase(),
     );
     let peerInventoryEvaluatedBelowLimit = false;
+    let peerMassEvaluatedBelow = false;
     if (peer) {
       if (catalogRejectionIsTerminal(peer)) {
         return {
@@ -1416,6 +1482,28 @@ export function createCycleOlxSellerVerifier(options: {
           evidence: SELLER_INVENTORY_LIMIT_REASON,
         };
       }
+      const peerAds = nonNegativeInt(peer.metadata?.realEstateAds);
+      const peerCoarse = nonNegativeInt(peer.metadata?.coarseLocations);
+      if (massInventoryCountsProven(peerAds, peerCoarse)) {
+        const nowPeer = options.now();
+        rememberVerdict(
+          options.db,
+          target,
+          {
+            verdict: "seller_mass_inventory",
+            evidence: `${SELLER_MASS_INVENTORY_REASON};olx_real_estate_count=${peerAds};olx_coarse_locations=${peerCoarse}`,
+          },
+          undefined,
+          nowPeer,
+        );
+        return {
+          outcome: "same_cycle_mass_inventory",
+          drop: true,
+          requested: false,
+          externalId: target.token,
+          evidence: SELLER_MASS_INVENTORY_REASON,
+        };
+      }
       if (
         typeof peerInventory === "number" &&
         Number.isInteger(peerInventory) &&
@@ -1424,8 +1512,11 @@ export function createCycleOlxSellerVerifier(options: {
       ) {
         peerInventoryEvaluatedBelowLimit = true;
       }
-      // A missing inventory count is not clearance. Owner peers are resolved
-      // only after this count is known to be below the exclusion.
+      if (peerAds !== undefined && peerCoarse !== undefined) {
+        peerMassEvaluatedBelow = true;
+      }
+      // Missing precise or mass counts are not clearance. An owner peer resolves
+      // only after both exclusions are known not to apply.
     }
     const now = options.now();
     if (options.db) {
@@ -1489,6 +1580,7 @@ export function createCycleOlxSellerVerifier(options: {
           const profileDecision = classifyOlxProfileInventory(snapshot, now);
           if (
             profileDecision.verdict === "seller_inventory_limit" ||
+            profileDecision.verdict === "seller_mass_inventory" ||
             profileDecision.verdict === "profile_likely_intermediary"
           ) {
             const enriched: { verdict: StoredSellerVerdict; evidence: string } = {
@@ -1563,7 +1655,12 @@ export function createCycleOlxSellerVerifier(options: {
     // Same-cycle positive clearance only when the peer is a platform-confirmed
     // owner AND inventory was already counted below the exclusion.
     // Owner evidence alone must not skip the profile probe.
-    if (peer && isPlatformConfirmedOwner(peer) && peerInventoryEvaluatedBelowLimit) {
+    if (
+      peer &&
+      isPlatformConfirmedOwner(peer) &&
+      peerInventoryEvaluatedBelowLimit &&
+      peerMassEvaluatedBelow
+    ) {
       return {
         outcome: "same_cycle_resolved",
         drop: false,

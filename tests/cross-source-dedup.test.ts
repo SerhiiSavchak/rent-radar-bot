@@ -338,6 +338,8 @@ describe("cross-source delivery", () => {
         ...(olx.metadata ?? {}),
         ownerEvidenceLevel: "platform_confirmed",
         distinctPreciseRealEstateProperties: 1,
+        realEstateAds: 1,
+        coarseLocations: 1,
       },
     };
     const sendListing = vi.fn(async () => ({
@@ -416,6 +418,8 @@ describe("cross-source delivery", () => {
         ...(olx.metadata ?? {}),
         ownerEvidenceLevel: "platform_confirmed",
         distinctPreciseRealEstateProperties: 1,
+        realEstateAds: 1,
+        coarseLocations: 1,
       },
     };
     let calls = 0;

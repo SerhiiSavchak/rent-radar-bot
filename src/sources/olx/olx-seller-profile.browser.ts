@@ -2,6 +2,7 @@ import { inspectPrerenderedState } from "./olx-browser.html-extract.ts";
 import { SELLER_INVENTORY_LIMIT_MIN } from "../../delivery/seller-profile.ts";
 import {
   mergeOlxProfilePages,
+  olxMassInventoryLowerBoundMet,
   parseOlxProfileInventory,
   resolveOlxInventoryProbeTarget,
   OLX_PROFILE_PAGE_HARD_CAP,
@@ -9,6 +10,14 @@ import {
 } from "./olx-seller-profile.ts";
 
 const UNREADABLE: OlxProfileSnapshot = { acquired: false };
+
+function profileInventoryStop(snapshot: OlxProfileSnapshot): boolean {
+  return (
+    !snapshot.acquired ||
+    (snapshot.precisePropertyKeys?.length ?? 0) >= SELLER_INVENTORY_LIMIT_MIN ||
+    olxMassInventoryLowerBoundMet(snapshot)
+  );
+}
 
 function pagePath(hrefs: string[], probeTarget: string, page: number): string | undefined {
   const slug = probeTarget.match(/\/uk\/list\/user\/[A-Za-z0-9]+/)?.[0];
@@ -84,8 +93,8 @@ export async function probeOlxSellerProfile(input: {
     if (listingHtml) {
       merged = { ...merged, listingHtml };
     }
-    // Stop as soon as ≥5 precise properties are known.
-    if (!merged.acquired || (merged.precisePropertyKeys?.length ?? 0) >= SELLER_INVENTORY_LIMIT_MIN) {
+    // Stop once a terminal inventory lower bound is already proven.
+    if (profileInventoryStop(merged)) {
       return merged;
     }
 
@@ -93,7 +102,7 @@ export async function probeOlxSellerProfile(input: {
     while (
       (merged.totalPages ?? 0) >= nextPage &&
       nextPage <= OLX_PROFILE_PAGE_HARD_CAP &&
-      (merged.precisePropertyKeys?.length ?? 0) < SELLER_INVENTORY_LIMIT_MIN
+      !profileInventoryStop(merged)
     ) {
       const hrefs = await page.$$eval("a[href]", (nodes) =>
         nodes.map((node) => node.getAttribute("href") ?? ""),
@@ -121,7 +130,7 @@ export async function probeOlxSellerProfile(input: {
       } catch {
         break;
       }
-      if ((merged.precisePropertyKeys?.length ?? 0) >= SELLER_INVENTORY_LIMIT_MIN) {
+      if (profileInventoryStop(merged)) {
         break;
       }
       nextPage += 1;

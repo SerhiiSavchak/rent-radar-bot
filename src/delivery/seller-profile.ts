@@ -9,6 +9,8 @@ import {
  * Kept for callers that still pass a distinct-address minimum.
  * Address count alone is not a likely-intermediary verdict and is not a hard reject.
  * Hard inventory exclusion is ≥5 precise real-estate properties (`seller_inventory_limit`).
+ * A second customer exclusion is mass real-estate inventory (`seller_mass_inventory`):
+ * ≥10 real-estate ads and ≥5 distinct coarse locations. It is not realtor proof.
  */
 export const SELLER_PROFILE_DISTINCT_ADDRESS_MIN = 3;
 
@@ -30,6 +32,7 @@ export type SellerProfileVerdict =
   | "profile_high_risk"
   | "seller_registration_year_2026"
   | "seller_inventory_limit"
+  | "seller_mass_inventory"
   | "unknown"
   | "confirmed_owner";
 
@@ -39,6 +42,16 @@ export type SellerProfileVerdict =
  */
 export const SELLER_INVENTORY_LIMIT_MIN = 5;
 export const SELLER_INVENTORY_LIMIT_REASON = "seller_inventory_limit";
+
+/**
+ * Customer exclusion for a public profile that already shows a large real-estate
+ * inventory spread across many coarse locations. Not fraud proof and not a
+ * claim that the seller is a realtor. Unread pages can only raise these counts,
+ * so a partial profile may still meet the lower bound.
+ */
+export const SELLER_MASS_INVENTORY_MIN_ADS = 10;
+export const SELLER_MASS_INVENTORY_MIN_COARSE = 5;
+export const SELLER_MASS_INVENTORY_REASON = "seller_mass_inventory";
 
 /** Delivery policy for heuristic profile evidence. Classification stays independent. */
 export type SellerProfileDeliveryPolicy = "send" | "reject";
@@ -179,7 +192,7 @@ export function shouldRejectSellerProfile(
   if (verdict === "seller_registration_year_2026") {
     return true;
   }
-  if (verdict === "seller_inventory_limit") {
+  if (verdict === "seller_inventory_limit" || verdict === "seller_mass_inventory") {
     return true;
   }
   if (verdict === "profile_likely_intermediary") {

@@ -915,8 +915,8 @@ describe("MIGRATION_12 seller_registration_year_2026", () => {
       ).run(nowIso, expires),
     ).toThrow(/CHECK constraint failed|constraint/i);
 
-    expect(applyMigrations(db)).toBe(13);
-    expect(appliedSchemaVersion(db)).toBe(13);
+    expect(applyMigrations(db)).toBe(14);
+    expect(appliedSchemaVersion(db)).toBe(14);
 
     const preserved = db
       .prepare(
@@ -975,7 +975,7 @@ describe("MIGRATION_13 seller_inventory_limit", () => {
       ).run(nowIso, expires),
     ).toThrow(/CHECK constraint failed|constraint/i);
 
-    expect(applyMigrations(db)).toBe(13);
+    expect(applyMigrations(db)).toBe(14);
     db.prepare(
       `INSERT INTO external_seller_verifications (
          source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
@@ -1044,8 +1044,8 @@ describe("MIGRATION_11 profile_likely_intermediary", () => {
     ).toThrow(/CHECK constraint failed|constraint/i);
 
     expect(applyMigrations(db)).toBe(SCHEMA_VERSION);
-    expect(appliedSchemaVersion(db)).toBe(13);
-    expect(SCHEMA_VERSION).toBe(13);
+    expect(appliedSchemaVersion(db)).toBe(14);
+    expect(SCHEMA_VERSION).toBe(14);
 
     const preserved = db
       .prepare(

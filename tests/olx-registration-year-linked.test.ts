@@ -194,6 +194,8 @@ describe("LUN→OLX registration year via createCycleOlxSellerVerifier", () => {
         accountRegistrationYear: 2019,
         ownerEvidenceLevel: "platform_confirmed",
         distinctPreciseRealEstateProperties: 1,
+        realEstateAds: 1,
+        coarseLocations: 1,
       },
     };
     const verify = createCycleOlxSellerVerifier({

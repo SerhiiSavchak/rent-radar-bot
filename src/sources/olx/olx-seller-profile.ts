@@ -3,6 +3,9 @@ import {
   normalizeSellerAddress,
   SELLER_INVENTORY_LIMIT_MIN,
   SELLER_INVENTORY_LIMIT_REASON,
+  SELLER_MASS_INVENTORY_MIN_ADS,
+  SELLER_MASS_INVENTORY_MIN_COARSE,
+  SELLER_MASS_INVENTORY_REASON,
   SELLER_PROFILE_DISTINCT_ADDRESS_MIN,
   type SellerProfileDecision,
 } from "../../delivery/seller-profile.ts";
@@ -24,11 +27,14 @@ import {
  *
  * Exclusion policies (not fraud proof):
  * - `seller_inventory_limit` from ≥5 precise distinct real-estate properties.
- * - 3–4 precise properties, and any number of coarse locations alone, stay unknown.
- *   They are not `profile_likely_intermediary` and are not a hard reject.
+ * - `seller_mass_inventory` from ≥10 real-estate ads and ≥5 distinct coarse
+ *   locations. This is a customer inventory policy, not realtor proof.
+ * - 2–4 precise properties, 3–4 coarse locations, and 5–9 real-estate ads stay
+ *   on the existing seller/text path. They are not a hard reject by themselves.
  *
- * Incomplete / unread inventory must stay unknown — never a verified
- * “below inventory limit” clearance.
+ * Unread pages are not inferred. A partial profile still rejects when the pages
+ * already read prove the mass-inventory lower bound, because later pages can
+ * only increase those counts. A partial count below that bound stays unknown.
  */
 export const OLX_PROFILE_PROBE_BUDGET = 2;
 
@@ -303,6 +309,32 @@ export function mergeOlxProfilePages(
   };
 }
 
+/** True when already-read pages prove the mass-inventory lower bound. */
+export function olxMassInventoryLowerBoundMet(snapshot: {
+  realEstateAds?: number;
+  coarseLocationKeys?: string[];
+}): boolean {
+  return (
+    (snapshot.realEstateAds ?? 0) >= SELLER_MASS_INVENTORY_MIN_ADS &&
+    (snapshot.coarseLocationKeys?.length ?? 0) >= SELLER_MASS_INVENTORY_MIN_COARSE
+  );
+}
+
+/**
+ * Non-blocking observation of lower mass-inventory candidates.
+ * These tokens must not change the verdict or delivery.
+ */
+function shadowMassInventoryEvidence(realEstateAds: number, coarseCount: number): string[] {
+  const bits: string[] = [];
+  if (realEstateAds >= 8 && coarseCount >= 4) {
+    bits.push("olx_shadow_re8_coarse4=1");
+  }
+  if (realEstateAds >= 5 && coarseCount >= 3) {
+    bits.push("olx_shadow_re5_coarse3=1");
+  }
+  return bits;
+}
+
 /** True when more profile pages exist than the bounded probe has read. */
 export function olxProfileInventoryIncomplete(snapshot: OlxProfileSnapshot): boolean {
   if (!snapshot.acquired) {
@@ -337,6 +369,7 @@ export function classifyOlxProfileInventory(
     `olx_total=${snapshot.totalElements ?? 0}`,
     `olx_visible=${snapshot.visibleAds ?? 0}`,
     `olx_real_estate_count=${snapshot.realEstateAds ?? 0}`,
+    ...shadowMassInventoryEvidence(snapshot.realEstateAds ?? 0, coarse.length),
   ];
 
   // Exclusion policy: only reliably identified (precise) properties count.
@@ -354,8 +387,20 @@ export function classifyOlxProfileInventory(
     };
   }
 
-  // Address count below 5 precise properties is not a reject, even when unread
-  // pages remain. Only an already-reached precise inventory limit excludes.
+  // Mass inventory is a lower bound: unread pages cannot reduce ads or coarse locations.
+  if (olxMassInventoryLowerBoundMet(snapshot)) {
+    return {
+      verdict: "seller_mass_inventory",
+      evidence: [
+        SELLER_MASS_INVENTORY_REASON,
+        `olx_coarse_locations=${coarse.length}`,
+        "olx_mass_inventory=1",
+        ...inventoryBits,
+      ].join(";"),
+    };
+  }
+
+  // Below both exclusions, unread pages stay unknown. Do not invent unseen inventory.
   const decision = assessSellerProfile({
     confirmedOwner: false,
     addresses: keys,

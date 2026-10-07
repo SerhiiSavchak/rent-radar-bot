@@ -114,7 +114,7 @@ Migrations run when the poller opens SQLite. They are incremental and each versi
 DB_PATH="$DB" node --import tsx -e 'import { DatabaseSync } from "node:sqlite"; import { applyMigrations } from "./src/storage/migrations.ts"; const db = new DatabaseSync(process.env.DB_PATH); console.log(applyMigrations(db)); db.close();'
 ```
 
-Expected version is the `SCHEMA_VERSION` in `src/storage/migrations.ts` (currently 13). Seen rows, sent outbox rows, baselines, and seller cache rows stay.
+Expected version is the `SCHEMA_VERSION` in `src/storage/migrations.ts` (currently 14). Seen rows, sent outbox rows, baselines, and seller cache rows stay.
 
 ## 12. Start
 
@@ -163,7 +163,7 @@ Previous SHA: `533e69f55ffaa6de2f0cb360e267be1c34bf301b` (schema 11). That proce
 
 Before the new process opens the database, migrations have not run. Stop the service and `git checkout` that SHA, then start. No restore.
 
-After the new process has opened the database, schema is 13. Restoring the step 5 backup is required. A code-only checkout will exit on `schema version 13 != 11`.
+After the new process has opened the database, schema is 14. Restoring the step 5 backup is required. A code-only checkout will exit on `schema version 14 != 11`.
 
 ```bash
 systemctl --user stop rent-radar-telegram.service
