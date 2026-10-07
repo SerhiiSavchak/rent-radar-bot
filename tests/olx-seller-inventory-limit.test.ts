@@ -310,6 +310,253 @@ describe("seller_inventory_limit via createCycleOlxSellerVerifier", () => {
   });
 });
 
+const FIVE_PRECISE = [
+  { city: "Львів", street: "вул. А 1" },
+  { city: "Львів", street: "вул. Б 2" },
+  { city: "Київ", street: "вул. В 3" },
+  { city: "Одеса", street: "вул. Г 4" },
+  { city: "Харків", street: "вул. Д 5" },
+];
+
+const TWO_PRECISE = [
+  { city: "Львів", street: "вул. А 1" },
+  { city: "Львів", street: "вул. Б 2" },
+];
+
+function ownerDetailHtml(url: string): string {
+  return derivedOracleOfferDetailHtml({
+    id: 11,
+    url,
+    title: "Квартира",
+    description: "оренда",
+    user: { name: "Олена", company_name: null, sellerType: "owner" },
+    isBusiness: false,
+  }).replace("</body>", `<a href="/uk/list/user/invseller/">усі оголошення</a></body>`);
+}
+
+function platformOwnerPeer(meta: Record<string, unknown> = {}): Listing {
+  return {
+    ...olxListing(meta),
+    sellerType: "owner",
+    metadata: {
+      urlToken: TOKEN,
+      ownerEvidenceLevel: "platform_confirmed",
+      ...meta,
+    },
+  };
+}
+
+describe("owner evidence does not override seller_inventory_limit", () => {
+  it("exact LUN → OLX sellerType=owner with ≥5 precise properties is detail_inventory_limit", async () => {
+    const html = ownerDetailHtml(OLX_URL);
+    const verify = createCycleOlxSellerVerifier({
+      peers: [lunLinked()],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => ({ status: 200, finalUrl: OLX_URL, bodyText: html }),
+      probeProfile: async () => snapshotWithPrecise(FIVE_PRECISE),
+    });
+    const decision = await verify(lunLinked());
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("detail_inventory_limit");
+    expect(decision.evidence).toContain(SELLER_INVENTORY_LIMIT_REASON);
+    expect(decision.outcome).not.toBe("detail_confirmed_owner");
+    expect(decision.outcome).not.toBe("same_cycle_resolved");
+    expect(decision.outcome).not.toBe("cache_confirmed_owner");
+  });
+
+  it("direct OLX platform owner with ≥5 precise properties is seller_inventory_limit", async () => {
+    const verify = createCycleOlxSellerVerifier({
+      peers: [],
+      now: () => now,
+      timeoutMs: 1000,
+      probeProfile: async () => ({
+        ...snapshotWithPrecise(FIVE_PRECISE),
+        listingHtml: ownerDetailHtml(OLX_URL),
+      }),
+    });
+    const decision = await verify({
+      ...olxListing(),
+      sellerType: "owner",
+      metadata: { urlToken: TOKEN, ownerEvidenceLevel: "platform_confirmed" },
+    });
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("detail_inventory_limit");
+    expect(decision.evidence).toContain(SELLER_INVENTORY_LIMIT_REASON);
+    expect(decision.outcome).not.toBe("detail_confirmed_owner");
+    expect(decision.outcome).not.toBe("cache_confirmed_owner");
+  });
+
+  it("direct OLX platform owner with a complete inventory of 0–4 precise properties stays confirmed", async () => {
+    const verify = createCycleOlxSellerVerifier({
+      peers: [],
+      now: () => now,
+      timeoutMs: 1000,
+      probeProfile: async () => ({
+        ...snapshotWithPrecise(TWO_PRECISE),
+        listingHtml: ownerDetailHtml(OLX_URL),
+      }),
+    });
+    const decision = await verify({
+      ...olxListing(),
+      sellerType: "owner",
+      metadata: { urlToken: TOKEN, ownerEvidenceLevel: "platform_confirmed" },
+    });
+    expect(decision.drop).toBe(false);
+    expect(decision.outcome).toBe("detail_confirmed_owner");
+    expect(decision.evidence ?? "").not.toContain(SELLER_INVENTORY_LIMIT_REASON);
+  });
+
+  it("same-cycle platform owner with ≥5 precise properties is inventory limit, not same_cycle_resolved", async () => {
+    let fetches = 0;
+    const verify = createCycleOlxSellerVerifier({
+      peers: [lunLinked(), platformOwnerPeer({ distinctPreciseRealEstateProperties: 5 })],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => {
+        fetches += 1;
+        throw new Error("peer inventory must win");
+      },
+      probeProfile: async () => {
+        throw new Error("peer inventory must win");
+      },
+    });
+    const decision = await verify(lunLinked());
+    expect(fetches).toBe(0);
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("same_cycle_inventory_limit");
+    expect(decision.evidence).toContain(SELLER_INVENTORY_LIMIT_REASON);
+    expect(decision.outcome).not.toBe("same_cycle_resolved");
+  });
+
+  it("same-cycle platform owner without evaluated inventory does not mask a later inventory limit", async () => {
+    const verify = createCycleOlxSellerVerifier({
+      peers: [lunLinked(), platformOwnerPeer()],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => ({
+        status: 200,
+        finalUrl: OLX_URL,
+        bodyText: ownerDetailHtml(OLX_URL),
+      }),
+      probeProfile: async () => snapshotWithPrecise(FIVE_PRECISE),
+    });
+    const decision = await verify(lunLinked());
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("detail_inventory_limit");
+    expect(decision.evidence).toContain(SELLER_INVENTORY_LIMIT_REASON);
+    expect(decision.outcome).not.toBe("same_cycle_resolved");
+    expect(decision.outcome).not.toBe("detail_confirmed_owner");
+  });
+
+  it("cached confirmed_owner does not mask a current profile inventory limit", async () => {
+    const db = new DatabaseSync(":memory:");
+    applyMigrations(db);
+    const checkedAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + CONFIRMED_SELLER_CACHE_MS).toISOString();
+    db.prepare(
+      `INSERT INTO external_seller_verifications (
+         source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+         checked_at, expires_at, last_http_status, last_error_safe
+       ) VALUES ('olx', ?, ?, 'confirmed_owner', 'cached owner', ?, ?, NULL, NULL)`,
+    ).run(TOKEN, OLX_URL, checkedAt, expiresAt);
+
+    let probes = 0;
+    const verify = createCycleOlxSellerVerifier({
+      db,
+      peers: [lunLinked()],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => {
+        throw new Error("cached owner must still probe inventory");
+      },
+      probeProfile: async () => {
+        probes += 1;
+        return snapshotWithPrecise(FIVE_PRECISE);
+      },
+    });
+    const decision = await verify(lunLinked());
+    expect(probes).toBe(1);
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("detail_inventory_limit");
+    expect(decision.evidence).toContain(SELLER_INVENTORY_LIMIT_REASON);
+    expect(decision.outcome).not.toBe("cache_confirmed_owner");
+    expect(decision.outcome).not.toBe("detail_confirmed_owner");
+    expect(decision.outcome).not.toBe("same_cycle_resolved");
+  });
+
+  it("cached confirmed_owner on direct OLX still loses to ≥5 precise properties", async () => {
+    const db = new DatabaseSync(":memory:");
+    applyMigrations(db);
+    const checkedAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + CONFIRMED_SELLER_CACHE_MS).toISOString();
+    db.prepare(
+      `INSERT INTO external_seller_verifications (
+         source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+         checked_at, expires_at, last_http_status, last_error_safe
+       ) VALUES ('olx', ?, ?, 'confirmed_owner', 'cached owner', ?, ?, NULL, NULL)`,
+    ).run(TOKEN, OLX_URL, checkedAt, expiresAt);
+
+    let probes = 0;
+    const verify = createCycleOlxSellerVerifier({
+      db,
+      peers: [],
+      now: () => now,
+      timeoutMs: 1000,
+      probeProfile: async () => {
+        probes += 1;
+        return {
+          ...snapshotWithPrecise(FIVE_PRECISE),
+          listingHtml: ownerDetailHtml(OLX_URL),
+        };
+      },
+    });
+    const decision = await verify({
+      ...olxListing(),
+      sellerType: "owner",
+      metadata: { urlToken: TOKEN, ownerEvidenceLevel: "platform_confirmed" },
+    });
+    expect(probes).toBe(1);
+    expect(decision.drop).toBe(true);
+    expect(decision.outcome).toBe("detail_inventory_limit");
+    expect(decision.evidence).toContain(SELLER_INVENTORY_LIMIT_REASON);
+    expect(decision.outcome).not.toBe("cache_confirmed_owner");
+  });
+
+  it("cached confirmed_owner stays allowed when the fresh profile is complete and below the limit", async () => {
+    const db = new DatabaseSync(":memory:");
+    applyMigrations(db);
+    const checkedAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + CONFIRMED_SELLER_CACHE_MS).toISOString();
+    db.prepare(
+      `INSERT INTO external_seller_verifications (
+         source, external_listing_id, canonical_url, seller_verdict, seller_evidence,
+         checked_at, expires_at, last_http_status, last_error_safe
+       ) VALUES ('olx', ?, ?, 'confirmed_owner', 'cached owner', ?, ?, NULL, NULL)`,
+    ).run(TOKEN, OLX_URL, checkedAt, expiresAt);
+
+    let probes = 0;
+    const verify = createCycleOlxSellerVerifier({
+      db,
+      peers: [lunLinked()],
+      now: () => now,
+      timeoutMs: 1000,
+      fetchPage: async () => {
+        throw new Error("small inventory must not require a detail fetch");
+      },
+      probeProfile: async () => {
+        probes += 1;
+        return snapshotWithPrecise(TWO_PRECISE);
+      },
+    });
+    const decision = await verify(lunLinked());
+    expect(probes).toBe(1);
+    expect(decision.drop).toBe(false);
+    expect(decision.outcome).toBe("cache_confirmed_owner");
+    expect(decision.evidence ?? "").not.toContain(SELLER_INVENTORY_LIMIT_REASON);
+  });
+});
+
 describe("seller_inventory_limit blocks Telegram delivery", () => {
   const dir = mkdtempSync(join(tmpdir(), "rent-radar-inv-limit-"));
   let fileIndex = 0;

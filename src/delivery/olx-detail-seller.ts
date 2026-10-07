@@ -744,6 +744,17 @@ function decisionFromClassified(
   };
 }
 
+/** True only after a completed profile read that did not prove an exclusion or an unread remainder. */
+function profileInventoryClearedForOwner(decision: { verdict: string; evidence: string }): boolean {
+  if (
+    decision.verdict === "seller_inventory_limit" ||
+    decision.verdict === "profile_likely_intermediary"
+  ) {
+    return false;
+  }
+  return !decision.evidence.includes("olx_inventory_incomplete=");
+}
+
 function rememberVerdict(
   db: DatabaseSync | undefined,
   target: { token: string; url: string },
@@ -853,7 +864,10 @@ export function createCycleOlxSellerVerifier(options: {
     now: Date,
     evidencePrefix?: string,
   ): Promise<LinkedSellerDecision> => {
-    if (classified.verdict !== "unknown") {
+    const ownerAwaitingInventory = classified.verdict === "confirmed_owner";
+    // Intermediary, registration year, parser failure, and an already-known
+    // inventory limit stay terminal. A platform owner must not skip the probe.
+    if (classified.verdict !== "unknown" && !ownerAwaitingInventory) {
       rememberVerdict(options.db, target, classified, httpStatus, now);
       return decisionFromClassified(
         classified,
@@ -865,7 +879,7 @@ export function createCycleOlxSellerVerifier(options: {
       );
     }
     const probeTarget = html ? resolveOlxInventoryProbeTarget(html) : undefined;
-    if (!probeTarget && !html) {
+    if (!ownerAwaitingInventory && !probeTarget && !html) {
       rememberVerdict(options.db, target, classified, httpStatus, now);
       return decisionFromClassified(
         classified,
@@ -877,6 +891,16 @@ export function createCycleOlxSellerVerifier(options: {
       );
     }
     if (profileProbes >= maxProfileProbes) {
+      if (ownerAwaitingInventory) {
+        return {
+          outcome: "detail_capacity_deferred",
+          drop: false,
+          requested,
+          externalId: target.token,
+          httpStatus,
+          evidence: `${classified.evidence}; olx_profile_probe_cap=${maxProfileProbes}`,
+        };
+      }
       const capped: { verdict: StoredSellerVerdict; evidence: string } = {
         verdict: "unknown",
         evidence: `${classified.evidence}; olx_profile_probe_cap=${maxProfileProbes}`,
@@ -918,6 +942,21 @@ export function createCycleOlxSellerVerifier(options: {
       rememberVerdict(options.db, target, enriched, httpStatus, now);
       return decisionFromClassified(
         enriched,
+        target.token,
+        httpStatus,
+        requested,
+        evidencePrefix,
+        profilePolicies,
+      );
+    }
+    if (ownerAwaitingInventory && profileInventoryClearedForOwner(profileDecision)) {
+      const cleared: { verdict: StoredSellerVerdict; evidence: string } = {
+        verdict: "confirmed_owner",
+        evidence: `${classified.evidence}; ${profileDecision.evidence}`,
+      };
+      rememberVerdict(options.db, target, cleared, httpStatus, now);
+      return decisionFromClassified(
+        cleared,
         target.token,
         httpStatus,
         requested,
@@ -1088,16 +1127,31 @@ export function createCycleOlxSellerVerifier(options: {
           evidence: OLX_SELLER_REGISTRATION_YEAR_2026_REASON,
         };
       }
+      let cachedOwnerDecision: LinkedSellerDecision | undefined;
       if (options.db) {
         const cached = readOlxSellerVerification(options.db, target.token, nowDirect);
         if (cached) {
           const fromCache = decisionFromStored(cached, target.token, profilePolicies);
-          if (fromCache.outcome !== "cache_unknown") {
+          if (
+            fromCache.outcome !== "cache_unknown" &&
+            fromCache.outcome !== "cache_confirmed_owner"
+          ) {
             return fromCache;
           }
-          // Cached unknown: re-probe when budget remains; otherwise stay unresolved.
           if (profileProbes >= maxProfileProbes) {
+            if (fromCache.outcome === "cache_confirmed_owner") {
+              return {
+                outcome: "detail_capacity_deferred",
+                drop: false,
+                requested: false,
+                externalId: target.token,
+                evidence: `olx_profile_probe_cap=${maxProfileProbes}`,
+              };
+            }
             return fromCache;
+          }
+          if (fromCache.outcome === "cache_confirmed_owner") {
+            cachedOwnerDecision = fromCache;
           }
         }
       }
@@ -1214,7 +1268,10 @@ export function createCycleOlxSellerVerifier(options: {
         );
       }
 
-      if (listingClassified?.verdict === "confirmed_owner") {
+      if (
+        listingClassified?.verdict === "confirmed_owner" &&
+        profileInventoryClearedForOwner(profileDecision)
+      ) {
         applyPositiveDetailOwner(listing, listingClassified);
         rememberVerdict(options.db, target, listingClassified, 200, nowDirect);
         return decisionFromClassified(
@@ -1225,6 +1282,20 @@ export function createCycleOlxSellerVerifier(options: {
           undefined,
           profilePolicies,
         );
+      }
+
+      if (cachedOwnerDecision && profileInventoryClearedForOwner(profileDecision)) {
+        rememberVerdict(
+          options.db,
+          target,
+          {
+            verdict: "confirmed_owner",
+            evidence: cachedOwnerDecision.evidence ?? "cached OLX owner",
+          },
+          undefined,
+          nowDirect,
+        );
+        return cachedOwnerDecision;
       }
 
       const unresolved: { verdict: StoredSellerVerdict; evidence: string } = {
@@ -1271,6 +1342,7 @@ export function createCycleOlxSellerVerifier(options: {
     const peer = options.peers.find(
       (item) => item.source === "olx" && peerToken(item)?.toLowerCase() === target.token.toLowerCase(),
     );
+    let peerInventoryEvaluatedBelowLimit = false;
     if (peer) {
       if (catalogRejectionIsTerminal(peer)) {
         return {
@@ -1344,17 +1416,36 @@ export function createCycleOlxSellerVerifier(options: {
           evidence: SELLER_INVENTORY_LIMIT_REASON,
         };
       }
-      // Known non-2026 year / incomplete peer metadata is not owner clearance.
-      // Confirmed-owner peers are handled after the cache consult below.
+      if (
+        typeof peerInventory === "number" &&
+        Number.isInteger(peerInventory) &&
+        peerInventory >= 0 &&
+        peerInventory < SELLER_INVENTORY_LIMIT_MIN
+      ) {
+        peerInventoryEvaluatedBelowLimit = true;
+      }
+      // A missing inventory count is not clearance. Owner peers are resolved
+      // only after this count is known to be below the exclusion.
     }
     const now = options.now();
     if (options.db) {
       const cached = readOlxSellerVerification(options.db, target.token, now);
       if (cached) {
         const fromCache = decisionFromStored(cached, target.token, profilePolicies);
-        // Cached unknown still runs a bounded profile probe — that was the Sep 25 gap.
-        if (fromCache.outcome !== "cache_unknown") {
+        const cachedOwner = fromCache.outcome === "cache_confirmed_owner";
+        // Cached unknown and cached owner both need a bounded inventory probe.
+        // Intermediary, registration year, and inventory-limit rows stay terminal.
+        if (fromCache.outcome !== "cache_unknown" && !cachedOwner) {
           return fromCache;
+        }
+        if (cachedOwner && profileProbes >= maxProfileProbes) {
+          return {
+            outcome: "detail_capacity_deferred",
+            drop: false,
+            requested: false,
+            externalId: target.token,
+            evidence: `olx_profile_probe_cap=${maxProfileProbes}`,
+          };
         }
         if (profileProbes < maxProfileProbes) {
           profileProbes += 1;
@@ -1414,22 +1505,38 @@ export function createCycleOlxSellerVerifier(options: {
               profilePolicies,
             );
           }
-          if (listingClassified?.verdict === "confirmed_owner") {
+          if (
+            (listingClassified?.verdict === "confirmed_owner" || cachedOwner) &&
+            profileInventoryClearedForOwner(profileDecision)
+          ) {
+            if (listingClassified?.verdict === "confirmed_owner") {
+              rememberVerdict(
+                options.db,
+                target,
+                listingClassified,
+                cached.lastHttpStatus ?? 200,
+                now,
+              );
+              return decisionFromClassified(
+                listingClassified,
+                target.token,
+                cached.lastHttpStatus ?? 200,
+                false,
+                undefined,
+                profilePolicies,
+              );
+            }
             rememberVerdict(
               options.db,
               target,
-              listingClassified,
+              {
+                verdict: "confirmed_owner",
+                evidence: fromCache.evidence ?? "cached OLX owner",
+              },
               cached.lastHttpStatus ?? 200,
               now,
             );
-            return decisionFromClassified(
-              listingClassified,
-              target.token,
-              cached.lastHttpStatus ?? 200,
-              false,
-              undefined,
-              profilePolicies,
-            );
+            return fromCache;
           }
           const mergedEvidence = `${fromCache.evidence ?? "cached OLX unknown"}; ${
             listingClassified ? `${listingClassified.evidence}; ` : ""
@@ -1453,9 +1560,10 @@ export function createCycleOlxSellerVerifier(options: {
         return fromCache;
       }
     }
-    // Same-cycle positive clearance only for genuine platform-confirmed OLX owners.
-    // Peer presence, non-2026 year, or LUN-side owner claims are not enough.
-    if (peer && isPlatformConfirmedOwner(peer)) {
+    // Same-cycle positive clearance only when the peer is a platform-confirmed
+    // owner AND inventory was already counted below the exclusion.
+    // Owner evidence alone must not skip the profile probe.
+    if (peer && isPlatformConfirmedOwner(peer) && peerInventoryEvaluatedBelowLimit) {
       return {
         outcome: "same_cycle_resolved",
         drop: false,

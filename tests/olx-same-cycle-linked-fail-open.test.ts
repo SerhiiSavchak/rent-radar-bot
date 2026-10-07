@@ -149,7 +149,7 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
     expect(decision.evidence).toBe(SELLER_INVENTORY_LIMIT_REASON);
   });
 
-  it("incomplete peer + cached confirmed owner allows", async () => {
+  it("incomplete peer + cached confirmed owner allows only after inventory is below the limit", async () => {
     const db = new DatabaseSync(":memory:");
     applyMigrations(db);
     const checkedAt = now.toISOString();
@@ -161,6 +161,7 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
        ) VALUES ('olx', ?, ?, 'confirmed_owner', 'cached owner', ?, ?, NULL, NULL)`,
     ).run(TOKEN, OLX_URL, checkedAt, expiresAt);
     let fetches = 0;
+    let probes = 0;
     const verify = createCycleOlxSellerVerifier({
       db,
       peers: [lunLinked(), olxPeer()],
@@ -168,11 +169,25 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
       timeoutMs: 1000,
       fetchPage: async () => {
         fetches += 1;
-        throw new Error("cache owner must win");
+        throw new Error("cache owner must not detail-fetch");
+      },
+      probeProfile: async () => {
+        probes += 1;
+        return {
+          acquired: true,
+          totalPages: 1,
+          pagesFetched: 1,
+          totalElements: 1,
+          visibleAds: 1,
+          realEstateAds: 1,
+          precisePropertyKeys: ["львів центр вул домашня 1"],
+          propertyKeys: ["львів центр вул домашня 1"],
+        };
       },
     });
     const decision = await verify(lunLinked());
     expect(fetches).toBe(0);
+    expect(probes).toBe(1);
     expect(decision.drop).toBe(false);
     expect(decision.outcome).toBe("cache_confirmed_owner");
   });
@@ -236,7 +251,10 @@ describe("LUN→OLX same-cycle fail-closed (verifier)", () => {
       peers: [
         lunLinked(),
         {
-          ...olxPeer({ ownerEvidenceLevel: "platform_confirmed" }),
+          ...olxPeer({
+            ownerEvidenceLevel: "platform_confirmed",
+            distinctPreciseRealEstateProperties: 1,
+          }),
           sellerType: "owner",
         },
       ],

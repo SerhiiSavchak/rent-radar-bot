@@ -67,8 +67,9 @@ export type OwnerClassification = {
 export type OwnerSignals = {
   platformOwner?: boolean | undefined;
   /**
-   * Aggregator claim such as LUN isOwner. Weaker than a direct platform role
-   * (DIM.RIA 1436): exact intermediary evidence on the same listing wins.
+   * Aggregator claim such as LUN isOwner. Context only.
+   * It must not set sellerType=owner or ownerEvidenceLevel=platform_confirmed.
+   * Exact intermediary evidence on the same listing still wins.
    */
   aggregatorOwner?: boolean | undefined;
   platformAgent?: boolean | undefined;
@@ -170,6 +171,15 @@ export function classifyOwner(signals: OwnerSignals): OwnerClassification {
   if (signals.platformOwner === true) {
     evidence.push("platform seller type = owner");
     pushItem(items, { source: "platform", type: "owner_flag", value: "owner", strength: "strong" });
+  }
+  if (signals.aggregatorOwner === true) {
+    evidence.push("aggregator owner claim (not a direct platform seller role)");
+    pushItem(items, {
+      source: "aggregator",
+      type: "owner_claim",
+      value: "aggregator_owner",
+      strength: "context",
+    });
   }
   if (signals.platformPrivate === true) {
     evidence.push("platform private account flag (not proof of property ownership)");

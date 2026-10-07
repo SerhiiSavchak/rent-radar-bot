@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isPlatformConfirmedOwner } from "../src/delivery/seller-profile.ts";
 import {
   extractNextFlightPayloads,
   inspectLunHtml,
@@ -10,7 +11,7 @@ function encodeFlightString(inner: string): string {
 }
 
 describe("LUN parser", () => {
-  it("uses isOwner as a platform signal and GeoJSON [lng, lat]", () => {
+  it("keeps isOwner as aggregator context, not a platform-confirmed owner, and reads GeoJSON [lng, lat]", () => {
     const listing = parseLunCard(
       {
         id: 4723362979,
@@ -32,7 +33,10 @@ describe("LUN parser", () => {
         address: { addressLocality: "Львів", streetAddress: "вулиця Карла Мікльоша" },
       },
     );
-    expect(listing?.sellerType).toBe("owner");
+    expect(listing?.metadata?.isOwner).toBe(true);
+    expect(listing?.sellerType).not.toBe("owner");
+    expect(listing?.metadata?.ownerEvidenceLevel).not.toBe("platform_confirmed");
+    expect(listing ? isPlatformConfirmedOwner(listing) : true).toBe(false);
     expect(listing?.location.latitude).toBeCloseTo(49.774733);
     expect(listing?.location.longitude).toBeCloseTo(24.0234476);
     expect(listing?.url).toContain("4723362979");
@@ -186,7 +190,10 @@ describe("LUN parser", () => {
       undefined,
     );
     expect(listing?.sourceId).toBe("4727689345");
-    expect(listing?.sellerType).toBe("owner");
+    expect(listing?.metadata?.isOwner).toBe(true);
+    expect(listing?.sellerType).not.toBe("owner");
+    expect(listing?.metadata?.ownerEvidenceLevel).not.toBe("platform_confirmed");
+    expect(listing ? isPlatformConfirmedOwner(listing) : true).toBe(false);
     expect(listing?.propertyType).toBe("apartment");
     expect(listing?.rooms).toBe(1);
     expect(listing?.areaM2).toBe(42);

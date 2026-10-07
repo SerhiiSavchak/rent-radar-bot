@@ -193,6 +193,7 @@ describe("LUN→OLX registration year via createCycleOlxSellerVerifier", () => {
         urlToken: TOKEN,
         accountRegistrationYear: 2019,
         ownerEvidenceLevel: "platform_confirmed",
+        distinctPreciseRealEstateProperties: 1,
       },
     };
     const verify = createCycleOlxSellerVerifier({

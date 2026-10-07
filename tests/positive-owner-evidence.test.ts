@@ -130,7 +130,7 @@ describe("positive owner evidence — platform markers", () => {
     ).toBe(true);
   });
 
-  it("DOM.RIA / LUN platformOwner signal pairs owner + platform_confirmed", () => {
+  it("DOM.RIA platformOwner stays platform_confirmed; LUN aggregatorOwner does not", () => {
     const domria = classifyOwner({
       platformOwner: true,
       offerTypeLabel: "від власника",
@@ -138,11 +138,22 @@ describe("positive owner evidence — platform markers", () => {
     expect(domria.sellerType).toBe("owner");
     expect(domria.ownerEvidenceLevel).toBe("platform_confirmed");
     const lun = classifyOwner({
-      platformOwner: true,
       aggregatorOwner: true,
     });
-    expect(lun.sellerType).toBe("owner");
-    expect(lun.ownerEvidenceLevel).toBe("platform_confirmed");
+    expect(lun.sellerType).not.toBe("owner");
+    expect(lun.ownerEvidenceLevel).not.toBe("platform_confirmed");
+    expect(
+      isPlatformConfirmedOwner({
+        sellerType: lun.sellerType,
+        metadata: { ownerEvidenceLevel: lun.ownerEvidenceLevel },
+      }),
+    ).toBe(false);
+    expect(lun.sellerEvidence.join(" ")).toMatch(/aggregator owner claim/i);
+    expect(
+      lun.evidenceItems.some(
+        (item) => item.source === "aggregator" && item.type === "owner_claim" && item.strength === "context",
+      ),
+    ).toBe(true);
   });
 });
 

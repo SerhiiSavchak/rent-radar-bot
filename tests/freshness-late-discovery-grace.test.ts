@@ -453,7 +453,7 @@ describe("late-discovery grace in the telegram pipeline", () => {
       url: olxUrl,
       publishedAt: minutesAgo(35),
       sellerType: "owner",
-      metadata: { ownerEvidenceLevel: "platform_confirmed" },
+      metadata: { ownerEvidenceLevel: "platform_confirmed", distinctPreciseRealEstateProperties: 1 },
     });
     const sendListing = vi.fn(async () => ({
       ok: true,

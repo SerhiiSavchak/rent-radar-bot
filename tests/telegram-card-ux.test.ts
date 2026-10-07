@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Listing } from "../src/domain/listing.ts";
+import { parseLunCard } from "../src/sources/lun/lun.parser.ts";
 import {
   formatListingTelegramHtml,
   formatListingTelegramPlain,
@@ -64,6 +65,30 @@ describe("Telegram card search tags and seller UX", () => {
     expect(card).toContain("Власник не підтверджений");
     expect(card).toContain("Перевірка: недостатньо даних");
     expect(card).toMatch(/👤\s*⚠️/);
+  });
+
+  it("LUN isOwner alone renders #OWNER_UNVERIFIED", () => {
+    const parsed = parseLunCard(
+      {
+        id: 4729068845,
+        urlRaw: "https://www.olx.ua/d/uk/obyavlenie/orenda-ID11owner.html",
+        price: 500,
+        currency: "usd",
+        isOwner: true,
+        agency: null,
+        sectionId: 2,
+        header: "Квартира",
+        text: "Оренда",
+        location: [24.03, 49.84],
+      },
+      undefined,
+    );
+    expect(parsed).toBeDefined();
+    const card = formatListingTelegramHtml(parsed!);
+    expect(card).toContain(OWNER_SEARCH_TAG_UNVERIFIED);
+    expect(card).not.toContain(OWNER_SEARCH_TAG_CONFIRMED);
+    expect(formatSellerLabel(parsed!)).toContain(OWNER_SEARCH_TAG_UNVERIFIED);
+    expect(formatSellerLabel(parsed!)).not.toContain(OWNER_SEARCH_TAG_CONFIRMED);
   });
 
   it("sellerType=owner without platform_confirmed is unverified in UI", () => {

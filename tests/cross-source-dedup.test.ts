@@ -328,13 +328,16 @@ describe("cross-source delivery", () => {
   it("sends one of a linked pair in the same cycle and keeps the identity after reopen", async () => {
     const path = dbPath();
     const { lun, olx } = linkedPair();
-    // Same-cycle clearance requires platform-confirmed OLX owner — not peer presence alone.
+    // Same-cycle clearance requires a platform-confirmed OLX owner whose
+    // inventory was already counted below the exclusion. Owner evidence alone
+    // does not skip the profile probe.
     const olxOwner: Listing = {
       ...olx,
       sellerType: "owner",
       metadata: {
         ...(olx.metadata ?? {}),
         ownerEvidenceLevel: "platform_confirmed",
+        distinctPreciseRealEstateProperties: 1,
       },
     };
     const sendListing = vi.fn(async () => ({
@@ -412,6 +415,7 @@ describe("cross-source delivery", () => {
       metadata: {
         ...(olx.metadata ?? {}),
         ownerEvidenceLevel: "platform_confirmed",
+        distinctPreciseRealEstateProperties: 1,
       },
     };
     let calls = 0;

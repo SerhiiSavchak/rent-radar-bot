@@ -316,7 +316,7 @@ export function parseLunCard(
     .filter(Boolean)
     .join("\n");
   const owner = classifyOwner({
-    platformOwner: card.isOwner === true,
+    // LUN isOwner is an aggregator label, not a direct platform seller role.
     aggregatorOwner: card.isOwner === true,
     platformAgent: Boolean(card.agency) || contact.platformAgent,
     agencyName: card.agency?.name ?? contact.agencyName,
