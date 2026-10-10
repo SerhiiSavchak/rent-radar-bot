@@ -28,24 +28,80 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/**
+ * Fetch headers and body, then settle even if `fetch` ignores abort.
+ * The timeout timer is the last ref'd handle for a stalled request. Once it
+ * fires, a still-pending `fetch` leaves the poller's top-level await with an
+ * empty event loop and Node exits 13.
+ */
+async function fetchText(
+  url: string,
+  options: HttpRequestOptions,
+): Promise<{
+  status: number;
+  url: string;
+  headers: Headers;
+  bodyText: string;
+  redirected: boolean;
+}> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      controller.abort();
+      reject(new DOMException(`Request timed out: ${url}`, "AbortError"));
+    }, options.timeoutMs);
+  });
+  // If the request wins, this rejection must not become unhandled.
+  void timeout.catch(() => undefined);
+
+  const request = (async () => {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        ...DEFAULT_HEADERS,
+        ...options.headers,
+      },
+    });
+    const bodyText = await response.text();
+    return {
+      status: response.status,
+      url: response.url,
+      headers: response.headers,
+      bodyText,
+      redirected: response.redirected,
+    };
+  })();
+  // The caller stops waiting at the timeout. A later fetch rejection is not a new failure.
+  void request.catch(() => undefined);
+
+  try {
+    return await Promise.race([request, timeout]);
+  } finally {
+    settled = true;
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export async function httpGet(url: string, options: HttpRequestOptions): Promise<HttpResponse> {
   const maxRetries = options.maxRetries ?? 2;
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
     try {
-      const response = await fetch(url, {
-        method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
-        headers: {
-          ...DEFAULT_HEADERS,
-          ...options.headers,
-        },
-      });
-      const bodyText = await response.text();
+      const response = await fetchText(url, options);
       const headers: Record<string, string> = {};
       response.headers.forEach((value, key) => {
         headers[key] = value;
@@ -54,7 +110,7 @@ export async function httpGet(url: string, options: HttpRequestOptions): Promise
         status: response.status,
         url: response.url,
         headers,
-        bodyText,
+        bodyText: response.bodyText,
         redirected: response.redirected,
       };
 
@@ -66,7 +122,7 @@ export async function httpGet(url: string, options: HttpRequestOptions): Promise
       return result;
     } catch (error) {
       lastError = error;
-      const aborted = error instanceof Error && error.name === "AbortError";
+      const aborted = isAbortError(error);
       if (attempt < maxRetries) {
         await sleep(300 * 2 ** attempt);
         continue;
@@ -77,8 +133,6 @@ export async function httpGet(url: string, options: HttpRequestOptions): Promise
         retryable: true,
         cause: error,
       });
-    } finally {
-      clearTimeout(timer);
     }
   }
 
